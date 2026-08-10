@@ -6,6 +6,12 @@ first for what the app does; this file is only about getting it running.
 macOS follows the Linux instructions (Docker Desktop + Homebrew instead of a
 package manager) — the commands are the same.
 
+> **Just want to run it?** Skip this file. `cp .env.example .env` then
+> `docker compose up -d --build` brings up the entire stack — database, auth,
+> backend and frontend — with no Python or Node installed on the host. See
+> *Quick start — Docker* in `README.md`. Everything below is for developing
+> against the code with hot reload.
+
 ## Prerequisites
 
 | Tool | Version | Windows | Linux |

@@ -56,7 +56,10 @@ class Settings(BaseSettings):
     # A building has a floor area; below this it is segmenter noise, and
     # flagging it as illegal construction destroys officer trust.
     min_new_building_area_m2: float = 50.0
-    # Bounding-box fill. Buildings are compact; canopy and shadow blobs ragged.
+    # Convex solidity (area / convex-hull area). Buildings are compact; canopy
+    # and shadow blobs are ragged. Deliberately NOT bounding-box fill: that
+    # measures the building's angle to north as much as its shape, and a
+    # rectangle at 45° fills only half its bounding box.
     min_instance_solidity: float = 0.6
     # If the BEFORE/AFTER footprint maps agree less than this (IoU), the BEFORE
     # segmentation is treated as unreliable — typical for a colour-infrared

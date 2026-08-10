@@ -23,7 +23,10 @@ if [ ! -d "$root/frontend/node_modules" ]; then
 fi
 
 echo "Starting PostgreSQL + SuperTokens (Docker)..."
-docker compose up -d
+# Only the infrastructure services: this script runs the backend and frontend
+# natively, so starting the containerised ones too would fight them for ports.
+# For the fully containerised POC use `docker compose up -d` instead.
+docker compose up -d postgres supertokens
 
 cleanup() {
     echo ""

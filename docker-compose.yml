@@ -29,12 +29,68 @@ services:
       POSTGRESQL_CONNECTION_URI: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/supertokens"
       API_KEYS: ${SUPERTOKENS_API_KEY}
     ports:
-      - "3567:3567"
+      - "${SUPERTOKENS_PORT:-3567}:3567"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3567 && echo -e 'GET /hello HTTP/1.1\r\nhost: 127.0.0.1:3567\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q Hello"]
       interval: 10s
       timeout: 5s
       retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    image: ada-backend:poc
+    container_name: ada-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      supertokens:
+        condition: service_healthy
+    environment:
+      # In-network addresses — these deliberately override the host-facing
+      # values in .env, which stay valid for running the app outside Docker.
+      DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      SUPERTOKENS_CONNECTION_URI: "http://supertokens:3567"
+      SUPERTOKENS_API_KEY: ${SUPERTOKENS_API_KEY}
+      # The browser reaches the API through the frontend's nginx, so API and
+      # website are one origin and session cookies stay first-party.
+      API_DOMAIN: ${APP_ORIGIN:-http://localhost:5173}
+      WEBSITE_DOMAIN: ${APP_ORIGIN:-http://localhost:5173}
+      DATA_DIR: /app/data
+      # First-boot convenience (see backend/docker-entrypoint.sh)
+      AUTO_FETCH_WEIGHTS: ${AUTO_FETCH_WEIGHTS:-true}
+      AUTO_SAMPLE_DATA: ${AUTO_SAMPLE_DATA:-true}
+      # ML tunables — same names as .env, defaults match app/config.py
+      MODEL_MODE: ${MODEL_MODE:-segdiff}
+      MODEL_BACKEND: ${MODEL_BACKEND:-auto}
+      SEED_MODE: ${SEED_MODE:-encroachment}
+      SAM_REFINE: ${SAM_REFINE:-true}
+      CHIP_SIZE: ${CHIP_SIZE:-256}
+      CHIP_OVERLAP: ${CHIP_OVERLAP:-64}
+      CHANGE_THRESHOLD: ${CHANGE_THRESHOLD:-0.5}
+      MIN_CHANGE_AREA_M2: ${MIN_CHANGE_AREA_M2:-15.0}
+    volumes:
+      # Uploads, COGs, masks, vendored weights and the demo pair all live here
+      # and survive `docker compose down`.
+      - ./data:/app/data
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    image: ada-frontend:poc
+    container_name: ada-frontend
+    restart: unless-stopped
+    depends_on:
+      # service_started, not service_healthy: nginx only needs the `backend`
+      # DNS name to resolve at config load, and the backend's first boot can
+      # spend minutes downloading model weights.
+      backend:
+        condition: service_started
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
 
 volumes:
   ada_pgdata:

@@ -1,13 +1,17 @@
 """Full end-to-end API test: auth -> project -> uploads -> red zone ->
 analysis -> polygons -> tiles. Run with the backend + docker services up."""
 
+import os
 import sys
 import time
 from pathlib import Path
 
 import httpx
 
-BASE = "http://localhost:8000"
+# Native runs hit the backend directly; the Docker POC exposes it behind the
+# frontend's nginx, so point this at the app origin instead:
+#   ADA_BASE_URL=http://localhost:5173 python scripts/e2e_test.py
+BASE = os.environ.get("ADA_BASE_URL", "http://localhost:8000")
 SAMPLES = Path(__file__).resolve().parents[2] / "data" / "samples"
 EMAIL, PASSWORD = "test@ada.gov.in", "TestPass123!"
 

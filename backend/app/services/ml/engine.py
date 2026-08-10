@@ -234,6 +234,31 @@ def classical_change_prob(t1: np.ndarray, t2: np.ndarray,
     return prob.astype(np.float32)
 
 
+def _convex_solidity(comp: np.ndarray) -> float:
+    """Area / convex-hull area for one connected component, in [0, 1].
+
+    Rotation-invariant compactness: a rectangle scores ~1.0 at any orientation,
+    an L-shape or courtyard block somewhat less, a ragged canopy or shadow blob
+    with deep concavities much less. This is what the instance filter wants —
+    "is this shaped like a structure" — as opposed to bounding-box fill, which
+    conflates shape with the building's angle to the compass.
+    """
+    import cv2
+
+    contours, _ = cv2.findContours(comp.astype(np.uint8), cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0.0
+    contour = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(contour)
+    hull_area = cv2.contourArea(cv2.convexHull(contour))
+    if hull_area <= 1e-6:
+        # Degenerate (a line or a handful of pixels); the area filter upstream
+        # has already dealt with anything this small.
+        return 0.0
+    return min(float(area / hull_area), 1.0)
+
+
 def _change_gate(t1: np.ndarray, t2: np.ndarray, valid: np.ndarray) -> np.ndarray:
     if settings.change_gate_mode == "structural":
         return _structural_change(t1, t2, valid)
@@ -344,8 +369,16 @@ def building_change_prob(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
             continue
 
         # Buildings are compact; canopy blobs and shadow fragments are ragged.
-        h, w = comp.shape
-        if area_px / float(h * w) < settings.min_instance_solidity:
+        # Measured against the convex hull, NOT the axis-aligned bounding box:
+        # bbox fill answers "how is this shaped *relative to north*", which is
+        # not a property of the building at all. A perfectly rectangular block
+        # lying at 45° to the grid fills exactly half its bounding box and was
+        # thrown out as "ragged", so on any scene whose street grid runs
+        # diagonally — Agra's does — this rejected the real detections and kept
+        # the axis-aligned ones. Convex solidity is rotation-invariant, so the
+        # same building scores the same however the imagery happens to be
+        # oriented, and genuinely concave canopy/shadow blobs still fail.
+        if _convex_solidity(comp) < settings.min_instance_solidity:
             rejected["ragged"] += 1
             continue
 

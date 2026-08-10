@@ -27,7 +27,53 @@ write-up (`ADA_Vision_Project_Documentation.docx`, §6 has the rationale).
 | Frontend | React + TypeScript (Vite), MapLibre GL JS |
 | Jobs | in-process worker thread (POC stand-in for Celery/Redis) |
 
-## Quick start
+## Quick start — Docker (whole stack, nothing else installed)
+
+Everything runs in containers: Postgres/PostGIS, SuperTokens, the FastAPI
+backend and the built React app behind nginx. Only Docker with Compose v2 is
+required — no Python, Node or venv on the host.
+
+```bash
+cp .env.example .env     # PowerShell: Copy-Item .env.example .env
+# set POSTGRES_PASSWORD and SUPERTOKENS_API_KEY
+# (the API key accepts alphanumerics, '-' and '=' only)
+docker compose up -d --build
+```
+
+Then open **http://localhost:5173**, sign up with any email/password, and
+create a project. API docs are at http://localhost:8000/docs.
+
+The first `up` takes a few minutes: it builds both images, downloads the 261 MB
+of model weights into `./data/weights/`, and generates the synthetic Agra demo
+pair into `./data/samples/`. Both are skipped on every later boot, and `./data`
+is bind-mounted so uploads, COGs, masks and weights survive
+`docker compose down`. Set `AUTO_FETCH_WEIGHTS=false` / `AUTO_SAMPLE_DATA=false`
+in `.env` to skip either step.
+
+```bash
+docker compose ps                       # all four should be healthy
+docker compose logs -f backend          # pipeline progress during a run
+curl http://localhost:5173/api/health   # -> {"status":"ok"}
+docker compose down                     # stop (add -v to wipe the database)
+```
+
+If a port is already taken on your machine, change `FRONTEND_PORT`,
+`BACKEND_PORT`, `POSTGRES_PORT` or `SUPERTOKENS_PORT` in `.env` — the
+containers talk to each other over the compose network, so only the host-side
+mapping moves.
+
+Demo walkthrough once you are signed in: create a project, upload
+`data/samples/agra_t1_2024.tif` as T1 and `agra_t2_2026.tif` as T2, draw a red
+zone over part of the scene, then run a **Diff Mode** analysis (seconds) to see
+change polygons and the red-zone `illegal` classification. AI Mode is the
+evidence-grade path and is meant for real imagery — on the purely synthetic
+demo scene the building segmenter finds nothing to confirm, which is the
+weights limitation described under *Accuracy* below, not a broken pipeline.
+
+The container image is CPU-only, so SAM 2 refinement runs without CUDA (slower,
+and it falls back to a morphological closing if it cannot load).
+
+## Quick start — native (for development)
 
 Full first-time setup (Windows & Linux) is in **[SETUP.md](SETUP.md)**. Once
 that's done once:
@@ -40,7 +86,9 @@ that's done once:
 ./start.sh       # Linux/macOS
 ```
 
-Then open http://localhost:5173, sign up, and create a project.
+These start only the Postgres and SuperTokens containers, then run the backend
+and the Vite dev server on the host. Then open http://localhost:5173, sign up,
+and create a project.
 
 ## Model weights (`data/weights/`)
 

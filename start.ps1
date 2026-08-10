@@ -22,7 +22,10 @@ if (-not (Test-Path "$root\frontend\node_modules")) {
 }
 
 Write-Host "Starting PostgreSQL + SuperTokens (Docker)..."
-docker compose up -d
+# Only the infrastructure services: this script runs the backend and frontend
+# natively, so starting the containerised ones too would fight them for ports.
+# For the fully containerised POC use `docker compose up -d` instead.
+docker compose up -d postgres supertokens
 
 Write-Host "Starting backend (FastAPI) in a new window..."
 Start-Process powershell -ArgumentList @(
