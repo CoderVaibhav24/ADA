@@ -1,0 +1,32 @@
+# --- API ---
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.12
+pydantic-settings>=2.6
+python-dotenv>=1.0
+httpx>=0.27
+
+# --- Auth ---
+supertokens-python>=0.29
+
+# --- Database ---
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+
+# --- Geospatial / raster ---
+rasterio>=1.4
+rio-cogeo>=5.3
+titiler.core>=0.18
+shapely>=2.0
+pyproj>=3.7
+
+# --- Imaging / ML ---
+numpy>=1.26
+pillow>=10.4
+scikit-image>=0.24
+opencv-python-headless>=4.10
+torch>=2.6            # install the +cu12x build to use the GPU (SAM2 refine)
+torchvision>=0.21
+onnxruntime>=1.18    # building-footprint segmenter (seg-diff engine)
+huggingface-hub>=0.24 # auto-downloads the segmenter / SAM2 weights
+transformers>=4.44   # SAM2 full-structure refinement (Sam2Model)

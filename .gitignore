@@ -1,0 +1,35 @@
+# Secrets — never commit
+.env
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Data (uploads, COGs, masks, weights, samples)
+data/
+backend/data/
+# ...but the weight manifest is the reproducibility record: it pins the exact
+# upstream commit of every vendored model, so `fetch_weights.py` can rebuild an
+# identical data/weights/ on any machine. Keep it in version control.
+!data/weights/manifest.json
+
+# Local scratch / non-project artifacts — not part of the app
+/Test/
+/SS/
+/Agra Scope of Work.pdf
+
+# Generated documentation (regenerate with backend/scripts/build_documentation.py)
+/ADA_Vision_Project_Documentation.docx
+
+# Claude Code local (machine-specific permissions, not shared)
+.claude/settings.local.json
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
