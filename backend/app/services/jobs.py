@@ -36,6 +36,30 @@ def submit_ingest(raster_id: int) -> None:
     _executor.submit(_run_ingest_safe, raster_id)
 
 
+def requeue_stale() -> None:
+    """Re-submit work that was in flight when the process last stopped.
+
+    The worker is an in-process thread pool, so a restart — a deploy, a crash,
+    Docker being restarted — silently loses whatever it was running while the
+    row still says "processing". Nothing ever picked those up again, so a
+    perfectly good upload could sit at PROCESSING forever and no amount of
+    restarting would help. Ingest is idempotent (it rewrites the COG from the
+    original upload), so re-running it on startup is always safe.
+    """
+    with SessionLocal() as db:
+        stale_rasters = [r.id for r in db.query(Raster)
+                         .filter(Raster.status == "processing").all()]
+        stale_jobs = [j.id for j in db.query(AnalysisJob)
+                      .filter(AnalysisJob.status.in_(("queued", "running"))).all()]
+    for raster_id in stale_rasters:
+        log.warning("requeueing ingest for raster %s (interrupted by restart)",
+                    raster_id)
+        submit_ingest(raster_id)
+    for job_id in stale_jobs:
+        log.warning("requeueing analysis job %s (interrupted by restart)", job_id)
+        submit_analysis(job_id)
+
+
 def _run_ingest_safe(raster_id: int) -> None:
     with SessionLocal() as db:
         raster = db.get(Raster, raster_id)

@@ -24,6 +24,7 @@ from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
 from rasterio.vrt import WarpedVRT
 from rasterio.warp import transform_bounds
+from rasterio.windows import Window
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 from scipy import ndimage
@@ -33,6 +34,8 @@ from skimage.registration import phase_cross_correlation
 log = logging.getLogger("ada.preprocess")
 
 MAX_WORKING_DIM = 6144          # cap the common-grid size (POC memory guard)
+STATS_SAMPLE_DIM = 2048         # decimated read used for scene-wide statistics
+INGEST_BLOCK_BYTES = 256 << 20  # target working-set per ingest strip (~256 MB)
 MAX_TRUSTED_SHIFT_PX = 32.0     # phase-corr shifts beyond this are rejected
 MIN_SHIFT_IMPROVEMENT = 0.02    # edge agreement must rise by this much to apply
 GRID_MATCH_TOL_M = 0.01         # bounds/res closer than this = identical grid
@@ -134,30 +137,190 @@ def _read_rgb(src: rasterio.DatasetReader, vrt_opts: dict | None = None) -> np.n
             reader.close()
 
 
+# --- The validity contract ---------------------------------------------------
+#
+# Exactly one question decides whether a pixel exists: does the source's own
+# mask say so? Every stage downstream — stretching, CIR detection, vegetation
+# indices, segmentation, change gating, vectorisation — receives `valid` and
+# must apply it. Deriving validity any other way is what broke this pipeline
+# twice: a "brightness > 0" test silently classifies ADA's declared nodata fill
+# (65535) as the brightest data in the scene, which both destroys the percentile
+# stretch and feeds pure padding to the models as though it were ground.
+
+
+def _read_epoch(src: rasterio.DatasetReader,
+                vrt_opts: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Read one epoch onto the working grid, already filtered.
+
+    Returns (bands, valid) where `bands` is (3, H, W) float32 with every
+    invalid pixel forced to 0, and `valid` is the authoritative mask carried
+    through the rest of the pipeline. The mask comes from the warped dataset
+    mask, so declared nodata, an alpha band and the reprojection footprint are
+    all honoured by the same code path.
+    """
+    with WarpedVRT(src, **vrt_opts) as vrt:
+        indexes = [1, 2, 3] if vrt.count >= 3 else [1, 1, 1]
+        bands = vrt.read(indexes).astype(np.float32)
+        valid = vrt.dataset_mask() > 0
+
+    # Belt and braces: if a source declares nodata but carries no usable mask,
+    # drop exact nodata matches too. Costs one comparison, closes the gap where
+    # a malformed mask would let the fill value through.
+    for nodata in {v for v in (src.nodatavals or ()) if v is not None}:
+        valid &= ~np.all(bands == np.float32(nodata), axis=0)
+
+    bands[:, ~valid] = 0.0
+    return bands, valid
+
+
+def _data_bounds(src: rasterio.DatasetReader, dst_crs: CRS,
+                 max_dim: int = 1024) -> tuple[float, float, float, float]:
+    """Geographic bounds of the pixels that actually carry data.
+
+    ADA's survey grid tiles arrive as a small populated region inside a very
+    large nodata canvas — the sample tile measured 2.1% real data. Sizing the
+    working grid from the declared extent therefore spends the entire
+    resolution budget on emptiness: 3.24 m/px across the padded canvas versus
+    0.40 m/px across the real data, which is the difference between a building
+    being three pixels and being resolvable. Falls back to the full extent when
+    the raster has no padding to trim.
+    """
+    scale = max(src.width / max_dim, src.height / max_dim, 1.0)
+    shape = (max(1, int(src.height / scale)), max(1, int(src.width / scale)))
+    mask = src.dataset_mask(out_shape=shape) > 0
+    if not mask.any():
+        return transform_bounds(src.crs, dst_crs, *src.bounds)
+
+    rows, cols = np.where(mask)
+    # Scale the decimated indices back to full-resolution pixel coordinates,
+    # padding by one decimated cell so a partially-covered edge is not clipped.
+    row_px, col_px = src.height / shape[0], src.width / shape[1]
+    top = max(0.0, (rows.min() - 1) * row_px)
+    bottom = min(float(src.height), (rows.max() + 2) * row_px)
+    left = max(0.0, (cols.min() - 1) * col_px)
+    right = min(float(src.width), (cols.max() + 2) * col_px)
+
+    x0, y0 = src.transform * (left, top)
+    x1, y1 = src.transform * (right, bottom)
+    native = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    return transform_bounds(src.crs, dst_crs, *native)
+
+
+def _decimated_rgb(src: rasterio.DatasetReader,
+                   max_dim: int = STATS_SAMPLE_DIM) -> np.ndarray:
+    """Whole-extent read, decimated to at most `max_dim` on the long side.
+
+    Percentile stretch limits and the CIR test are *global* properties of the
+    scene, and both are statistics — they converge long before you have read
+    every pixel. Sampling them from a decimated read is what lets ingestion of
+    an arbitrarily large raster run in bounded memory.
+    """
+    scale = max(src.width / max_dim, src.height / max_dim, 1.0)
+    out_h = max(1, int(src.height / scale))
+    out_w = max(1, int(src.width / scale))
+    indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
+    return src.read(indexes, out_shape=(len(indexes), out_h, out_w),
+                    resampling=Resampling.average).astype(np.float32)
+
+
+def _stretch_params(arr: np.ndarray,
+                    valid: np.ndarray) -> list[tuple[float, float]]:
+    """Per-band (2nd, 98th) percentile limits, computed once for the scene."""
+    params: list[tuple[float, float]] = []
+    for b in range(arr.shape[0]):
+        sel = arr[b][valid]
+        sel = sel[np.isfinite(sel)]
+        if sel.size == 0:
+            params.append((0.0, 1.0))
+            continue
+        lo, hi = (float(v) for v in np.percentile(sel, (2, 98)))
+        params.append((lo, hi if hi > lo else lo + 1.0))
+    return params
+
+
+def _apply_stretch(arr: np.ndarray, params: list[tuple[float, float]],
+                   valid: np.ndarray) -> np.ndarray:
+    """Apply scene-wide stretch limits to one block. 0 is reserved for nodata."""
+    out = np.zeros(arr.shape, dtype=np.uint8)
+    for b, (lo, hi) in enumerate(params):
+        scaled = np.clip((arr[b] - lo) / (hi - lo), 0, 1) * 254 + 1
+        out[b] = scaled.astype(np.uint8)
+    out[:, ~valid] = 0
+    return out
+
+
+def _row_windows(src: rasterio.DatasetReader):
+    """Full-width row strips sized so one block stays near INGEST_BLOCK_BYTES."""
+    per_row = max(src.width * 3 * 4, 1)          # 3 bands, float32
+    rows = int(min(4096, max(256, INGEST_BLOCK_BYTES / per_row)))
+    for top in range(0, src.height, rows):
+        height = min(rows, src.height - top)
+        yield Window(0, top, src.width, height)
+
+
 def ingest_raster(original_path: Path, cog_path: Path) -> dict:
-    """Create an 8-bit display COG and return raster metadata."""
+    """Create an 8-bit display COG and return raster metadata.
+
+    Streams the source in row strips. The previous implementation read the
+    whole raster and cast it to float32 up front, which costs ~12 bytes per
+    pixel: a 1 Gpx orthophoto needed ~12.8 GB of RAM before it wrote anything,
+    so ADA's own grid tiles (6-20 GB on disk) could not be ingested at all on a
+    normal machine. Peak memory here is one strip, independent of file size.
+    """
     with rasterio.open(original_path) as src:
         if src.crs is None:
             raise ValueError(
                 "Raster has no CRS. Upload the matching .tfw AND .prj/.aux.xml "
                 "sidecar files, or a GeoTIFF with embedded geo-referencing."
             )
-        data = _read_rgb(src).astype(np.float32)
-        valid = src.dataset_mask() > 0
-        data, _ = _normalize_spectral(data, valid)
-        rgb = _stretch_to_uint8(data, valid)
+
+        # Pass 1 — scene-wide statistics from a decimated read.
+        # The valid mask MUST come from dataset_mask, not from "any band > 0":
+        # ADA's grid tiles declare nodata=65535, so a brightness test counts the
+        # nodata fill as the brightest data in the scene, drags the 98th
+        # percentile up to 65535 and stretches every real pixel to black.
+        sample = _decimated_rgb(src)
+        sample_valid = src.dataset_mask(out_shape=sample.shape[1:]) > 0
+        sample, is_cir = _normalize_spectral(sample, sample_valid)
+        params = _stretch_params(sample, sample_valid)
+        del sample, sample_valid
 
         profile = {
             "driver": "GTiff", "dtype": "uint8", "count": 3,
             "width": src.width, "height": src.height,
             "crs": src.crs, "transform": src.transform, "nodata": 0,
+            "tiled": True, "blockxsize": 512, "blockysize": 512,
+            "compress": "deflate", "BIGTIFF": "IF_SAFER",
         }
-        with MemoryFile() as mem:
-            with mem.open(**profile) as tmp:
-                tmp.write(rgb)
-            with mem.open() as tmp:
-                cog_translate(tmp, str(cog_path), cog_profiles.get("deflate"),
-                              in_memory=True, quiet=True)
+
+        # Pass 2 — convert and write strip by strip, then COG-ify from disk
+        # (never in memory: `in_memory=True` would defeat the whole point).
+        tmp_path = cog_path.with_suffix(".tmp.tif")
+        try:
+            windows = list(_row_windows(src))
+            with rasterio.open(tmp_path, "w", **profile) as dst:
+                for i, window in enumerate(windows, start=1):
+                    indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
+                    block = src.read(indexes, window=window).astype(np.float32)
+                    block_valid = src.dataset_mask(window=window) > 0
+                    if is_cir:
+                        block = _cir_to_pseudo_natural(block)
+                    dst.write(_apply_stretch(block, params, block_valid),
+                              window=window)
+                    log.info("ingest: strip %s/%s", i, len(windows))
+            log.info("ingest: %s x %s intermediate written, building COG",
+                     src.width, src.height)
+            # BIGTIFF on the COG profile too: rio-cogeo stages its output in a
+            # temporary GeoTIFF built from these same creation options, and a
+            # classic TIFF dies at 4 GB ("Maximum TIFF file size exceeded"),
+            # which is exactly the size range ADA's grid tiles land in.
+            dst_profile = cog_profiles.get("deflate")
+            dst_profile.update({"BIGTIFF": "YES"})
+            cog_translate(str(tmp_path), str(cog_path), dst_profile,
+                          in_memory=False, quiet=True,
+                          config={"GDAL_NUM_THREADS": "ALL_CPUS"})
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
         bounds_4326 = list(transform_bounds(src.crs, CRS.from_epsg(4326), *src.bounds))
         res_x = abs(src.transform.a)
@@ -191,17 +354,22 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
         crs = s1.crs
 
         # T2 footprint + resolution expressed in the T1 CRS
-        b2 = transform_bounds(s2.crs, crs, *s2.bounds)
-        res2_x = (b2[2] - b2[0]) / s2.width
-        res2_y = (b2[3] - b2[1]) / s2.height
+        b2_full = transform_bounds(s2.crs, crs, *s2.bounds)
+        res2_x = (b2_full[2] - b2_full[0]) / s2.width
+        res2_y = (b2_full[3] - b2_full[1]) / s2.height
         res = max(abs(s1.transform.a), abs(s1.transform.e), res2_x, res2_y)
 
-        # Overlap footprint
-        b1 = s1.bounds
+        # Overlap of the two DATA footprints, not of their declared extents.
+        # Nodata padding is not ground, so it must not consume the working grid.
+        b1 = _data_bounds(s1, crs)
+        b2 = _data_bounds(s2, crs)
         w, s_, e, n = (max(b1[0], b2[0]), max(b1[1], b2[1]),
                        min(b1[2], b2[2]), min(b1[3], b2[3]))
         if w >= e or s_ >= n:
-            raise ValueError("The two rasters do not overlap on the ground.")
+            raise ValueError(
+                "The two rasters carry no overlapping data. They may cover "
+                "different areas, or one may be entirely nodata."
+            )
 
         # Working grid at the coarser resolution (capped for memory)
         width = math.ceil((e - w) / res)
@@ -225,13 +393,20 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
             and abs(abs(s1.transform.e) - abs(s2.transform.e)) <= GRID_MATCH_TOL_M
         )
 
+        # src_nodata must be declared on the VRT. Without it the warp
+        # interpolates the fill value into its neighbours, so a bilinear
+        # resample smears 65535 across the boundary and contaminates real
+        # pixels — damage that no downstream mask can undo, because by then
+        # the corrupted values sit inside the valid area.
         vrt_opts = dict(crs=crs, transform=transform, width=width, height=height,
                         resampling=Resampling.bilinear)
-        arr1 = _read_rgb(s1, vrt_opts).astype(np.float32)
-        arr2 = _read_rgb(s2, vrt_opts).astype(np.float32)
+        arr1, valid1 = _read_epoch(s1, vrt_opts)
+        arr2, valid2 = _read_epoch(s2, vrt_opts)
 
-    valid1 = arr1.sum(axis=0) > 0
-    valid2 = arr2.sum(axis=0) > 0
+    log.info("superimpose: working grid %sx%s @ %.3f m/px; "
+             "valid coverage T1 %.1f%%, T2 %.1f%%, overlap %.1f%%",
+             width, height, res, 100 * valid1.mean(), 100 * valid2.mean(),
+             100 * (valid1 & valid2).mean())
     # Spectral normalization: convert any CIR false-color epoch to pseudo
     # natural color so vegetation doesn't read as change vs a true-color epoch
     cir1 = _detect_false_color_ir(arr1, valid1)
@@ -283,7 +458,13 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
                                           order=1, mode="constant", cval=0)
                             for b in range(3)
                         ]).clip(0, 255).astype(np.uint8)
-                        valid2 = t2.sum(axis=0) > 0
+                        # Shift the mask itself rather than re-deriving it from
+                        # brightness: a genuinely black but valid pixel would
+                        # otherwise be dropped, and the shifted-in border would
+                        # be counted as data.
+                        valid2 = ndimage.shift(valid2.astype(np.float32),
+                                               shift_yx, order=0,
+                                               mode="constant", cval=0) > 0.5
                         veg2 = ndimage.shift(veg2.astype(np.float32), shift_yx,
                                              order=0, mode="constant", cval=0) > 0.5
                         log.info("co-registration: applied shift %s "
@@ -297,7 +478,14 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
             log.warning("co-registration: phase correlation failed, using "
                         "geo-referencing only", exc_info=True)
 
+    # A pixel is comparable only where BOTH epochs observed ground.
     valid = valid1 & valid2
+    if not valid.any():
+        raise ValueError(
+            "The two epochs share no commonly observed ground after masking "
+            "nodata. Check that both rasters cover the same area and that "
+            "their nodata values are declared correctly."
+        )
 
     # Radiometric normalization: histogram-match T2 onto T1 (valid area only)
     if valid.any():
@@ -305,7 +493,18 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
                                    t1.transpose(1, 2, 0).astype(np.float32),
                                    channel_axis=-1)
         t2 = np.clip(matched, 0, 255).astype(np.uint8).transpose(2, 0, 1)
-        t2[:, ~valid] = 0
+
+    # Single exit point for the contract: nothing leaves this function carrying
+    # values outside the commonly observed area. Downstream stages still apply
+    # `valid` themselves, but they no longer have to be trusted to do so for
+    # correctness of the pixel values they read.
+    t1[:, ~valid] = 0
+    t2[:, ~valid] = 0
+    veg1 &= valid
+    veg2 &= valid
+
+    log.info("superimpose: %.1f%% of the working grid is comparable ground",
+             100 * valid.mean())
 
     res_m = res * 111_320 if crs.is_geographic else res
     return AlignedPair(

@@ -19,6 +19,7 @@ from .config import settings
 from .database import Base, engine
 from .migrate import run_migrations
 from .routers import analysis, projects, rasters, redzones, tiles
+from .services import jobs
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ada")
@@ -33,6 +34,10 @@ async def lifespan(app: FastAPI):
             Base.metadata.create_all(bind=engine)
             run_migrations()
             log.info("Database ready")
+            # Anything left mid-flight by the previous process (restart, crash)
+            # is stranded otherwise — the worker is in-process, so its queue
+            # does not survive, but the "processing" row does.
+            jobs.requeue_stale()
             break
         except Exception as exc:
             log.warning("DB not ready (attempt %s): %s", attempt + 1, exc)
