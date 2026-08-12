@@ -25,8 +25,21 @@ numpy>=1.26
 pillow>=10.4
 scikit-image>=0.24
 opencv-python-headless>=4.10
-torch>=2.6            # install the +cu12x build to use the GPU (SAM2 refine)
+torch>=2.6            # install the +cu12x build to use the GPU
 torchvision>=0.21
-onnxruntime>=1.18    # building-footprint segmenter (seg-diff engine)
-huggingface-hub>=0.24 # auto-downloads the segmenter / SAM2 weights
-transformers>=4.44   # SAM2 full-structure refinement (Sam2Model)
+huggingface-hub>=0.24 # auto-downloads the segmenter / land-cover / SAM weights
+# transformers 5.x: SegFormer land cover, Sam2Model, and Sam3Model (SAM_BACKEND=sam3).
+transformers>=5.0
+#
+# onnxruntime is NOT pinned here — the Dockerfile installs the right variant,
+# because the GPU build's version is tied to the CUDA version torch was built
+# against and getting it wrong is silent, not loud:
+#
+#   torch cu12x  ->  onnxruntime-gpu==1.22.*   (needs CUDA 12 + cuDNN 9)
+#   torch cu13x  ->  onnxruntime-gpu>=1.28
+#   CPU-only     ->  onnxruntime
+#
+# A mismatch does not raise. onnxruntime logs a warning and silently falls back
+# to CPUExecutionProvider, where the ChangeStar ViT-B takes ~13 s per 1024 px
+# tile with every core pinned. Set REQUIRE_GPU=true to turn that into an error.
+# For a local CPU-only install: pip install onnxruntime

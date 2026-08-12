@@ -1,0 +1,12 @@
+# Shell scripts must keep LF endings even when checked out on Windows.
+#
+# This repo is developed on Windows with core.autocrlf=true, which rewrites
+# tracked text files to CRLF on checkout. That is harmless for Python, but fatal
+# for a script that runs inside a Linux container: the shebang is read as
+# `/usr/bin/env sh\r`, and Docker fails with the fairly opaque
+#   env: 'sh\r': No such file or directory
+# The Dockerfile also strips CR defensively, so a clone with different settings
+# still builds a working image.
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+Dockerfile text eol=lf

@@ -11,8 +11,11 @@ sensor/lighting differences are not flagged as change.
 
 from __future__ import annotations
 
+import io
 import logging
 import math
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,18 +30,58 @@ from rasterio.warp import transform_bounds
 from rasterio.windows import Window
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
-from scipy import ndimage
-from skimage.exposure import match_histograms
 from skimage.registration import phase_cross_correlation
+
+from .ml import imageops
 
 log = logging.getLogger("ada.preprocess")
 
-MAX_WORKING_DIM = 6144          # cap the common-grid size (POC memory guard)
+MAX_WORKING_DIM = 6144          # hard ceiling on the common-grid size
+# Host bytes held per working-grid pixel at the pipeline's peak: the two uint8
+# epochs (6) and their masks (4), two float32 footprint maps (8), two float16
+# land-cover stacks at 7 classes (28) plus the float32 accumulator that builds
+# one of them (28), the probability map and the instance id map (8), and the
+# change/vegetation temporaries. Measured, then rounded up.
+PIPELINE_BYTES_PER_PX = 110
+# Share of the host budget the working grid may claim. The rest is the models,
+# GDAL's block cache, and the interpreter itself.
+WORKING_GRID_RAM_SHARE = 0.45
 STATS_SAMPLE_DIM = 2048         # decimated read used for scene-wide statistics
 INGEST_BLOCK_BYTES = 256 << 20  # target working-set per ingest strip (~256 MB)
 MAX_TRUSTED_SHIFT_PX = 32.0     # phase-corr shifts beyond this are rejected
 MIN_SHIFT_IMPROVEMENT = 0.02    # edge agreement must rise by this much to apply
 GRID_MATCH_TOL_M = 0.01         # bounds/res closer than this = identical grid
+
+
+def working_dim_cap() -> int:
+    """Largest common-grid side the host memory budget will carry.
+
+    The 6144 ceiling stays what it always was; this only lowers it when the
+    budget cannot support it. Deriving the number instead of hard-coding it is
+    what makes HOST_MEMORY_LIMIT_GB an actual limit rather than a comment — set
+    it to 8 and the grid drops to ~5900 px on its own, rather than the process
+    discovering the shortfall by swapping.
+    """
+    from ..config import settings
+
+    budget = settings.host_memory_limit_bytes * WORKING_GRID_RAM_SHARE
+    dim = int(math.sqrt(budget / PIPELINE_BYTES_PER_PX))
+    return max(1024, min(MAX_WORKING_DIM, dim))
+
+
+def _gdal_env(**extra):
+    """A rasterio Env carrying the configured block cache.
+
+    Every block GDAL keeps here is a block it does not re-read from disk while
+    warping or building overviews, which is where essentially all of this
+    pipeline's disk traffic comes from. The default is 5% of RAM; on a machine
+    with a declared budget we can be far more generous, and trading host RAM for
+    disk I/O is precisely the trade this pipeline wants.
+    """
+    from ..config import settings
+
+    return rasterio.Env(GDAL_CACHEMAX=settings.gdal_cache_mb,
+                        GDAL_NUM_THREADS="ALL_CPUS", **extra)
 
 
 def _edge_agreement(g1: np.ndarray, g2: np.ndarray, mask: np.ndarray) -> float:
@@ -49,10 +92,7 @@ def _edge_agreement(g1: np.ndarray, g2: np.ndarray, mask: np.ndarray) -> float:
     — unlike |Δgrey|, which a spurious shift can reduce just by smearing a
     systematic brightness offset around.
     """
-    def edges(g: np.ndarray) -> np.ndarray:
-        return np.hypot(ndimage.sobel(g, axis=0), ndimage.sobel(g, axis=1))
-
-    e1, e2 = edges(g1)[mask], edges(g2)[mask]
+    e1, e2 = imageops.sobel_mag(g1)[mask], imageops.sobel_mag(g2)[mask]
     if e1.size < 100:
         return 0.0
     e1 = e1 - e1.mean()
@@ -214,13 +254,95 @@ def _decimated_rgb(src: rasterio.DatasetReader,
     scene, and both are statistics — they converge long before you have read
     every pixel. Sampling them from a decimated read is what lets ingestion of
     an arbitrarily large raster run in bounded memory.
+
+    Kept for small rasters and for callers that need full spatial extent. For
+    ingestion statistics use `_sample_rgb` instead — see the note there on why a
+    decimated whole-extent read is a trap on large tiled files.
     """
     scale = max(src.width / max_dim, src.height / max_dim, 1.0)
     out_h = max(1, int(src.height / scale))
     out_w = max(1, int(src.width / scale))
     indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
     return src.read(indexes, out_shape=(len(indexes), out_h, out_w),
-                    resampling=Resampling.average).astype(np.float32)
+                    resampling=Resampling.nearest).astype(np.float32)
+
+
+def _sample_rgb(src: rasterio.DatasetReader, max_windows: int = 96,
+                win: int = 256) -> tuple[np.ndarray, np.ndarray]:
+    """Read a scattered grid of small windows. Returns (pixels, valid).
+
+    Why not a decimated whole-extent read: on a large TILED raster, decimation
+    does not reduce I/O. A 26824x39854 upload decimated to 2048 samples every
+    ~19th pixel, but the file's blocks are 128x128 — so consecutive sampled
+    pixels land in DIFFERENT blocks and GDAL ends up reading essentially every
+    block in the file. Measured on that upload: 155 s with `average`, and 520 s
+    with `nearest`, which is why switching the resampling method fixed nothing.
+    The cost is set by the block layout, not by the output size.
+
+    Reading whole windows inverts that: 96 windows of 256x256 is ~37 Mpx of
+    contiguous blocks instead of 1069 Mpx of scattered ones, and every byte read
+    contributes to the statistics. Percentiles and the CIR band correlation are
+    scene-level aggregates that converge on far fewer samples than this.
+
+    The windows are laid out on a regular grid rather than at random so the
+    sample is spatially stratified — a corner-heavy random draw would bias the
+    stretch on a scene whose exposure varies across the frame. Grid tiles are
+    also frequently mostly nodata (this upload's probe windows were 100% fill),
+    so windows are collected until enough VALID pixels accumulate.
+    """
+    ratio = max(src.height / max(src.width, 1), 1e-6)
+    cols = max(1, int(round((max_windows / ratio) ** 0.5)))
+    rows = max(1, max_windows // cols)
+
+    blocks, masks, valid_px = [], [], 0
+    for r in range(rows):
+        for c in range(cols):
+            top = min(int((r + 0.5) * src.height / rows) - win // 2,
+                      src.height - win)
+            left = min(int((c + 0.5) * src.width / cols) - win // 2,
+                       src.width - win)
+            window = Window(max(0, left), max(0, top),
+                            min(win, src.width), min(win, src.height))
+            indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
+            block = src.read(indexes, window=window).astype(np.float32)
+            blocks.append(block)
+            m = _valid_mask(src, block, window=window)
+            masks.append(m)
+            valid_px += int(m.sum())
+
+    sample = np.concatenate(blocks, axis=1)
+    valid = np.concatenate(masks, axis=0)
+    if valid_px == 0:
+        log.warning("ingest: sampled %d windows and found no valid pixels — "
+                    "the raster may be entirely nodata", len(blocks))
+    return sample, valid
+
+
+def _valid_mask(src: rasterio.DatasetReader, block: np.ndarray,
+                window: Window | None = None,
+                out_shape: tuple[int, int] | None = None) -> np.ndarray:
+    """Validity for an already-read block, avoiding a second pass when possible.
+
+    `dataset_mask()` is correct but costs a whole extra read of the same pixels
+    — measured at 173 s on the 1069 Mpx upload, on top of the read that just
+    happened. When the dataset declares a nodata value, the mask is by
+    definition derivable from the pixels already in hand: a pixel is nodata only
+    where every band equals the nodata value, which is precisely how GDAL builds
+    the dataset-level mask from per-band nodata.
+
+    Anything more exotic — an alpha band, an internal .msk, per-band nodata —
+    still goes through dataset_mask, because reconstructing those from pixels is
+    not possible. Correctness first; the fast path only covers the case where it
+    is provably equivalent.
+    """
+    nodata = src.nodata
+    has_alpha = any(ci is not None and ci.name == "alpha"
+                    for ci in (src.colorinterp or []))
+    if nodata is not None and not has_alpha:
+        return ~np.all(block == nodata, axis=0)
+    if out_shape is not None:
+        return src.dataset_mask(out_shape=out_shape) > 0
+    return src.dataset_mask(window=window) > 0
 
 
 def _stretch_params(arr: np.ndarray,
@@ -258,6 +380,84 @@ def _row_windows(src: rasterio.DatasetReader):
         yield Window(0, top, src.width, height)
 
 
+class _CogProgress(io.TextIOBase):
+    """Turn rio-cogeo's click progress bar into periodic log lines.
+
+    Building the COG is the second half of an ingest and, on a gigapixel
+    raster, the longer one — but it logged nothing at all between "building
+    COG" and the row flipping to `ready`, so there was no way to tell a slow
+    job from a hung one.
+
+    rio-cogeo will drive a `click.progressbar` at any file passed as
+    `progress_out`, but click renders a bar only when it believes it is writing
+    to a terminal, and a log stream is not one — it emits the label once and
+    then stays silent. So this claims to be a tty and parses the percentage back
+    out of what click draws. Coarse on purpose: one line per `step` percent,
+    because the question being answered is "is it still moving", not "exactly
+    how far".
+    """
+
+    def __init__(self, label: str, step: int = 10) -> None:
+        self.label = label
+        self.step = step
+        self._last = -1
+
+    def isatty(self) -> bool:                 # what makes click render at all
+        return True
+
+    def write(self, text: str) -> int:
+        try:
+            found = re.findall(r"(\d{1,3})\s*%", text)
+            if found:
+                percent = int(found[-1])
+                if percent >= self._last + self.step or percent == 100:
+                    self._last = percent
+                    log.info("%s: %d%%", self.label, percent)
+        except Exception:                     # never let logging break an ingest
+            pass
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
+def _build_cog(source, cog_path: Path, dst_profile: dict, in_memory: bool,
+               label: str) -> None:
+    """cog_translate with progress reporting and a timing summary."""
+    started = time.perf_counter()
+    log.info("%s: starting (block copy, then overview pyramid)", label)
+    cog_translate(source, str(cog_path), dst_profile,
+                  in_memory=in_memory, quiet=False,
+                  progress_out=_CogProgress(label),
+                  config={"GDAL_NUM_THREADS": "ALL_CPUS"})
+    size_gb = cog_path.stat().st_size / (1 << 30) if cog_path.is_file() else 0.0
+    log.info("%s: done in %.1f s, %.2f GB written to %s",
+             label, time.perf_counter() - started, size_gb, cog_path.name)
+
+
+def _intermediate_fits_ram(width: int, height: int) -> bool:
+    """Whether the ingest intermediate can be staged in RAM instead of on disk.
+
+    Ingestion is by far this pipeline's heaviest disk user: it writes a
+    full-size uint8 GeoTIFF, reads it all back, and writes the COG — three
+    passes over multiple GB, on top of reading the upload itself. When the
+    intermediate fits the host budget, the middle file never touches the disk
+    and the whole ingest becomes one read and one write.
+
+    The estimate is uncompressed even though the staged file is deflated, and
+    it triples for rio-cogeo's own in-memory staging and its overview pyramid
+    (~1.33x), so a raster that clears this bar clears it with room to spare.
+    On the default 18 GB budget the cut lands near 700 Mpx: ordinary drone and
+    satellite scenes stage in RAM, ADA's multi-gigapixel survey tiles keep the
+    streaming path exactly as before. Correctness does not depend on which
+    branch runs.
+    """
+    from ..config import settings
+
+    need = width * height * 3 * 3.0
+    return need <= settings.host_memory_limit_bytes * 0.35
+
+
 def ingest_raster(original_path: Path, cog_path: Path) -> dict:
     """Create an 8-bit display COG and return raster metadata.
 
@@ -267,7 +467,7 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
     so ADA's own grid tiles (6-20 GB on disk) could not be ingested at all on a
     normal machine. Peak memory here is one strip, independent of file size.
     """
-    with rasterio.open(original_path) as src:
+    with _gdal_env(), rasterio.open(original_path) as src:
         if src.crs is None:
             raise ValueError(
                 "Raster has no CRS. Upload the matching .tfw AND .prj/.aux.xml "
@@ -279,8 +479,7 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
         # ADA's grid tiles declare nodata=65535, so a brightness test counts the
         # nodata fill as the brightest data in the scene, drags the 98th
         # percentile up to 65535 and stretches every real pixel to black.
-        sample = _decimated_rgb(src)
-        sample_valid = src.dataset_mask(out_shape=sample.shape[1:]) > 0
+        sample, sample_valid = _sample_rgb(src)
         sample, is_cir = _normalize_spectral(sample, sample_valid)
         params = _stretch_params(sample, sample_valid)
         del sample, sample_valid
@@ -293,34 +492,51 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
             "compress": "deflate", "BIGTIFF": "IF_SAFER",
         }
 
-        # Pass 2 — convert and write strip by strip, then COG-ify from disk
-        # (never in memory: `in_memory=True` would defeat the whole point).
-        tmp_path = cog_path.with_suffix(".tmp.tif")
-        try:
-            windows = list(_row_windows(src))
-            with rasterio.open(tmp_path, "w", **profile) as dst:
-                for i, window in enumerate(windows, start=1):
-                    indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
-                    block = src.read(indexes, window=window).astype(np.float32)
-                    block_valid = src.dataset_mask(window=window) > 0
-                    if is_cir:
-                        block = _cir_to_pseudo_natural(block)
-                    dst.write(_apply_stretch(block, params, block_valid),
-                              window=window)
-                    log.info("ingest: strip %s/%s", i, len(windows))
-            log.info("ingest: %s x %s intermediate written, building COG",
-                     src.width, src.height)
-            # BIGTIFF on the COG profile too: rio-cogeo stages its output in a
-            # temporary GeoTIFF built from these same creation options, and a
-            # classic TIFF dies at 4 GB ("Maximum TIFF file size exceeded"),
-            # which is exactly the size range ADA's grid tiles land in.
-            dst_profile = cog_profiles.get("deflate")
-            dst_profile.update({"BIGTIFF": "YES"})
-            cog_translate(str(tmp_path), str(cog_path), dst_profile,
-                          in_memory=False, quiet=True,
-                          config={"GDAL_NUM_THREADS": "ALL_CPUS"})
-        finally:
-            tmp_path.unlink(missing_ok=True)
+        # Pass 2 — convert strip by strip into an intermediate, then COG-ify it.
+        windows = list(_row_windows(src))
+
+        def fill(dst) -> None:
+            for i, window in enumerate(windows, start=1):
+                indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
+                block = src.read(indexes, window=window).astype(np.float32)
+                block_valid = _valid_mask(src, block, window=window)
+                if is_cir:
+                    block = _cir_to_pseudo_natural(block)
+                dst.write(_apply_stretch(block, params, block_valid),
+                          window=window)
+                log.info("ingest: strip %s/%s", i, len(windows))
+
+        # BIGTIFF on the COG profile too: rio-cogeo stages its output in a
+        # temporary GeoTIFF built from these same creation options, and a
+        # classic TIFF dies at 4 GB ("Maximum TIFF file size exceeded"), which
+        # is exactly the size range ADA's grid tiles land in.
+        dst_profile = cog_profiles.get("deflate")
+        dst_profile.update({"BIGTIFF": "YES"})
+
+        if _intermediate_fits_ram(src.width, src.height):
+            # The intermediate exists only to be read straight back. When the
+            # budget can hold it, keeping it in RAM removes a full-size write
+            # AND the read that follows — the largest single piece of disk
+            # traffic in the whole application.
+            log.info("ingest: staging the %s x %s intermediate in RAM "
+                     "(no temporary file written)", src.width, src.height)
+            with MemoryFile() as mem:
+                with mem.open(**profile) as dst:
+                    fill(dst)
+                with mem.open() as staged:
+                    _build_cog(staged, cog_path, dst_profile, True,
+                               "ingest: building COG")
+        else:
+            tmp_path = cog_path.with_suffix(".tmp.tif")
+            try:
+                with rasterio.open(tmp_path, "w", **profile) as dst:
+                    fill(dst)
+                log.info("ingest: %s x %s intermediate too large for the host "
+                         "budget, staged on disk", src.width, src.height)
+                _build_cog(str(tmp_path), cog_path, dst_profile, False,
+                           "ingest: building COG")
+            finally:
+                tmp_path.unlink(missing_ok=True)
 
         bounds_4326 = list(transform_bounds(src.crs, CRS.from_epsg(4326), *src.bounds))
         res_x = abs(src.transform.a)
@@ -346,9 +562,56 @@ class AlignedPair:
     veg2: np.ndarray | None = None  # vegetation in T2 (from raw bands)
 
 
-def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
-    """Put both rasters onto one common grid, aligned pixel-to-pixel."""
-    with rasterio.open(path_t1) as s1, rasterio.open(path_t2) as s2:
+def _pick_source(original: Path, cog: Path | None) -> tuple[Path, bool]:
+    """Choose which file to warp from. Returns (path, is_cog).
+
+    Reading the ORIGINAL is the conservative choice and the only one that
+    preserves the raw bands, so it stays the default whenever anything
+    downstream still needs them.
+
+    But it is brutally slow on the grid tiles ADA actually receives. Building
+    the 6144 px working grid means warping down from the source, and the
+    uploads have no overviews — so GDAL reads every pixel of a 1069 Mpx and a
+    3251 Mpx raster (~26 GB) to produce a 6144 px output. The COG written at
+    ingest has overviews and is ~100x smaller (60 MB vs 6.4 GB), so the same
+    warp becomes near-instant.
+
+    The COG is safe to substitute ONLY because ingest already applied, once and
+    from a scene-wide sample, exactly the transforms superimpose would apply
+    here: CIR -> pseudo-natural conversion and the percentile stretch to uint8.
+    What it does NOT preserve is the raw band values, and those feed
+    `_vegetation_mask_raw` (NDVI / excess-green). Hence the guard in the caller:
+    the COG is only chosen when vegetation comes from the learned land-cover
+    model instead, which reads the same RGB either way.
+    """
+    if cog is not None and Path(cog).is_file():
+        return Path(cog), True
+    return original, False
+
+
+def superimpose(path_t1: Path, path_t2: Path,
+                cog_t1: Path | None = None,
+                cog_t2: Path | None = None) -> AlignedPair:
+    """Put both rasters onto one common grid, aligned pixel-to-pixel.
+
+    Pass `cog_t1`/`cog_t2` to warp from the ingested COGs instead of the
+    originals — far faster, and equivalent as long as the raw bands are not
+    needed. See `_pick_source`; the caller decides via SUPERIMPOSE_SOURCE.
+    """
+    from ..config import settings
+
+    use_cog = settings.superimpose_source != "original"
+    if use_cog and settings.superimpose_source == "auto":
+        # Raw bands are still required by the index-based vegetation masks.
+        use_cog = settings.vegetation_mode == "learned"
+    src_t1, cog1 = _pick_source(path_t1, cog_t1 if use_cog else None)
+    src_t2, cog2 = _pick_source(path_t2, cog_t2 if use_cog else None)
+    if cog1 or cog2:
+        log.info("superimpose: reading %s / %s (COG has overviews; the "
+                 "originals have none, so warping them costs a full read)",
+                 "COG" if cog1 else "original", "COG" if cog2 else "original")
+
+    with _gdal_env(), rasterio.open(src_t1) as s1, rasterio.open(src_t2) as s2:
         if s1.crs is None or s2.crs is None:
             raise ValueError("Both rasters need a CRS for alignment.")
         crs = s1.crs
@@ -374,7 +637,8 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
         # Working grid at the coarser resolution (capped for memory)
         width = math.ceil((e - w) / res)
         height = math.ceil((n - s_) / res)
-        scale = max(width / MAX_WORKING_DIM, height / MAX_WORKING_DIM, 1.0)
+        cap = working_dim_cap()
+        scale = max(width / cap, height / cap, 1.0)
         if scale > 1.0:
             res *= scale
             width = math.ceil((e - w) / res)
@@ -445,28 +709,29 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
             candidate = (float(shift[0]), float(shift[1]))
             if (np.all(np.abs(shift) <= MAX_TRUSTED_SHIFT_PX)
                     and any(abs(v) > 0.05 for v in candidate)):
-                g2_shifted = ndimage.shift(g2, candidate, order=1,
-                                           mode="constant", cval=0)
+                g2_shifted = imageops.shift(g2, candidate, order=1)
                 overlap = valid1 & valid2 & (g2_shifted > 0)
                 if overlap.sum() > 10_000:
                     before = _edge_agreement(g1, g2, overlap)
                     after = _edge_agreement(g1, g2_shifted, overlap)
                     if after > before + MIN_SHIFT_IMPROVEMENT:
                         shift_yx = candidate
+                        # Five full-scene resamples — three bands and two masks
+                        # — which on the GPU cost less than the phase
+                        # correlation that decided to do them.
                         t2 = np.stack([
-                            ndimage.shift(t2[b].astype(np.float32), shift_yx,
-                                          order=1, mode="constant", cval=0)
+                            imageops.shift(t2[b].astype(np.float32), shift_yx,
+                                           order=1)
                             for b in range(3)
                         ]).clip(0, 255).astype(np.uint8)
                         # Shift the mask itself rather than re-deriving it from
                         # brightness: a genuinely black but valid pixel would
                         # otherwise be dropped, and the shifted-in border would
                         # be counted as data.
-                        valid2 = ndimage.shift(valid2.astype(np.float32),
-                                               shift_yx, order=0,
-                                               mode="constant", cval=0) > 0.5
-                        veg2 = ndimage.shift(veg2.astype(np.float32), shift_yx,
-                                             order=0, mode="constant", cval=0) > 0.5
+                        valid2 = imageops.shift(valid2.astype(np.float32),
+                                                shift_yx, order=0) > 0.5
+                        veg2 = imageops.shift(veg2.astype(np.float32), shift_yx,
+                                              order=0) > 0.5
                         log.info("co-registration: applied shift %s "
                                  "(edge agreement %.3f -> %.3f)",
                                  shift_yx, before, after)
@@ -487,12 +752,17 @@ def superimpose(path_t1: Path, path_t2: Path) -> AlignedPair:
             "their nodata values are declared correctly."
         )
 
-    # Radiometric normalization: histogram-match T2 onto T1 (valid area only)
+    # Radiometric normalization: histogram-match T2 onto T1.
+    #
+    # skimage's match_histograms argsorts every pixel of both images to build
+    # its quantiles. On a 6144^2 grid that is three planes of 37 Mpx sorted
+    # twice, plus float32 copies of both epochs to sort — about 900 MB of host
+    # RAM and a second of CPU to produce what is, for uint8 input, a 3x256
+    # lookup table. imageops computes that table from 256-bin histograms
+    # instead: byte-identical output, a fraction of the memory.
     if valid.any():
-        matched = match_histograms(t2.transpose(1, 2, 0).astype(np.float32),
-                                   t1.transpose(1, 2, 0).astype(np.float32),
-                                   channel_axis=-1)
-        t2 = np.clip(matched, 0, 255).astype(np.uint8).transpose(2, 0, 1)
+        t2 = imageops.match_histograms_uint8(
+            t2.transpose(1, 2, 0), t1.transpose(1, 2, 0)).transpose(2, 0, 1)
 
     # Single exit point for the contract: nothing leaves this function carrying
     # values outside the commonly observed area. Downstream stages still apply

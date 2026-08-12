@@ -15,13 +15,28 @@ from ..services import jobs
 router = APIRouter(tags=["rasters"])
 
 
+# --- Why every endpoint in this package is `def`, not `async def` -------------
+#
+# None of them await anything: they run blocking SQLAlchemy queries, blocking
+# GDAL reads, and — here — a multi-gigabyte file copy. FastAPI runs an
+# `async def` endpoint ON the event loop, so each of those held the entire
+# server hostage for its duration. Declared `def`, FastAPI runs them in its
+# worker threadpool instead and the loop stays free to answer everything else.
+#
+# The upload path is where this was most visible. Starlette has already spooled
+# the request body to a temp file by the time the endpoint is called, so this
+# copy is temp -> uploads: for one of ADA's 6 GB grid tiles, minutes of blocking
+# disk I/O during which every other request queued behind it and the browser
+# eventually gave up with a timeout.
+
+
 def _save_upload(upload: UploadFile, dest: Path) -> None:
     with dest.open("wb") as out:
-        shutil.copyfileobj(upload.file, out)
+        shutil.copyfileobj(upload.file, out, length=8 << 20)
 
 
 @router.post("/projects/{project_id}/rasters", response_model=RasterOut)
-async def upload_raster(
+def upload_raster(
     project_id: int,
     name: str = Form(...),
     captured_at: str | None = Form(None),
@@ -76,7 +91,7 @@ async def upload_raster(
 
 
 @router.get("/projects/{project_id}/rasters", response_model=list[RasterOut])
-async def list_rasters(
+def list_rasters(
     project_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -87,7 +102,7 @@ async def list_rasters(
 
 
 @router.delete("/rasters/{raster_id}")
-async def delete_raster(
+def delete_raster(
     raster_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),

@@ -9,6 +9,8 @@ import type {
   ReviewStatus,
   TileInfo,
 } from "./types";
+import Session from "supertokens-auth-react/recipe/session";
+
 import type { Polygon } from "geojson";
 
 export class ApiError extends Error {
@@ -140,11 +142,26 @@ export interface RasterUploadFields {
   prj?: File | null;
 }
 
+/** Refresh the access token, reporting whether a session survives. */
+async function refreshSession(): Promise<boolean> {
+  try {
+    return await Session.attemptRefreshingSession();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Multipart upload via XHR so we can report real upload progress
  * (fetch has no upload progress events).
+ *
+ * Wrapped by `uploadRaster`, which handles the access token, because this is
+ * the one request where an expired token is expensive rather than merely
+ * annoying: ADA's grid tiles run to 18 GB, and the old code answered a 401 by
+ * bouncing the user to /auth — throwing away the entire transfer AND signing
+ * them out, while their refresh token was still perfectly valid.
  */
-export function uploadRaster(
+function sendUpload(
   pid: Id,
   fields: RasterUploadFields,
   onProgress: (fraction: number) => void,
@@ -166,7 +183,8 @@ export function uploadRaster(
     };
     xhr.onload = () => {
       if (xhr.status === 401) {
-        redirectToAuth();
+        // Reported, not acted on — uploadRaster decides whether this is a
+        // recoverable expiry or a real sign-out.
         reject(new ApiError(401, "Session expired"));
       } else if (xhr.status >= 200 && xhr.status < 300) {
         try {
@@ -181,4 +199,28 @@ export function uploadRaster(
     xhr.onerror = () => reject(new ApiError(0, "Upload failed — network error"));
     xhr.send(fd);
   });
+}
+
+export async function uploadRaster(
+  pid: Id,
+  fields: RasterUploadFields,
+  onProgress: (fraction: number) => void,
+): Promise<Raster> {
+  // Refresh BEFORE the body goes out. A multi-gigabyte upload can easily run
+  // past the access token's lifetime, and one cheap round trip up front beats
+  // discovering it after sending every byte.
+  await refreshSession();
+  try {
+    return await sendUpload(pid, fields, onProgress);
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 401) throw err;
+    // Raced the expiry anyway. Refresh once and re-send; only a refresh token
+    // that is genuinely dead means the user has to sign in again.
+    if (!(await refreshSession())) {
+      redirectToAuth();
+      throw err;
+    }
+    onProgress(0);
+    return await sendUpload(pid, fields, onProgress);
+  }
 }

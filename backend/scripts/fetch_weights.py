@@ -44,15 +44,41 @@ MODELS = [
         "role": "Per-epoch building footprint segmentation (ONNX U-Net, CPU)",
     },
     {
+        "key": "changestar",
+        "repo": "geobase/changestar-building-segmentation-vitb",
+        "revision": "main",
+        "kind": "hf_files",
+        "files": ["onnx/model.onnx"],
+        "local": "changestar-building-segmentation-vitb",
+        "license": "Apache-2.0",
+        "role": ("Per-epoch building footprints (ChangeStar ViT-B, 1024 px, GPU). "
+                 "Default: raised BEFORE/AFTER agreement on the Agra pair from "
+                 "IoU 0.112 to 0.554, which is what makes the BEFORE epoch usable"),
+    },
+    {
+        "key": "landcover",
+        "repo": "IgorNer/segformer-b5-loveda",
+        "revision": "main",
+        "kind": "hf_snapshot",
+        "ignore": ["*.msgpack", "*.h5", "*.onnx", "trainer_state.json", "scaler.pt"],
+        "local": "segformer-b5-loveda",
+        "license": "Apache-2.0",
+        "role": ("Land cover / vegetation without a colour rule (SegFormer-B5, "
+                 "LoveDA 7-class, GPU)"),
+    },
+    {
         "key": "sam2",
-        "repo": "facebook/sam2.1-hiera-small",
+        "repo": "facebook/sam2.1-hiera-large",
         "revision": "main",
         "kind": "hf_snapshot",
         # weights + processor/model config; skip the duplicate formats
         "ignore": ["*.msgpack", "*.h5", "*.onnx", "*.pt"],
-        "local": "sam2.1-hiera-small",
+        "local": "sam2.1-hiera-large",
         "license": "Apache-2.0",
-        "role": "Full-structure refinement of confirmed detections (GPU)",
+        "role": ("Full-structure refinement of confirmed detections (GPU). "
+                 "hiera-large, not -small: this decides the reported OUTLINE. "
+                 "For SAM 3 set SAM_BACKEND=sam3 — facebook/sam3 is GATED, so "
+                 "request access on the model page and log in first"),
     },
     {
         "key": "resnet18",
@@ -173,17 +199,32 @@ def write_manifest(entries: list[dict]) -> None:
 
 
 def check() -> int:
+    """Verify every model the CODE currently needs is on disk.
+
+    Deliberately driven by MODELS, not by manifest.json. The manifest records
+    what was fetched last time, so checking against it means adding a model to
+    this file can never make the check fail — the entrypoint reported "weights
+    already vendored" while ChangeStar and the land-cover model had never been
+    downloaded, and the pipeline silently ran from the HuggingFace cache
+    instead. A check that cannot detect the thing it exists to detect is worse
+    than no check, because it is trusted.
+    """
     manifest_path = WEIGHTS / "manifest.json"
-    if not manifest_path.is_file():
-        print("MISSING manifest.json — run without --check to fetch weights")
-        return 1
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = {}
+    if manifest_path.is_file():
+        manifest = {e["key"]: e for e in
+                    json.loads(manifest_path.read_text(encoding="utf-8"))["models"]}
+
     missing = 0
-    for e in manifest["models"]:
-        path = settings.data_dir.parent / e["local_path"]
+    for model in MODELS:
+        path = WEIGHTS / model["local"]
         ok = path.exists() and _dir_size(path) > 0
-        print(f"{'OK  ' if ok else 'MISS'} {e['key']:14s} {e['local_path']}")
+        stale = ok and model["key"] not in manifest
+        flag = "OK  " if ok and not stale else ("STALE" if stale else "MISS")
+        print(f"{flag:5s} {model['key']:14s} {model['local']}")
         missing += 0 if ok else 1
+    if missing:
+        print(f"{missing} model(s) missing — run without --check to fetch")
     return 1 if missing else 0
 
 

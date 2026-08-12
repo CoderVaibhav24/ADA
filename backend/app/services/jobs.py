@@ -1,14 +1,26 @@
 """In-process job runner (POC stand-in for Celery + Redis).
 
-One worker thread executes analysis pipelines sequentially and writes
-progress into the analysis_jobs table, which the frontend polls.
+One worker thread executes ingests and analysis pipelines sequentially and
+writes progress into the database, which the frontend polls.
+
+The worker is a DAEMON thread fed by a queue, deliberately not a
+ThreadPoolExecutor. The executor's threads are non-daemon and Python registers
+an atexit hook that joins them on the way out, so a process asked to shut down
+would not actually leave until the running job finished. Under `uvicorn
+--reload` that produced the worst possible behaviour: every code edit logged
+"Finished server process", left the old process alive still grinding through a
+multi-hour ingest, and started a NEW process that immediately requeued the same
+raster from strip 1. Two processes, same file, neither making progress.
+
+A daemon thread is killed with the process, so a reload actually reloads.
 """
 
 from __future__ import annotations
 
 import logging
+import queue
+import threading
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,9 +29,34 @@ from ..database import SessionLocal
 from ..models import AnalysisJob, Raster, RedZone
 from . import preprocess, vectorize
 from .ml import engine as ml_engine
+from .storage import MissingImageryError, require_file
 
 log = logging.getLogger("ada.jobs")
-_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ada-job")
+
+_queue: queue.Queue = queue.Queue()
+_worker: threading.Thread | None = None
+_worker_lock = threading.Lock()
+
+
+def _pump() -> None:
+    while True:
+        fn, arg = _queue.get()
+        try:
+            fn(arg)
+        except Exception:                       # never let the worker die
+            log.error("job runner caught an unhandled error:\n%s",
+                      traceback.format_exc())
+        finally:
+            _queue.task_done()
+
+
+def _submit(fn, arg) -> None:
+    global _worker
+    with _worker_lock:
+        if _worker is None or not _worker.is_alive():
+            _worker = threading.Thread(target=_pump, name="ada-job", daemon=True)
+            _worker.start()
+    _queue.put((fn, arg))
 
 
 def _update(job_id: int, **fields) -> None:
@@ -29,11 +66,11 @@ def _update(job_id: int, **fields) -> None:
 
 
 def submit_analysis(job_id: int) -> None:
-    _executor.submit(_run_analysis_safe, job_id)
+    _submit(_run_analysis_safe, job_id)
 
 
 def submit_ingest(raster_id: int) -> None:
-    _executor.submit(_run_ingest_safe, raster_id)
+    _submit(_run_ingest_safe, raster_id)
 
 
 def requeue_stale() -> None:
@@ -45,7 +82,25 @@ def requeue_stale() -> None:
     perfectly good upload could sit at PROCESSING forever and no amount of
     restarting would help. Ingest is idempotent (it rewrites the COG from the
     original upload), so re-running it on startup is always safe.
+
+    "Safe" is not the same as "wanted", which is why this is switchable. Under
+    `uvicorn --reload` a restart happens on every keystroke that saves a file,
+    and restarting a 1 Gpx ingest from strip 1 each time means it can never
+    finish — the work is thrown away faster than it accumulates. Set
+    REQUEUE_STALE_ON_STARTUP=false while developing; leave it on in Docker,
+    where a restart is a real event and finishing the job is the point.
     """
+    if not settings.requeue_stale_on_startup:
+        with SessionLocal() as db:
+            pending = (db.query(Raster).filter(Raster.status == "processing").count()
+                       + db.query(AnalysisJob)
+                       .filter(AnalysisJob.status.in_(("queued", "running"))).count())
+        if pending:
+            log.warning("REQUEUE_STALE_ON_STARTUP is off — leaving %d "
+                        "interrupted item(s) alone. Re-run them from the UI.",
+                        pending)
+        return
+
     with SessionLocal() as db:
         stale_rasters = [r.id for r in db.query(Raster)
                          .filter(Raster.status == "processing").all()]
@@ -66,24 +121,60 @@ def _run_ingest_safe(raster_id: int) -> None:
     if raster is None:
         return
     try:
+        original = require_file(raster.original_path,
+                                f"Source imagery for raster {raster_id}")
         cog_path = settings.cogs_dir / f"raster_{raster_id}.tif"
-        meta = preprocess.ingest_raster(Path(raster.original_path), cog_path)
+        meta = preprocess.ingest_raster(original, cog_path)
         with SessionLocal() as db:
             db.query(Raster).filter(Raster.id == raster_id).update({
                 "cog_path": str(cog_path), "status": "ready", **meta,
             })
             db.commit()
+        log.info("ingest: raster %s is READY — %s, %.3f m/px",
+                 raster_id, meta.get("crs"), meta.get("resolution_m", 0.0))
     except Exception as exc:
+        _fail_raster(raster_id, exc)
+
+
+def _fail_raster(raster_id: int, exc: Exception) -> None:
+    # A missing upload is a state problem, not a bug: report it in one line
+    # rather than burying the message under a rasterio stack trace.
+    if isinstance(exc, MissingImageryError):
+        log.error("ingest %s aborted: %s", raster_id, exc)
+    else:
         log.error("ingest %s failed:\n%s", raster_id, traceback.format_exc())
-        with SessionLocal() as db:
-            db.query(Raster).filter(Raster.id == raster_id).update(
-                {"status": "failed", "error": str(exc)})
-            db.commit()
+    with SessionLocal() as db:
+        db.query(Raster).filter(Raster.id == raster_id).update(
+            {"status": "failed", "error": str(exc)})
+        db.commit()
+
+
+def _label(raster: Raster) -> str:
+    return f"Source imagery for raster {raster.id} ('{raster.name}')"
+
+
+def _existing_cog(raster: Raster) -> Path | None:
+    """The ingested COG if it is still on disk, else None (warp the original)."""
+    if not raster.cog_path:
+        return None
+    path = Path(raster.cog_path)
+    if path.is_file():
+        return path
+    log.warning("COG for raster %s is missing (%s); warping the original "
+                "instead — slower, but the analysis still runs",
+                raster.id, path)
+    return None
 
 
 def _run_analysis_safe(job_id: int) -> None:
     try:
         _run_analysis(job_id)
+    except MissingImageryError as exc:
+        # Expected whenever a row outlives its file — the imagery was written
+        # by another deployment, or deleted. One line, not a stack trace.
+        log.error("job %s aborted: %s", job_id, exc)
+        _update(job_id, status="failed", error=str(exc),
+                finished_at=datetime.now(timezone.utc))
     except Exception as exc:
         log.error("job %s failed:\n%s", job_id, traceback.format_exc())
         _update(job_id, status="failed", error=str(exc),
@@ -97,13 +188,27 @@ def _run_analysis(job_id: int) -> None:
             return
         r1 = db.get(Raster, job.raster_t1_id)
         r2 = db.get(Raster, job.raster_t2_id)
+        if r1 is None or r2 is None:
+            raise MissingImageryError(
+                "This analysis references a raster that no longer exists.")
+        # Check both inputs up front, before a single model is loaded. The
+        # originals are required; a missing COG only costs speed, since
+        # superimpose falls back to warping the original.
+        src1 = require_file(r1.original_path, _label(r1))
+        src2 = require_file(r2.original_path, _label(r2))
+        cog1 = _existing_cog(r1)
+        cog2 = _existing_cog(r2)
         mode = (job.mode or "ai").lower()
         zones = [z.geometry for z in
                  db.query(RedZone).filter(RedZone.project_id == job.project_id)]
 
     _update(job_id, status="running", progress=0.02,
             stage="Superimposing rasters (reproject + co-register + normalize)")
-    pair = preprocess.superimpose(Path(r1.original_path), Path(r2.original_path))
+    pair = preprocess.superimpose(src1, src2, cog1, cog2)
+    # Only the seg-diff path produces per-structure instances; the classical and
+    # CD paths emit a bare probability raster and leave these None.
+    instances = instance_ids = None
+    instance_diag: dict = {}
 
     if mode == "diff":
         # --- Diff Mode -------------------------------------------------------
@@ -123,28 +228,69 @@ def _run_analysis(job_id: int) -> None:
         seg_name = ml_engine.get_seg_backend().name
         backend_name = seg_name
         models_used = ["Co-registration: FFT phase correlation (classical)",
-                       f"Building footprints (per epoch): {seg_name}",
-                       "Encroachment logic: vegetation-loss seed (NDVI / excess-green)"]
-        _update(job_id, progress=0.25,
+                       f"Building footprints (per epoch): {seg_name}"]
+        _update(job_id, progress=0.20,
                 stage=f"Segmenting building footprints — {seg_name}")
 
         # Segment each epoch separately, then diff the footprints.
         b1 = ml_engine.segment_scene(
             pair.t1, pair.valid,
-            lambda f: _update(job_id, progress=0.25 + 0.22 * f))
+            lambda f: _update(job_id, progress=0.20 + 0.18 * f))
         b2 = ml_engine.segment_scene(
             pair.t2, pair.valid,
-            lambda f: _update(job_id, progress=0.47 + 0.22 * f))
-        prob = ml_engine.building_change_prob(b1, b2, pair.valid,
-                                              pair.t1, pair.t2,
-                                              pair.veg1, pair.veg2,
-                                              pair.resolution_m)
+            lambda f: _update(job_id, progress=0.38 + 0.18 * f))
+
+        # The segmenter is done with; free its VRAM before the next model
+        # allocates. All three networks resident at once fills a 6 GB card.
+        if settings.release_models_between_stages:
+            ml_engine.release_seg_backend()
+
+        # Land cover gives vegetation without a colour rule, and supplies the
+        # built/open context the instance classifier trains on.
+        lc1 = lc2 = None
+        veg1, veg2 = pair.veg1, pair.veg2
+        if settings.vegetation_mode == "learned":
+            try:
+                _update(job_id, progress=0.56, stage="Land cover — SegFormer/LoveDA")
+                lc1 = ml_engine.landcover_probs(
+                    pair.t1, pair.valid,
+                    lambda f: _update(job_id, progress=0.56 + 0.05 * f))
+                lc2 = ml_engine.landcover_probs(
+                    pair.t2, pair.valid,
+                    lambda f: _update(job_id, progress=0.61 + 0.05 * f))
+                from .ml.landcover import VEGETATION_CLASSES
+                thr = settings.vegetation_threshold
+                veg1 = (lc1[list(VEGETATION_CLASSES)].sum(0) >= thr) & pair.valid
+                veg2 = (lc2[list(VEGETATION_CLASSES)].sum(0) >= thr) & pair.valid
+                models_used.append(
+                    f"Land cover / vegetation: {settings.landcover_model_repo}")
+            except Exception:
+                log.warning("land-cover model unavailable, falling back to the "
+                            "NDVI / excess-green indices", exc_info=True)
+                models_used.append("Vegetation: NDVI / excess-green (index fallback)")
+        else:
+            models_used.append("Vegetation: NDVI / excess-green index")
+
+        if settings.release_models_between_stages:
+            ml_engine.release_landcover()
+
+        _update(job_id, progress=0.66, stage="Analysing building instances")
+        prob, instances, instance_diag, instance_ids = ml_engine.analyse_instances(
+            b1, b2, pair.valid, pair.t1, pair.t2, veg1, veg2, lc1, lc2,
+            pair.resolution_m)
+        models_used.append(
+            f"Instance decision: {instance_diag['decider']} "
+            f"({instance_diag['candidates']} candidates -> "
+            f"{instance_diag['kept']} reported)")
+
         if settings.sam_refine:
+            sam_repo = (settings.sam3_model_repo if settings.sam_backend == "sam3"
+                        else settings.sam_model_repo)
             _update(job_id, progress=0.70,
-                    stage="Refining full building structures — SAM2")
+                    stage=f"Refining full building structures — {settings.sam_backend.upper()}")
             prob = ml_engine.refine_full_structures(prob, pair.t2, pair.valid)
             models_used.append(
-                f"Full-structure refinement: SAM2 ({settings.sam_model_repo})")
+                f"Full-structure refinement: {settings.sam_backend.upper()} ({sam_repo})")
     else:
         backend_name = ml_engine.get_backend().name
         models_used = ["Co-registration: FFT phase correlation (classical)",
@@ -171,7 +317,7 @@ def _run_analysis(job_id: int) -> None:
     _update(job_id, progress=0.82, stage="Vectorizing + classifying changes")
     features = vectorize.extract_polygons(
         prob, pair.valid, pair.t1, pair.t2, pair.transform, pair.crs,
-        pair.resolution_m, zones,
+        pair.resolution_m, zones, instances, instance_ids,
     )
 
     from ..models import ChangePolygon  # local import to avoid cycles
@@ -183,9 +329,18 @@ def _run_analysis(job_id: int) -> None:
         db.commit()
 
     illegal = sum(1 for f in features if f["properties"]["status"] == "illegal")
+    by_type: dict[str, int] = {}
+    for f in features:
+        t = f["properties"].get("change_type")
+        if t:
+            by_type[t] = by_type.get(t, 0) + 1
     stats = {
         "polygons": len(features),
         "illegal": illegal,
+        "by_change_type": by_type,
+        "instance_decider": instance_diag.get("decider"),
+        "seg_trust_iou": (round(instance_diag["seg_trust"], 3)
+                          if "seg_trust" in instance_diag else None),
         "changed_area_m2": round(sum(f["properties"]["area_m2"] for f in features), 1),
         "mode": mode,
         "model": backend_name,

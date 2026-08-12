@@ -42,6 +42,13 @@ services:
     image: ada-backend:poc
     container_name: ada-backend
     restart: unless-stopped
+    # PID 1 is uvicorn, which does not reap children. The ML pipeline forks
+    # worker threads/processes (GDAL, onnxruntime, torch), and when one exits
+    # during a long analysis it becomes a zombie that PID 1 never collects.
+    # Docker then cannot stop the container at all:
+    #   "PID ... is zombie and can not be killed. Use the --init option"
+    # tini as PID 1 forwards signals and reaps orphans, so restarts work.
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,12 +77,45 @@ services:
       CHIP_OVERLAP: ${CHIP_OVERLAP:-64}
       CHANGE_THRESHOLD: ${CHANGE_THRESHOLD:-0.5}
       MIN_CHANGE_AREA_M2: ${MIN_CHANGE_AREA_M2:-15.0}
+      # Compute placement. REQUIRE_GPU=true turns a silent CPU fallback into a
+      # startup error — worth enabling here, because in a container a fallback
+      # is invisible and the symptom is just "analyses take forever".
+      ML_DEVICE: ${ML_DEVICE:-cuda}
+      REQUIRE_GPU: ${REQUIRE_GPU:-false}
+      ONNX_CPU_THREADS: ${ONNX_CPU_THREADS:-4}
+      # Building segmenter: changestar (ViT-B, 1024 px) | geobase (U-Net, 256 px)
+      BUILDING_BACKEND: ${BUILDING_BACKEND:-changestar}
+      # Vegetation: learned (SegFormer-B5 / LoveDA) | index (NDVI + excess-green)
+      VEGETATION_MODE: ${VEGETATION_MODE:-learned}
+      # Warp from the COG (has overviews) rather than the originals.
+      SUPERIMPOSE_SOURCE: ${SUPERIMPOSE_SOURCE:-auto}
+      # Refinement: sam2 | sam3 (sam3 needs access to the GATED facebook/sam3)
+      SAM_BACKEND: ${SAM_BACKEND:-sam2}
+      SAM_MODEL_REPO: ${SAM_MODEL_REPO:-facebook/sam2.1-hiera-large}
+      SAM_MODEL_LOCAL: ${SAM_MODEL_LOCAL:-sam2.1-hiera-large}
+      # Instance decision: rules | shadow | active
+      INSTANCE_DECIDER: ${INSTANCE_DECIDER:-shadow}
+      MIN_TRAINING_SAMPLES: ${MIN_TRAINING_SAMPLES:-150}
+      DETECT_DEMOLITION: ${DETECT_DEMOLITION:-true}
+      # Needed only to pull the gated SAM 3 weights; harmless when unset.
+      HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       # Uploads, COGs, masks, vendored weights and the demo pair all live here
       # and survive `docker compose down`.
       - ./data:/app/data
+      # Share the host's HuggingFace cache so a rebuild does not re-download
+      # ~1.5 GB of weights that are already on disk.
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    # GPU passthrough via the nvidia container runtime.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   frontend:
     build:

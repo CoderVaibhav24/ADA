@@ -10,7 +10,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.post("", response_model=ProjectOut)
-async def create_project(
+def create_project(
     body: ProjectCreate,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -23,7 +23,7 @@ async def create_project(
 
 
 @router.get("", response_model=list[ProjectOut])
-async def list_projects(
+def list_projects(
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -32,7 +32,7 @@ async def list_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
-async def get_project(
+def get_project(
     project_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -41,7 +41,7 @@ async def get_project(
 
 
 @router.delete("/{project_id}")
-async def delete_project(
+def delete_project(
     project_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),

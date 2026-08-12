@@ -10,7 +10,7 @@ router = APIRouter(tags=["red-zones"])
 
 
 @router.post("/projects/{project_id}/red-zones", response_model=RedZoneOut)
-async def create_red_zone(
+def create_red_zone(
     project_id: int,
     body: RedZoneCreate,
     user_id: str = Depends(current_user_id),
@@ -27,7 +27,7 @@ async def create_red_zone(
 
 
 @router.get("/projects/{project_id}/red-zones", response_model=list[RedZoneOut])
-async def list_red_zones(
+def list_red_zones(
     project_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -38,7 +38,7 @@ async def list_red_zones(
 
 
 @router.delete("/red-zones/{zone_id}")
-async def delete_red_zone(
+def delete_red_zone(
     zone_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),

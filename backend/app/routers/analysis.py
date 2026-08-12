@@ -27,7 +27,7 @@ def _centroid(geom: dict) -> tuple[float | None, float | None]:
 
 
 @router.post("/projects/{project_id}/analyses", response_model=AnalysisOut)
-async def create_analysis(
+def create_analysis(
     project_id: int,
     body: AnalysisCreate,
     user_id: str = Depends(current_user_id),
@@ -53,7 +53,7 @@ async def create_analysis(
 
 
 @router.get("/projects/{project_id}/analyses", response_model=list[AnalysisOut])
-async def list_analyses(
+def list_analyses(
     project_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -89,7 +89,7 @@ def _as_feature(p: ChangePolygon) -> dict:
 
 
 @router.get("/analyses/{job_id}", response_model=AnalysisOut)
-async def get_analysis(
+def get_analysis(
     job_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -98,7 +98,7 @@ async def get_analysis(
 
 
 @router.get("/analyses/{job_id}/features")
-async def get_analysis_features(
+def get_analysis_features(
     job_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -112,7 +112,7 @@ async def get_analysis_features(
 
 
 @router.get("/analyses/{job_id}/polygons/{polygon_id}/preview.png")
-async def polygon_preview(
+def polygon_preview(
     job_id: int,
     polygon_id: int,
     user_id: str = Depends(current_user_id),
@@ -132,7 +132,7 @@ async def polygon_preview(
 
 @router.patch("/analyses/{job_id}/polygons/{polygon_id}/review",
               response_model=PolygonReviewOut)
-async def review_polygon(
+def review_polygon(
     job_id: int,
     polygon_id: int,
     body: PolygonReview,
@@ -164,7 +164,7 @@ async def review_polygon(
 
 
 @router.get("/analyses/{job_id}/report.geojson")
-async def download_report_geojson(
+def download_report_geojson(
     job_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -195,7 +195,7 @@ async def download_report_geojson(
 
 
 @router.get("/analyses/{job_id}/report.csv")
-async def download_report_csv(
+def download_report_csv(
     job_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -231,7 +231,7 @@ async def download_report_csv(
 
 
 @router.get("/projects/{project_id}/feedback-dataset")
-async def feedback_dataset(
+def feedback_dataset(
     project_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
@@ -272,7 +272,7 @@ async def feedback_dataset(
 
 
 @router.delete("/analyses/{job_id}")
-async def delete_analysis(
+def delete_analysis(
     job_id: int,
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
