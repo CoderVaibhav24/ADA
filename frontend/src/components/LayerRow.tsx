@@ -14,6 +14,14 @@ interface LayerRowProps {
   /** Swatch class describing the layer color in the stack. */
   swatch?: string;
   subtitle?: string;
+  /** Full-width content under the subtitle — a progress bar while ingesting. */
+  footer?: ReactNode;
+  /**
+   * Drag affordance rendered at the far left. A dedicated handle rather than
+   * making the whole row draggable: the row owns an opacity slider, and a
+   * draggable ancestor swallows the pointer drag that operating it needs.
+   */
+  handle?: ReactNode;
 }
 
 export default function LayerRow({
@@ -27,10 +35,13 @@ export default function LayerRow({
   status,
   swatch,
   subtitle,
+  footer,
+  handle,
 }: LayerRowProps) {
   return (
     <div className={`layer-row${visible ? "" : " is-hidden"}`}>
       <div className="layer-row-top">
+        {handle}
         <label className="layer-check">
           <input
             type="checkbox"
@@ -67,6 +78,7 @@ export default function LayerRow({
         </span>
       </div>
       {subtitle && <div className="layer-subtitle">{subtitle}</div>}
+      {footer}
       {onOpacity && opacity !== undefined && (
         <div className="layer-opacity">
           <input

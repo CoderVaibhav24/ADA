@@ -38,12 +38,10 @@ export default function Header() {
   return (
     <header className="app-header">
       <div className="brand">
-        <div className="brand-mark" aria-hidden="true">
-          ADA
-        </div>
+        <img className="brand-logo" src="/logo-mcpl.svg" alt="PCSMCPL" />
         <div className="brand-text">
-          <h1>ADA Change Detection</h1>
-          <span>Agra Development Authority · Encroachment Monitoring</span>
+          <h1>PCSMCPL Change Detection</h1>
+          <span>PCSMCPL · Encroachment Monitoring</span>
         </div>
       </div>
 
@@ -76,7 +74,7 @@ export default function Header() {
           <a
             className="btn btn-ghost"
             href={downloadUrl.feedbackDataset(current.id)}
-            download={`ada_feedback_${sid(current.id)}.geojson`}
+            download={`pcsmcpl_feedback_${sid(current.id)}.geojson`}
             title="Export every officer-verified detection as labelled training data for the next fine-tuning cycle"
           >
             <IconDownload /> Training set

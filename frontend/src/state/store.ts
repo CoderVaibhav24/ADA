@@ -41,6 +41,50 @@ function mergeVisibility(
   return next;
 }
 
+/**
+ * Draw order for the map layers, topmost first — the order the sidebar shows
+ * and the user drags into place.
+ *
+ * Kept apart from `rasters` because that list is the server's, ordered by
+ * upload time, and it is replaced wholesale every poll; an order held inside it
+ * would be overwritten every three seconds. This is also purely a DISPLAY
+ * concern: which epoch is T1 and which is T2 comes from the analysis form's own
+ * selectors, so re-stacking the maps never changes what an analysis compares.
+ */
+const ORDER_KEY = "ada.rasterOrder";
+
+function loadOrder(projectId: string | null): string[] {
+  if (!projectId) return [];
+  try {
+    const raw = window.localStorage.getItem(`${ORDER_KEY}.${projectId}`);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOrder(projectId: string | null, order: string[]): void {
+  if (!projectId) return;
+  try {
+    window.localStorage.setItem(`${ORDER_KEY}.${projectId}`, JSON.stringify(order));
+  } catch {
+    /* private mode / quota — the order is a convenience, not state to defend */
+  }
+}
+
+/**
+ * Reconcile a stored order against the maps that actually exist: keep the
+ * arranged ones in their arranged positions, drop the deleted, and put newly
+ * uploaded maps on top where the user will see them appear.
+ */
+function reconcileOrder(saved: string[], ids: string[]): string[] {
+  const present = new Set(ids);
+  const kept = saved.filter((id) => present.has(id));
+  const known = new Set(kept);
+  return [...ids.filter((id) => !known.has(id)), ...kept];
+}
+
 interface AppState {
   projects: Project[];
   projectsLoaded: boolean;
@@ -52,6 +96,8 @@ interface AppState {
 
   /** Per-raster layer UI state, keyed by String(raster.id). */
   rasterUI: Record<string, LayerUI>;
+  /** Raster draw order, topmost first. See reconcileOrder. */
+  rasterOrder: string[];
   /** Change-heat mask overlay UI, keyed by String(analysis.id). */
   maskUI: Record<string, LayerUI>;
   /** Change polygon layer UI, keyed by String(analysis.id). */
@@ -79,6 +125,8 @@ interface AppState {
     patch: Partial<ChangeFeatureProps>,
   ) => void;
   patchRasterUI: (id: Id, patch: Partial<LayerUI>) => void;
+  /** Move `dragId` to `dropId`'s position in the draw order. */
+  reorderRasters: (dragId: string, dropId: string) => void;
   patchMaskUI: (id: Id, patch: Partial<LayerUI>) => void;
   patchPolyUI: (id: Id, patch: Partial<LayerUI>) => void;
   setZoneVisible: (id: Id, visible: boolean) => void;
@@ -100,6 +148,7 @@ export const useStore = create<AppState>()((set) => ({
   analyses: [],
   redZones: [],
   rasterUI: {},
+  rasterOrder: [],
   maskUI: {},
   polyUI: {},
   zoneVisible: {},
@@ -123,14 +172,30 @@ export const useStore = create<AppState>()((set) => ({
   setCurrentProject: (id) => set({ currentProjectId: id }),
 
   setRasters: (rasters) =>
-    set((s) => ({
-      rasters,
-      rasterUI: mergeLayerUI(
-        s.rasterUI,
-        rasters.map((r) => sid(r.id)),
-        RASTER_DEFAULT,
-      ),
-    })),
+    set((s) => {
+      const ids = rasters.map((r) => sid(r.id));
+      // Prefer the order already in memory; fall back to what this project had
+      // last session. Both go through the same reconcile, so a map deleted or
+      // uploaded elsewhere lands correctly either way.
+      const base = s.rasterOrder.length ? s.rasterOrder : loadOrder(s.currentProjectId);
+      const rasterOrder = reconcileOrder(base, ids);
+      return {
+        rasters,
+        rasterOrder,
+        rasterUI: mergeLayerUI(s.rasterUI, ids, RASTER_DEFAULT),
+      };
+    }),
+
+  reorderRasters: (dragId, dropId) =>
+    set((s) => {
+      const order = [...s.rasterOrder];
+      const from = order.indexOf(dragId);
+      const to = order.indexOf(dropId);
+      if (from < 0 || to < 0 || from === to) return {};
+      order.splice(to, 0, ...order.splice(from, 1));
+      saveOrder(s.currentProjectId, order);
+      return { rasterOrder: order };
+    }),
 
   setAnalyses: (analyses) =>
     set((s) => {
@@ -241,6 +306,7 @@ export const useStore = create<AppState>()((set) => ({
       analyses: [],
       redZones: [],
       rasterUI: {},
+      rasterOrder: [],
       maskUI: {},
       polyUI: {},
       zoneVisible: {},

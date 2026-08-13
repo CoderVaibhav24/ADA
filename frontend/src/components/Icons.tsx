@@ -123,3 +123,16 @@ export function IconDownload({ size = 14 }: IconProps) {
     </svg>
   );
 }
+
+export function IconGrip({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="6" cy="4" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="4" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="6" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="6" cy="12" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

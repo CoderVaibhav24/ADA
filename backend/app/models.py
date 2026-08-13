@@ -40,6 +40,11 @@ class Raster(Base):
     bounds_4326: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # [w, s, e, n]
     resolution_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="processing")  # processing|ready|failed
+    # Ingest progress, mirroring what analysis_jobs already exposes. A grid tile
+    # takes many minutes to ingest, and "processing" alone cannot distinguish
+    # slow from stuck — which is the whole question an officer has while waiting.
+    progress: Mapped[float] = mapped_column(Float, default=0.0)   # 0.0 - 1.0
+    stage: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

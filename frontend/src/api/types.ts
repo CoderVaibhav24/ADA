@@ -21,6 +21,10 @@ export interface Raster {
   bounds_4326: [number, number, number, number] | null;
   resolution_m: number | null;
   status: RasterStatus;
+  /** 0-1, meaningful while status is "processing". */
+  progress: number;
+  /** Human-readable current ingest step, e.g. "Converting to 8-bit — strip 12/48". */
+  stage: string | null;
   error: string | null;
   uploaded_at: string;
 }

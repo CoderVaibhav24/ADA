@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import logging
 import queue
+import re
 import threading
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,6 +117,48 @@ def requeue_stale() -> None:
         submit_analysis(job_id)
 
 
+def _ingest_reporter(raster_id: int):
+    """Write ingest progress to the raster row, throttled.
+
+    The strip loop fires once per strip (146 of them on a 1 Gpx tile) and the
+    COG copy once per rendered progress-bar frame, far more often than a UI
+    polling every 3 s can use. So a write happens only on a 1% move or after a
+    second of silence.
+
+    A change of PHASE always gets through, but "phase" has to be judged with the
+    counters stripped out. Every stage string here carries one — "strip 12/146",
+    "Building COG (37%)" — so comparing the raw text makes every call look like
+    a transition and the throttle does nothing. Comparing them with the digits
+    removed is what distinguishes "next strip" from "now building overviews".
+
+    That distinction is not cosmetic. The COG bar ends at 0.897 and the overview
+    phase starts at 0.90, a move too small to trigger on its own — so without
+    this the label would sit at "Building COG (99%)" for the whole overview
+    pass, which is the longest silent stretch of an ingest and the one most
+    likely to be read as a hang.
+    """
+    state = {"progress": -1.0, "phase": "", "at": 0.0}
+
+    def report(fraction: float, stage: str) -> None:
+        now = time.monotonic()
+        phase = re.sub(r"\d+", "", stage)
+        moved = fraction - state["progress"] >= 0.01
+        if not (moved or phase != state["phase"] or now - state["at"] >= 1.0):
+            return
+        state.update(progress=fraction, phase=phase, at=now)
+        try:
+            with SessionLocal() as db:
+                db.query(Raster).filter(Raster.id == raster_id).update(
+                    {"progress": round(min(max(fraction, 0.0), 1.0), 4),
+                     "stage": stage})
+                db.commit()
+        except Exception:               # progress is cosmetic; never fail on it
+            log.debug("could not record ingest progress for raster %s",
+                      raster_id, exc_info=True)
+
+    return report
+
+
 def _run_ingest_safe(raster_id: int) -> None:
     with SessionLocal() as db:
         raster = db.get(Raster, raster_id)
@@ -124,10 +168,12 @@ def _run_ingest_safe(raster_id: int) -> None:
         original = require_file(raster.original_path,
                                 f"Source imagery for raster {raster_id}")
         cog_path = settings.cogs_dir / f"raster_{raster_id}.tif"
-        meta = preprocess.ingest_raster(original, cog_path)
+        meta = preprocess.ingest_raster(original, cog_path,
+                                        _ingest_reporter(raster_id))
         with SessionLocal() as db:
             db.query(Raster).filter(Raster.id == raster_id).update({
-                "cog_path": str(cog_path), "status": "ready", **meta,
+                "cog_path": str(cog_path), "status": "ready",
+                "progress": 1.0, "stage": None, **meta,
             })
             db.commit()
         log.info("ingest: raster %s is READY — %s, %.3f m/px",
@@ -144,8 +190,11 @@ def _fail_raster(raster_id: int, exc: Exception) -> None:
     else:
         log.error("ingest %s failed:\n%s", raster_id, traceback.format_exc())
     with SessionLocal() as db:
+        # `progress` is left where it stopped — how far it got before failing is
+        # a useful clue — but the stage label is cleared, since it now describes
+        # work that is not happening.
         db.query(Raster).filter(Raster.id == raster_id).update(
-            {"status": "failed", "error": str(exc)})
+            {"status": "failed", "error": str(exc), "stage": None})
         db.commit()
 
 

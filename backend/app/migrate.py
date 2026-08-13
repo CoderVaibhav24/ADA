@@ -26,7 +26,13 @@ _STATEMENTS = [
     "ALTER TABLE change_polygons ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ",
     "CREATE INDEX IF NOT EXISTS ix_change_polygons_review_status "
     "ON change_polygons (review_status)",
+    # Ingest progress on rasters, so the UI can show how far a multi-gigabyte
+    # upload has got instead of an indefinite "processing".
+    "ALTER TABLE rasters ADD COLUMN IF NOT EXISTS progress DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE rasters ADD COLUMN IF NOT EXISTS stage VARCHAR(120)",
     # Backfill rows that predate the columns.
+    "UPDATE rasters SET progress = 1.0 WHERE progress IS NULL AND status = 'ready'",
+    "UPDATE rasters SET progress = 0.0 WHERE progress IS NULL",
     "UPDATE analysis_jobs SET mode = 'ai' WHERE mode IS NULL",
     "UPDATE change_polygons SET review_status = 'pending' WHERE review_status IS NULL",
 ]

@@ -1,5 +1,5 @@
 /* ============================================================
-   ADA Change Detection — operations-console theme
+   PCSMCPL Change Detection — operations-console theme
    Fonts: Barlow Condensed (display) · IBM Plex Sans (body)
           IBM Plex Mono (data)
    ============================================================ */
@@ -105,15 +105,14 @@ body {
   min-width: 0;
 }
 
-.brand-mark {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.08em;
-  color: var(--bg);
-  background: var(--accent);
-  padding: 3px 7px;
-  border-radius: 2px;
+.brand-logo {
+  /* Height-driven so the mark keeps the aspect ratio baked into the SVG
+     (49x42). The artwork is a square bitmap the file already squashes to that
+     box with preserveAspectRatio="none", so forcing any other ratio here
+     distorts it a second time. */
+  height: 30px;
+  width: auto;
+  display: block;
   flex-shrink: 0;
 }
 
@@ -1354,4 +1353,70 @@ textarea:focus {
 .review-banner.review-rejected {
   color: #9ca3af;
   background: rgba(156, 163, 175, 0.12);
+}
+
+/* ------------------------------------------------- layer reordering (DnD) */
+
+.reorder-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  padding: 0 2px 2px;
+}
+
+.layer-drop {
+  border-radius: 3px;
+  /* Reserved on both edges so rows never shift as the indicator appears. */
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  transition: border-color 100ms ease, opacity 100ms ease;
+}
+
+.layer-drop.is-dragging {
+  opacity: 0.4;
+}
+
+/* The bar marks the edge the row will actually settle against — above the
+   target when dragging up the stack, below it when dragging down. */
+.layer-drop.is-drop-above {
+  border-top-color: var(--accent);
+}
+
+.layer-drop.is-drop-below {
+  border-bottom-color: var(--accent);
+}
+
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  padding: 2px 1px;
+  flex-shrink: 0;
+}
+
+/* The whole row drags, so the grab cursor belongs to the row, not the grip. */
+.layer-drop[draggable="true"] {
+  cursor: grab;
+}
+
+.layer-drop[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.layer-drop:hover .drag-handle {
+  color: var(--text);
+}
+
+/* Controls keep their own cursors — the row's grab cursor must not imply that
+   dragging the slider reorders anything. */
+.layer-drop input,
+.layer-drop button,
+.layer-drop a {
+  cursor: pointer;
+}
+
+.layer-drop input[type="range"] {
+  cursor: ew-resize;
 }

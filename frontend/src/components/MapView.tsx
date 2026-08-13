@@ -144,6 +144,7 @@ export default function MapView() {
   const analyses = useStore((s) => s.analyses);
   const redZones = useStore((s) => s.redZones);
   const rasterUI = useStore((s) => s.rasterUI);
+  const rasterOrder = useStore((s) => s.rasterOrder);
   const maskUI = useStore((s) => s.maskUI);
   const polyUI = useStore((s) => s.polyUI);
   const zoneVisible = useStore((s) => s.zoneVisible);
@@ -343,7 +344,21 @@ export default function MapView() {
       map.setLayoutProperty(lyrId, "visibility", ui.visible ? "visible" : "none");
       map.setPaintProperty(lyrId, "raster-opacity", ui.opacity);
     }
-  }, [mapReady, rasters, rasterUI, rasterInfo]);
+
+    // Apply the user's stacking order.
+    //
+    // MapLibre draws later layers on top, and `moveLayer(id, before)` inserts
+    // id immediately before `before`. So walk the sidebar order BOTTOM-UP,
+    // parking each layer just under the slot marker: each move lands the layer
+    // above everything moved before it, leaving the sidebar's top entry drawn
+    // last — which is what "on top" means to the person dragging it.
+    for (const key of [...rasterOrder].reverse()) {
+      const lyrId = `raster-${key}`;
+      if (map.getLayer(lyrId) && map.getLayer("slot-rasters")) {
+        map.moveLayer(lyrId, "slot-rasters");
+      }
+    }
+  }, [mapReady, rasters, rasterUI, rasterInfo, rasterOrder]);
 
   // ------------------------------------------------------- heat mask sync
   useEffect(() => {

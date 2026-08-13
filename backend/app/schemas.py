@@ -29,6 +29,8 @@ class RasterOut(BaseModel):
     bounds_4326: list[float] | None
     resolution_m: float | None
     status: str
+    progress: float = 0.0        # 0.0 - 1.0, meaningful while status=processing
+    stage: str | None = None     # human-readable current step
     error: str | None
     uploaded_at: datetime
 

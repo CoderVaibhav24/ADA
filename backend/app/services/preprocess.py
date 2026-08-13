@@ -18,6 +18,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import rasterio
@@ -51,6 +52,9 @@ INGEST_BLOCK_BYTES = 256 << 20  # target working-set per ingest strip (~256 MB)
 MAX_TRUSTED_SHIFT_PX = 32.0     # phase-corr shifts beyond this are rejected
 MIN_SHIFT_IMPROVEMENT = 0.02    # edge agreement must rise by this much to apply
 GRID_MATCH_TOL_M = 0.01         # bounds/res closer than this = identical grid
+
+# on_progress(fraction 0..1, human-readable stage)
+ProgressFn = Callable[[float, str], None]
 
 
 def working_dim_cap() -> int:
@@ -380,6 +384,32 @@ def _row_windows(src: rasterio.DatasetReader):
         yield Window(0, top, src.width, height)
 
 
+# Ingest phase weights, from measured runs on ADA's grid tiles. The strip pass
+# reads and converts every pixel; the COG copy re-reads and re-tiles them; the
+# overview pyramid is the tail after the copy reports 100% and is the phase most
+# likely to look like a hang, so it gets its own visible slice.
+STRIP_START, STRIP_SHARE = 0.05, 0.55       # 0.05 -> 0.60
+COG_START, COG_SHARE = 0.60, 0.30           # 0.60 -> 0.90
+OVERVIEW_START = 0.90                       # 0.90 -> 1.00
+
+
+def _cog_reporter(report: ProgressFn) -> ProgressFn:
+    """Map cog_translate's own 0-1 progress into the ingest's COG slice.
+
+    Once the block copy reports 100% the remaining work — the overview pyramid
+    and tag rewrite — emits nothing we can hook, so the bar parks at the start
+    of its slice with an honest label rather than sitting at "100%" for another
+    half minute.
+    """
+    def relay(fraction: float, stage: str) -> None:
+        if fraction >= 1.0:
+            report(OVERVIEW_START, "Building overview pyramid")
+        else:
+            report(COG_START + COG_SHARE * fraction, stage)
+
+    return relay
+
+
 class _CogProgress(io.TextIOBase):
     """Turn rio-cogeo's click progress bar into periodic log lines.
 
@@ -397,9 +427,11 @@ class _CogProgress(io.TextIOBase):
     how far".
     """
 
-    def __init__(self, label: str, step: int = 10) -> None:
+    def __init__(self, label: str, step: int = 10,
+                 on_percent: ProgressFn | None = None) -> None:
         self.label = label
         self.step = step
+        self.on_percent = on_percent
         self._last = -1
 
     def isatty(self) -> bool:                 # what makes click render at all
@@ -413,6 +445,8 @@ class _CogProgress(io.TextIOBase):
                 if percent >= self._last + self.step or percent == 100:
                     self._last = percent
                     log.info("%s: %d%%", self.label, percent)
+                if self.on_percent is not None:
+                    self.on_percent(percent / 100.0, f"Building COG ({percent}%)")
         except Exception:                     # never let logging break an ingest
             pass
         return len(text)
@@ -422,13 +456,13 @@ class _CogProgress(io.TextIOBase):
 
 
 def _build_cog(source, cog_path: Path, dst_profile: dict, in_memory: bool,
-               label: str) -> None:
+               label: str, on_percent: ProgressFn | None = None) -> None:
     """cog_translate with progress reporting and a timing summary."""
     started = time.perf_counter()
     log.info("%s: starting (block copy, then overview pyramid)", label)
     cog_translate(source, str(cog_path), dst_profile,
                   in_memory=in_memory, quiet=False,
-                  progress_out=_CogProgress(label),
+                  progress_out=_CogProgress(label, on_percent=on_percent),
                   config={"GDAL_NUM_THREADS": "ALL_CPUS"})
     size_gb = cog_path.stat().st_size / (1 << 30) if cog_path.is_file() else 0.0
     log.info("%s: done in %.1f s, %.2f GB written to %s",
@@ -458,7 +492,8 @@ def _intermediate_fits_ram(width: int, height: int) -> bool:
     return need <= settings.host_memory_limit_bytes * 0.35
 
 
-def ingest_raster(original_path: Path, cog_path: Path) -> dict:
+def ingest_raster(original_path: Path, cog_path: Path,
+                  on_progress: ProgressFn | None = None) -> dict:
     """Create an 8-bit display COG and return raster metadata.
 
     Streams the source in row strips. The previous implementation read the
@@ -466,7 +501,14 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
     pixel: a 1 Gpx orthophoto needed ~12.8 GB of RAM before it wrote anything,
     so ADA's own grid tiles (6-20 GB on disk) could not be ingested at all on a
     normal machine. Peak memory here is one strip, independent of file size.
+
+    `on_progress(fraction, stage)` is called throughout so the caller can show
+    the officer where a long ingest has got to. The weights below come from
+    measured runs on ADA's grid tiles — the strip pass and the COG block copy
+    dominate, and the overview pyramid is the tail after the copy reports 100%.
     """
+    report = on_progress or (lambda fraction, stage: None)
+
     with _gdal_env(), rasterio.open(original_path) as src:
         if src.crs is None:
             raise ValueError(
@@ -479,6 +521,7 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
         # ADA's grid tiles declare nodata=65535, so a brightness test counts the
         # nodata fill as the brightest data in the scene, drags the 98th
         # percentile up to 65535 and stretches every real pixel to black.
+        report(0.02, "Sampling the scene for colour statistics")
         sample, sample_valid = _sample_rgb(src)
         sample, is_cir = _normalize_spectral(sample, sample_valid)
         params = _stretch_params(sample, sample_valid)
@@ -505,6 +548,8 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
                 dst.write(_apply_stretch(block, params, block_valid),
                           window=window)
                 log.info("ingest: strip %s/%s", i, len(windows))
+                report(STRIP_START + STRIP_SHARE * i / len(windows),
+                       f"Converting to 8-bit — strip {i}/{len(windows)}")
 
         # BIGTIFF on the COG profile too: rio-cogeo stages its output in a
         # temporary GeoTIFF built from these same creation options, and a
@@ -525,7 +570,7 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
                     fill(dst)
                 with mem.open() as staged:
                     _build_cog(staged, cog_path, dst_profile, True,
-                               "ingest: building COG")
+                               "ingest: building COG", _cog_reporter(report))
         else:
             tmp_path = cog_path.with_suffix(".tmp.tif")
             try:
@@ -534,9 +579,11 @@ def ingest_raster(original_path: Path, cog_path: Path) -> dict:
                 log.info("ingest: %s x %s intermediate too large for the host "
                          "budget, staged on disk", src.width, src.height)
                 _build_cog(str(tmp_path), cog_path, dst_profile, False,
-                           "ingest: building COG")
+                           "ingest: building COG", _cog_reporter(report))
             finally:
                 tmp_path.unlink(missing_ok=True)
+
+        report(0.99, "Finalising")
 
         bounds_4326 = list(transform_bounds(src.crs, CRS.from_epsg(4326), *src.bounds))
         res_x = abs(src.transform.a)

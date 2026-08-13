@@ -44,7 +44,7 @@ const authStyle = `
 
 export const superTokensConfig: SuperTokensConfig = {
   appInfo: {
-    appName: "ADA Change Detection",
+    appName: "PCSMCPL Change Detection",
     apiDomain: window.location.origin,
     websiteDomain: window.location.origin,
     apiBasePath: "/api/auth",
