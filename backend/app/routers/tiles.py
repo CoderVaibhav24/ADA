@@ -68,18 +68,32 @@ def _tile_response(path: str, what: str, z: int, x: int, y: int,
                     headers={"Cache-Control": "private, max-age=3600"})
 
 
-def _raster_label(raster: Raster) -> str:
-    return f"Imagery for raster {raster.id} ('{raster.name}')"
+def _resolve_raster(raster_id: int, db: Session, user_id: str) -> tuple[str, str]:
+    """Authorise, take the COG path, and hand the DB connection straight back.
 
+    This is the hot path of the whole application: MapLibre asks for a dozen
+    tiles at once and keeps asking as the user pans. The row lookup takes
+    microseconds and the GDAL read that follows takes hundreds of milliseconds,
+    so holding a pooled connection across the read means concurrent tile
+    requests pin one connection each for their whole duration.
 
-def _get_owned_raster(raster_id: int, db: Session, user_id: str) -> Raster:
+    That is what starved the pool. With the request threadpool 40 wide and the
+    pool 20+20, a tile storm could hold every connection; one more request —
+    a raster list, an analysis delete — then blocked on `pool_timeout` for 30 s
+    and the dev proxy gave up with a 408 long before that. Releasing here keeps
+    connection demand proportional to queries rather than to pixels.
+    """
     raster = db.get(Raster, raster_id)
     if raster is None:
         raise HTTPException(404, "Raster not found")
     get_owned_project(raster.project_id, db, user_id)
     if not raster.cog_path:
         raise HTTPException(409, "Raster is still processing")
-    return raster
+    # Read every attribute BEFORE closing — the instance is detached after.
+    path = raster.cog_path
+    label = f"Imagery for raster {raster.id} ('{raster.name}')"
+    db.close()
+    return path, label
 
 
 @router.get("/raster/{raster_id}/info")
@@ -88,8 +102,8 @@ def raster_tile_info(
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
 ):
-    raster = _get_owned_raster(raster_id, db, user_id)
-    with _open_raster(raster.cog_path, _raster_label(raster)) as reader:
+    path, label = _resolve_raster(raster_id, db, user_id)
+    with _open_raster(path, label) as reader:
         return {
             "bounds": list(reader.get_geographic_bounds("EPSG:4326")),
             "minzoom": reader.minzoom,
@@ -103,8 +117,8 @@ def raster_tile(
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
 ):
-    raster = _get_owned_raster(raster_id, db, user_id)
-    return _tile_response(raster.cog_path, _raster_label(raster), z, x, y)
+    path, label = _resolve_raster(raster_id, db, user_id)
+    return _tile_response(path, label, z, x, y)
 
 
 @router.get("/mask/{job_id}/{z}/{x}/{y}.png")
@@ -119,5 +133,6 @@ def mask_tile(
     get_owned_project(job.project_id, db, user_id)
     if not job.mask_cog_path:
         raise HTTPException(409, "Analysis has no mask yet")
-    return _tile_response(job.mask_cog_path, f"Change mask for analysis {job.id}",
-                          z, x, y, colormap=_MASK_COLORMAP)
+    path, label = job.mask_cog_path, f"Change mask for analysis {job.id}"
+    db.close()          # see _resolve_raster — never hold a connection over a read
+    return _tile_response(path, label, z, x, y, colormap=_MASK_COLORMAP)

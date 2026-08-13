@@ -123,7 +123,12 @@ def polygon_preview(
     poly = db.get(ChangePolygon, polygon_id)
     if poly is None or poly.job_id != job.id:
         raise HTTPException(404, "Polygon not found")
-    png = render_polygon_preview(job.id, poly.geometry)
+    # Same rule as the tile routes: the window reads and PNG compositing below
+    # take orders of magnitude longer than the two queries above, and hovering
+    # a result list fires these in bursts. Release before rendering.
+    geometry, jid = poly.geometry, job.id
+    db.close()
+    png = render_polygon_preview(jid, geometry)
     if png is None:
         raise HTTPException(404, "No aligned rasters stored — re-run the analysis")
     return Response(png, media_type="image/png",

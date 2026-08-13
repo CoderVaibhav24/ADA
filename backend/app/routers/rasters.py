@@ -1,3 +1,4 @@
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from ..models import Raster
 from ..schemas import RasterOut
 from ..services import jobs
 
+log = logging.getLogger("ada.rasters")
 router = APIRouter(tags=["rasters"])
 
 
@@ -111,9 +113,23 @@ def delete_raster(
     if raster is None:
         raise HTTPException(404, "Raster not found")
     get_owned_project(raster.project_id, db, user_id)
-    for p in (raster.original_path, raster.cog_path):
-        if p:
-            Path(p).unlink(missing_ok=True)
+    files = [p for p in (raster.original_path, raster.cog_path) if p]
+
+    # Commit the row first, then unlink. ADA's originals run to 18 GB and
+    # deleting one is not instant; doing it inside the transaction held a
+    # connection — and the row's locks — for the whole of it, which is how a
+    # single delete could stall every other request behind the pool.
     db.delete(raster)
     db.commit()
+    db.close()
+
+    for path in files:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError as exc:
+            # The row is already gone, so the raster is deleted as far as the
+            # user is concerned; a file still held open by a reader just leaves
+            # bytes on disk. Worth a log, not worth a failed request.
+            log.warning("could not remove %s for deleted raster %s: %s",
+                        path, raster_id, exc)
     return {"ok": True}

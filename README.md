@@ -17,7 +17,7 @@ write-up (`ADA_Vision_Project_Documentation.docx`, §6 has the rationale).
 
 | Piece | Choice |
 |---|---|
-| Backend | FastAPI (Python 3.13 venv at `backend/.venv`) |
+| Backend | FastAPI (conda env `torch`: Python 3.12, torch 2.11+cu128, onnxruntime-gpu 1.22) |
 | Auth | SuperTokens (core in Docker, EmailPassword + sessions) |
 | Database | PostgreSQL 16 + PostGIS (Docker) |
 | Raster processing | rasterio, rio-cogeo, scikit-image, scipy |
@@ -112,7 +112,7 @@ is the one file under `data/` kept in version control —
 `THIRD_PARTY_LICENSES.md` (repo root) is regenerated from it.
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\fetch_weights.py --check   # verify, no download
+conda run -n torch python scripts\fetch_weights.py --check   # verify, no download
 ```
 
 Demo data (synthetic Agra scene with 4 new buildings, different
@@ -120,8 +120,8 @@ resolutions and a deliberate 3 m georef offset between epochs):
 
 ```powershell
 cd backend
-.\.venv\Scripts\python scripts\make_sample_data.py   # writes data\samples\*.tif
-.\.venv\Scripts\python scripts\e2e_test.py           # full API smoke test
+conda run -n torch python scripts\make_sample_data.py   # writes data\samples\*.tif
+conda run -n torch python scripts\e2e_test.py           # full API smoke test
 ```
 
 ## How the ML pipeline works (`backend/app/services/`)
