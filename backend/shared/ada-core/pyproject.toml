@@ -1,0 +1,39 @@
+[project]
+name = "ada-core"
+version = "0.1.0"
+description = "ADA shared domain: the ORM models, the engine and the additive migrations."
+requires-python = ">=3.12"
+
+# Deliberately thin. Adding FastAPI here would let a request-shaped concern
+# reach the ML worker, and adding rasterio or torch would put a gigabyte of
+# wheels into the API image for the sake of three table definitions.
+dependencies = [
+  "sqlalchemy>=2.0",
+  "psycopg2-binary>=2.9",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ada_core*"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:ada_core.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -1,0 +1,1 @@
+"""The ADA model service."""

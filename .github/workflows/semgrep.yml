@@ -1,0 +1,40 @@
+name: Semgrep — SAST
+
+on:
+  push:
+    branches: ['**']
+  schedule:
+    - cron: '0 3 * * 1'  # weekly Monday 03:00 UTC
+
+jobs:
+  semgrep:
+    name: Semgrep Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          pip install semgrep --quiet
+          semgrep \
+            --config=p/python \
+            --config=p/javascript \
+            --config=p/typescript \
+            --config=p/secrets \
+            --config=p/owasp-top-ten \
+            --config=p/sql-injection \
+            --exclude=node_modules \
+            --exclude=.venv \
+            --exclude=data \
+            . 2>&1 | tee semgrep-output.txt || true
+
+      - name: Publish to Job Summary
+        if: always()
+        run: |
+          echo "## Semgrep SAST Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat semgrep-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

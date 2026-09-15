@@ -11,6 +11,7 @@ import { TerraDraw, TerraDrawPolygonMode } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import type { FeatureCollection, Polygon } from "geojson";
 import { api } from "../api/client";
+import { accessToken, cachedAccessToken } from "../auth/oidc";
 import type { ChangeFeatureProps, TileInfo } from "../api/types";
 import { sid, useStore } from "../state/store";
 import { createRedZone } from "../state/actions";
@@ -31,6 +32,7 @@ const COLOR_REJECTED = "#6b7280";
 
 // Agra city — sensible default view before any raster exists.
 const AGRA_CENTER: [number, number] = [78.0081, 27.1767];
+
 
 function ensureSlots(map: MlMap): void {
   for (const id of SLOTS) {
@@ -152,6 +154,17 @@ export default function MapView() {
   const drawActive = useStore((s) => s.drawActive);
   const fitRequest = useStore((s) => s.fitRequest);
 
+  // Keep the token MapLibre attaches to tile requests current. Sixty seconds
+  // against a short-lived access token: a stale one costs a 401 on a tile,
+  // which is visible as a blank square until the next refresh, so the interval
+  // has to be comfortably shorter than the lifetime rather than close to it.
+  useEffect(() => {
+    // accessToken() writes the cache transformRequest reads; the return value
+    // is not needed here.
+    const timer = window.setInterval(() => void accessToken(), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // ------------------------------------------------------------------ init
   useEffect(() => {
     const container = containerRef.current;
@@ -162,6 +175,26 @@ export default function MapView() {
       center: AGRA_CENTER,
       zoom: 12,
       attributionControl: false,
+      // MapLibre issues tile requests itself, so the bearer token has to be
+      // attached here — nothing else in the app sees them. Only our own /api
+      // tiles get the header: sending it to the OpenStreetMap basemap would
+      // hand an access token to a third party.
+      //
+      // `transformRequest` is synchronous, so it can only use a token already
+      // in hand. AuthGate primes that cache before this component mounts and
+      // the effect above keeps it fresh.
+      transformRequest: (url, resourceType) => {
+        if (
+          resourceType === "Tile" &&
+          url.startsWith(`${window.location.origin}/api/`)
+        ) {
+          const token = cachedAccessToken();
+          return token
+            ? { url, headers: { Authorization: `Bearer ${token}` } }
+            : { url };
+        }
+        return { url };
+      },
       style: {
         version: 8,
         sources: {

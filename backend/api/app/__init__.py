@@ -1,0 +1,1 @@
+"""The ADA API service."""

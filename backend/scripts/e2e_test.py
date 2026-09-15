@@ -1,5 +1,10 @@
 """Full end-to-end API test: auth -> project -> uploads -> red zone ->
-analysis -> polygons -> tiles. Run with the backend + docker services up."""
+analysis -> polygons -> tiles.
+
+Run with the stack up (`docker compose up -d`). It signs in through ada-auth,
+then drives ada-api; ada-ml does the ingest and the analysis, so a slow first
+run is the model service fetching weights rather than this script hanging.
+"""
 
 import os
 import sys
@@ -8,29 +13,63 @@ from pathlib import Path
 
 import httpx
 
-# Native runs hit the backend directly; the Docker POC exposes it behind the
+# Native runs hit ada-api directly; the Docker POC exposes it behind the
 # frontend's nginx, so point this at the app origin instead:
-#   ADA_BASE_URL=http://localhost:5173 python scripts/e2e_test.py
+#   ADA_BASE_URL=http://localhost:5173 python backend/scripts/e2e_test.py
 BASE = os.environ.get("ADA_BASE_URL", "http://localhost:8000")
+# ada-auth, for the phone + one-time-code sign-in below.
+AUTH_BASE = os.environ.get("ADA_AUTH_URL", "http://localhost:8002")
+# backend/scripts/ is two levels below the repository root.
 SAMPLES = Path(__file__).resolve().parents[2] / "data" / "samples"
-EMAIL, PASSWORD = "test@ada.gov.in", "TestPass123!"
 
-client = httpx.Client(base_url=BASE, timeout=120,
-                      headers={"st-auth-mode": "cookie"})
+# The account this test signs in as. It must exist in the realm with this
+# number on its phoneNumber attribute — digits only, no '+' and no spaces, or
+# ada-auth will not find it and answers as though it were unregistered.
+PHONE = os.environ.get("ADA_E2E_PHONE", "919990001234")
+# In ADA_ENV=local every issued code is ADA_DEV_OTP, so this needs no SMS
+# provider and no inbox. Production cannot enable that bypass.
+DEV_OTP = os.environ.get("ADA_DEV_OTP", "000000")
 
 
 def step(msg: str) -> None:
     print(f"\n=== {msg} ===")
 
 
-step("Sign in (SuperTokens)")
-r = client.post("/api/auth/signin", json={"formFields": [
-    {"id": "email", "value": EMAIL}, {"id": "password", "value": PASSWORD}]})
-if r.json().get("status") != "OK":
-    r = client.post("/api/auth/signup", json={"formFields": [
-        {"id": "email", "value": EMAIL}, {"id": "password", "value": PASSWORD}]})
-assert r.json()["status"] == "OK", r.text
-print("signed in, cookies:", list(client.cookies.keys()))
+def sign_in() -> str:
+    """An access token for the test officer.
+
+    Authentication is Keycloak now, not SuperTokens, so there is no signup
+    endpoint on this API to call and no session cookie to collect. Two ways in:
+
+      * ADA_ACCESS_TOKEN, for a CI job that already minted one;
+      * otherwise ada-auth's OTP pair, which is ADA's own sign-in path and
+        needs nothing but the local dev bypass.
+    """
+    existing = os.environ.get("ADA_ACCESS_TOKEN")
+    if existing:
+        print("using ADA_ACCESS_TOKEN from the environment")
+        return existing
+
+    with httpx.Client(base_url=AUTH_BASE, timeout=30) as auth:
+        r = auth.post("/v1/auth/request-otp", json={"phone": PHONE})
+        assert r.status_code == 202, f"request-otp: {r.status_code} {r.text}"
+        r = auth.post("/v1/auth/verify-otp", json={"phone": PHONE, "code": DEV_OTP})
+        assert r.status_code == 200, (
+            f"verify-otp: {r.status_code} {r.text}\n"
+            "A 401 here with ADA_ENV=local usually means the account does not "
+            "carry this phone number; a 503 means Keycloak refused the token "
+            "exchange (check --features=token-exchange:v1)."
+        )
+        return r.json()["access_token"]
+
+
+step("Sign in (ada-auth, phone + one-time code)")
+token = sign_in()
+# Bearer, not a cookie. Every request below carries it, including the tile and
+# report calls the browser used to make on its own.
+client = httpx.Client(base_url=BASE, timeout=120,
+                      headers={"Authorization": f"Bearer {token}"})
+print("signed in, token length:", len(token))
 
 step("Create project")
 r = client.post("/api/projects", json={"name": "Agra POC",

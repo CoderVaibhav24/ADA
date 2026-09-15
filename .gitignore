@@ -1,35 +1,100 @@
-# Secrets — never commit
+# ── Secrets ──────────────────────────────────────────────────
+#
+# The glob matters as much as the bare name: .env.local and .env.production
+# hold the same credentials, and a bare `.env` rule catches neither. The real
+# env file now lives beside the compose file it feeds (infra/.env); the
+# committed template is re-admitted below.
 .env
+.env.*
+!.env.example
+!infra/.env.example
 
-# Python
-backend/.venv/
+# ── Python ───────────────────────────────────────────────────
+.venv/
+**/.venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+**/*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Node
-frontend/node_modules/
-frontend/dist/
+# ── Node ─────────────────────────────────────────────────────
+#
+# Repo-wide, not frontend/-specific: there are two Vite projects (the console
+# and keycloak-theme/) and a path-anchored rule silently fails to cover the
+# second. keycloak-theme/node_modules alone is 3,381 files and carries
+# platform-specific binaries plus a Maven cache full of jars.
+node_modules/
+dist/
+# Keycloakify's output: two theme jars, rebuilt by
+# `npm run build-keycloak-theme`. infra/docker-compose.yml bind-mounts one of
+# them, so it has to exist locally — it does not have to be in git.
+dist_keycloak/
+*.tsbuildinfo
+.eslintcache
 
-# Data (uploads, COGs, masks, weights, samples)
-data/
-backend/data/
-# ...but the weight manifest is the reproducibility record: it pins the exact
-# upstream commit of every vendored model, so `fetch_weights.py` can rebuild an
+# ── Data (uploads, COGs, masks, weights, samples) ────────────
+#
+# Spelled out rather than a bare `data/`: git does not descend into an excluded
+# directory, so a `!data/weights/manifest.json` under `data/` would never be
+# reached. Excluding the contents instead, and re-admitting one path at a time,
+# is what makes the negation work.
+data/*
+!data/weights/
+data/weights/*
+# The weight manifest is the reproducibility record: it pins the exact upstream
+# commit of every vendored model, so `fetch_weights.py` can rebuild an
 # identical data/weights/ on any machine. Keep it in version control.
 !data/weights/manifest.json
 
-# Local scratch / non-project artifacts — not part of the app
+# ── Docs build output ────────────────────────────────────────
+#
+# docs/ itself IS tracked — the sources and the BA pack are the deliverable.
+# Only the generated intermediates are not: regenerate with
+# `docs/pdf-build/build.sh`.
+docs/pdf-build/build/
+
+# ── Local scratch / non-project artifacts ────────────────────
 /Test/
 /SS/
 /Agra Scope of Work.pdf
-
-# Generated documentation (regenerate with backend/scripts/build_documentation.py)
 /ADA_Vision_Project_Documentation.docx
 
+# ── Docker ───────────────────────────────────────────────────
+infra/docker-compose.override.yml
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+# ── IDE ──────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 # Claude Code local (machine-specific permissions, not shared)
 .claude/settings.local.json
 
-# Misc
+# ── Logs ─────────────────────────────────────────────────────
+logs/
 *.log
-.DS_Store
-Thumbs.db
+npm-debug.log*
+
+docs
+
+backend/ml/scripts
+backend/ml/training
+backend/scripts

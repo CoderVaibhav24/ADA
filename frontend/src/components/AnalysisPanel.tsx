@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { sid, useStore } from "../state/store";
 import { deleteAnalysis, reviewPolygon, runAnalysis } from "../state/actions";
-import { downloadUrl } from "../api/client";
+import { download, downloadUrl } from "../api/client";
 import type {
   Analysis,
   AnalysisMode,
@@ -256,21 +256,34 @@ function AnalysisCard({
               </ol>
             </details>
           )}
+          {/* Buttons, not links: a bearer token does not travel on an <a
+              href>, so a direct link answers 401 and saves the error page.
+              download() fetches with the header and hands over a blob. */}
           <div className="export-row">
-            <a
+            <button
+              type="button"
               className="btn btn-ghost btn-sm"
-              href={downloadUrl.reportCsv(a.id)}
-              download
+              onClick={() =>
+                void download(
+                  downloadUrl.reportCsv(a.id),
+                  `ada_analysis_${a.id}.csv`,
+                )
+              }
             >
               <IconDownload /> CSV register
-            </a>
-            <a
+            </button>
+            <button
+              type="button"
               className="btn btn-ghost btn-sm"
-              href={downloadUrl.reportGeojson(a.id)}
-              download
+              onClick={() =>
+                void download(
+                  downloadUrl.reportGeojson(a.id),
+                  `ada_analysis_${a.id}.geojson`,
+                )
+              }
             >
               <IconDownload /> GeoJSON
-            </a>
+            </button>
           </div>
         </div>
       )}

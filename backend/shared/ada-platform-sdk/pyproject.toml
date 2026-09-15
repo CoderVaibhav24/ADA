@@ -1,0 +1,50 @@
+[project]
+name = "ada-platform-sdk"
+version = "0.1.0"
+description = "Authenticate users and send notifications through ADA."
+requires-python = ">=3.11"
+
+# Deliberately three. An SDK is installed into somebody else's application, and
+# every dependency it carries is a version constraint imposed on them — the way
+# to be uninstallable is to need a specific FastAPI.
+#
+# FastAPI is NOT here. auth.py imports it inside the dependency factories, so a
+# Celery worker or a script can use ADANotify without a web framework, and an
+# application using the decorators has FastAPI already.
+dependencies = [
+  "httpx>=0.27",
+  "pyjwt[crypto]>=2.9",
+]
+
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.110"]
+dev = ["pytest>=8.3", "ruff>=0.8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ada_platform*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = ["S101"]  # assert is how pytest works
+
+[tool.ruff.lint.flake8-bugbear]
+# B008 exists because a mutable default is evaluated once and shared. Depends()
+# is evaluated once on purpose — that is how FastAPI declares a dependency, and
+# the "fix" it suggests would stop the framework seeing it at all.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Header"]
+
+[tool.ruff.lint.per-file-ignores]
+# A test that stands in for Keycloak has to hand the SDK a client secret. The
+# value is "not-a-real-secret" and it is checked into a test file on purpose.
+"tests/*" = ["S105", "S106"]

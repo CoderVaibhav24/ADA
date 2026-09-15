@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { signOut } from "supertokens-auth-react/recipe/session";
-import { USER_EMAIL_KEY } from "../config/supertokens";
+import { useEffect, useState } from "react";
+import type { User } from "oidc-client-ts";
+import { currentUser, displayName, logout } from "../auth/oidc";
 import { useStore, sid } from "../state/store";
 import { deleteProject, selectProject } from "../state/actions";
-import { downloadUrl } from "../api/client";
+import { download, downloadUrl } from "../api/client";
 import { IconDownload, IconPlus, IconSignOut, IconTrash } from "./Icons";
 import NewProjectModal from "./NewProjectModal";
 
@@ -12,16 +11,24 @@ export default function Header() {
   const projects = useStore((s) => s.projects);
   const currentProjectId = useStore((s) => s.currentProjectId);
   const [showNewProject, setShowNewProject] = useState(false);
-  const navigate = useNavigate();
+  const [user, setUser] = useState<User | null>(null);
 
-  const email =
-    window.localStorage.getItem(USER_EMAIL_KEY) ?? "authenticated operator";
+  // The address comes off the ID token now rather than out of localStorage,
+  // where the old code had to stash it because SuperTokens' access token did
+  // not carry one.
+  useEffect(() => {
+    void currentUser().then(setUser);
+  }, []);
+
+  const email = displayName(user);
   const current = projects.find((p) => sid(p.id) === currentProjectId);
 
   async function handleSignOut() {
-    await signOut();
-    window.localStorage.removeItem(USER_EMAIL_KEY);
-    navigate("/auth");
+    // logout() knows which kind of session is live: an OIDC one is ended at
+    // Keycloak (which redirects back to /auth/signed-out), an OTP one by
+    // revoking its refresh token at ada-auth. Either way the navigation is
+    // handled there, so there is no navigate() here.
+    await logout();
   }
 
   async function handleDeleteProject() {
@@ -71,14 +78,19 @@ export default function Header() {
           <IconPlus /> New project
         </button>
         {current && (
-          <a
+          <button
+            type="button"
             className="btn btn-ghost"
-            href={downloadUrl.feedbackDataset(current.id)}
-            download={`pcsmcpl_feedback_${sid(current.id)}.geojson`}
             title="Export every officer-verified detection as labelled training data for the next fine-tuning cycle"
+            onClick={() =>
+              void download(
+                downloadUrl.feedbackDataset(current.id),
+                `pcsmcpl_feedback_${sid(current.id)}.geojson`,
+              )
+            }
           >
             <IconDownload /> Training set
-          </a>
+          </button>
         )}
         {current && (
           <button

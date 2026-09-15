@@ -1,0 +1,28 @@
+# GPU passthrough for ada-ml, as an opt-in override.
+#
+# Kept out of docker-compose.yml because a devices reservation naming the
+# nvidia driver is a hard error on a host that has none — not a no-op:
+#
+#   Error response from daemon: could not select device driver "nvidia"
+#   with capabilities: [[gpu]]
+#
+# So the base file starts everywhere, and an NVIDIA deployment opts in:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Pair it with REQUIRE_GPU=true in .env. Without that, a card the container
+# cannot actually reach shows up only as analyses that take ten times longer,
+# because onnxruntime falls back to the CPU with a warning rather than an error.
+#
+# Not for macOS: Docker Desktop passes no Mac GPU through to its Linux VM, so
+# this override cannot help there. Run ada-ml on the host with ML_DEVICE=mps
+# instead — see RUN-GUIDE.md section 3.
+services:
+  ada-ml:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

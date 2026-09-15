@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import type { ChangeFeatureProps } from "../api/types";
+import { objectUrl } from "../api/client";
 import { formatArea } from "../lib/geo";
 
 export interface HoverState {
@@ -22,10 +24,42 @@ export default function HoverPopup({
   const illegal = props.status === "illegal";
   const review = props.review_status ?? "pending";
   const flipX = containerWidth > 0 && x > containerWidth - 300;
-  const previewUrl =
+  const previewPath =
     jobId && featureId != null
       ? `/api/analyses/${jobId}/polygons/${featureId}/preview.png`
       : null;
+
+  // An <img src> carries no Authorization header, and the preview route is
+  // authenticated — so the bytes are fetched with the token and handed to the
+  // tag as a blob URL. Revoked on unmount, or the popup leaks one object URL
+  // per polygon the officer hovers over, which on a dense scene is thousands.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!previewPath) {
+      setPreviewUrl(null);
+      return;
+    }
+    let url: string | null = null;
+    let cancelled = false;
+    objectUrl(previewPath)
+      .then((created) => {
+        url = created;
+        if (cancelled) {
+          URL.revokeObjectURL(created);
+        } else {
+          setPreviewUrl(created);
+        }
+      })
+      .catch(() => {
+        // A missing preview is not an error worth showing: the <img> was
+        // already hidden on failure before this change.
+        if (!cancelled) setPreviewUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [previewPath]);
 
   return (
     <div

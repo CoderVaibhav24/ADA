@@ -1136,9 +1136,6 @@ textarea:focus {
 
 /* ---------------------------------------------------------- auth page */
 
-#supertokens-root {
-  min-height: 100%;
-}
 
 /* Before/after evidence patch inside the hover popup */
 .hover-preview {
@@ -1419,4 +1416,120 @@ textarea:focus {
 
 .layer-drop input[type="range"] {
   cursor: ew-resize;
+}
+
+/* ---------------------------------------------------------------- auth gate
+   The three pre-console states: checking a session, signed out, and the
+   sign-in callback. There is no login form — Keycloak owns that screen — so
+   this is deliberately plain, and centred rather than laid out, because it is
+   the only view in the app with no map beside it. */
+.auth-splash {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+.auth-splash h1 {
+  font-family: "Barlow Condensed", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.auth-splash p {
+  margin: 0;
+  max-width: 42ch;
+}
+
+/* The sign-in failure message. Wraps rather than truncates: it carries the
+   reason the redirect did not complete, which is the only diagnostic the
+   officer can read out over the phone. */
+.auth-error {
+  color: #ff5c5c;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+  max-width: 60ch;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------- sign-in chooser */
+.auth-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 260px;
+}
+
+/* ------------------------------------------------------------- OTP form */
+.otp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 300px;
+  text-align: left;
+}
+
+.otp-form h1 {
+  font-family: "Barlow Condensed", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 8px;
+}
+
+.otp-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #adbdcc;
+  margin-top: 6px;
+}
+
+.otp-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #7c8b9a;
+  max-width: 34ch;
+}
+
+.otp-notice {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: #9ecb9e;
+}
+
+/* Six boxes rather than one field. Wide enough for a fingertip, and
+   tabular-nums so the digits do not shift as they are typed. */
+.otp-digits {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.otp-digit {
+  width: 44px;
+  height: 52px;
+  text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.4rem;
+  color: #dbe6f0;
+  background: #0a0e13;
+  border: 1px solid #22303f;
+  border-radius: 3px;
+}
+
+.otp-digit:focus {
+  outline: none;
+  border-color: #ff7a29;
+}
+
+.otp-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
 }

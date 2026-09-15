@@ -1,0 +1,660 @@
+# ADA Change Detection — the whole estate, in one file.
+#
+# Five processes that used to be one, plus the identity and notification plane
+# brought over from Atrium:
+#
+#   ada-api      the browser-facing API. No models, no GPU.
+#   ada-ml       the pipeline and the worker thread. Owns the GPU and the DDL.
+#   ada-auth     phone + one-time code, exchanged for ordinary Keycloak tokens.
+#   ada-notify   notification ingestion (+ ada-worker, which delivers).
+#   keycloak     the identity plane. Every durable fact about a person is here.
+#
+# The split is not cosmetic. Before it, one ViT-B inference held the same
+# process that served map tiles, and the API image carried several gigabytes of
+# CUDA wheels it never executed.
+#
+# Ports are bound to 127.0.0.1 wherever the service is not meant for a browser.
+# The two that are — the frontend and Keycloak's login page — are the only ones
+# a person ever types.
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: ada-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Read by infra/init-db.sh on first initialisation only.
+      POSTGRES_KEYCLOAK_DB: ${POSTGRES_KEYCLOAK_DB:-keycloak}
+      POSTGRES_NOTIFY_DB: ${POSTGRES_NOTIFY_DB:-ada_notify}
+      KC_DB_USERNAME: ${KC_DB_USERNAME:-${POSTGRES_USER}}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    volumes:
+      - ada_pgdata:/var/lib/postgresql/data
+      # Runs ONCE, on first initialisation of an empty data directory. Editing
+      # it against a populated volume does nothing — remove the ada_pgdata
+      # volume for a change here to take effect.
+      - ./postgres-init/init-db.sh:/docker-entrypoint-initdb.d/99-init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [ada]
+
+  redis:
+    # Holds pending one-time codes (ada-auth) and the notification broker's
+    # streams and retry schedule (ada-notify). Not a cache: losing the
+    # append-only file loses queued deliveries, so persistence is on.
+    #
+    # 7.4 rather than 7.2: 7.2 is the last BSD-licensed release but the first to
+    # stop receiving fixes, and RSALv2/SSPL is still zero cost for this use.
+    image: redis:7.4.11-alpine
+    container_name: ada-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - ada_redisdata:/data
+    healthcheck:
+      # Two failure modes this has to survive: a password-protected instance
+      # answering PING with NOAUTH, and an instance still replaying its
+      # append-only file answering LOADING. Both exit zero, so match the reply
+      # rather than trusting the exit code.
+      test:
+        - CMD-SHELL
+        - '[ -z "$${REDIS_PASSWORD}" ] || export REDISCLI_AUTH="$${REDIS_PASSWORD}"; redis-cli ping | grep -q PONG'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [ada]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.2
+    container_name: ada-keycloak
+    restart: unless-stopped
+    # start-dev is right for this stage and wrong for production. Production
+    # runs `start` with KC_HOSTNAME set to the real public URL and TLS
+    # terminated in front of it; start-dev serves plain HTTP, relaxes hostname
+    # verification and turns on developer caching.
+    #
+    # --import-realm reads /opt/keycloak/data/import at boot, and imports only
+    # realms that are not already there — the strategy it logs is
+    # IGNORE_EXISTING. Once the realm is in the database, edits to
+    # realm-ada.json do nothing until the realm is deleted from the console or
+    # the postgres volume is removed. This catches people every single time.
+    #
+    # --features=token-exchange:v1 is what ada-auth's OTP login needs, and the
+    # version matters. /verify-otp mints a user token by exchanging the service
+    # account's own token for the subject (requested_subject). Verified against
+    # 26.7.2:
+    #
+    #   token-exchange-standard:v2  the supported feature, and it REFUSES this:
+    #                              "Parameter 'requested_subject' is not
+    #                              supported for standard token exchange"
+    #   token-exchange:v1          preview, and the only one that performs it
+    #
+    # So this is a preview feature in the login path, deliberately and with the
+    # cost recorded: a Keycloak upgrade has to re-verify it before it ships.
+    command: ["start-dev", "--import-realm", "--features=token-exchange:v1"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_KEYCLOAK_DB:-keycloak}
+      KC_DB_USERNAME: ${KC_DB_USERNAME:-${POSTGRES_USER}}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      # Keycloak 26 renamed these from KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD.
+      # The old names are ignored rather than rejected, and the symptom is a
+      # realm that starts perfectly and has no administrator you can log in as.
+      #
+      # These create a temporary bootstrap admin in the master realm on first
+      # start only. Replace it with a named account and drop these before this
+      # stack is anything but local.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set KC_BOOTSTRAP_ADMIN_PASSWORD in .env}
+      KC_HTTP_PORT: "${KC_HTTP_PORT:-8090}"
+      # Keycloak is served THROUGH the frontend's nginx, on the app's own
+      # origin, not on a port of its own. So the hostname it builds URLs with
+      # is the app's, and everything it serves sits under a relative path.
+      #
+      # /idp, not /auth: the console already owns /auth/callback and
+      # /auth/signed-out, and Keycloak claiming /auth would shadow the two
+      # routes that complete a login.
+      #
+      # The effect is that a person never leaves localhost:5173 — the login
+      # page, the TOTP prompt and the password reset are all same-origin, and
+      # the browser's address bar stops announcing the identity provider.
+      # The PATH belongs in here, not only in KC_HTTP_RELATIVE_PATH. Keycloak
+      # 26's hostname v2 takes the front-end base URL from KC_HOSTNAME
+      # verbatim: given a bare origin it advertises an issuer of
+      # http://localhost:5173/realms/... while actually serving
+      # /idp/realms/..., and every token is then rejected for an issuer
+      # mismatch against a URL that 404s.
+      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:5173/idp}
+      KC_HTTP_RELATIVE_PATH: ${KC_HTTP_RELATIVE_PATH:-/idp}
+      # Trust X-Forwarded-* from nginx. Without it Keycloak builds redirects
+      # from the container's own address and the browser is sent to
+      # http://keycloak:8090/..., which resolves nowhere outside Docker.
+      KC_PROXY_HEADERS: xforwarded
+      # Dev only. Strict hostname would refuse the direct :8091 access that the
+      # admin console and these scripts still use; production sets it true and
+      # reaches Keycloak only through the proxy.
+      KC_HOSTNAME_STRICT: "${KC_HOSTNAME_STRICT:-false}"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # Realm-import substitutions. Verified against 26.7.2: the plain
+      # ${NAME:default} form resolves from the container environment and the
+      # ${env.NAME:default} form does NOT — do not "fix" the realm file to the
+      # env. form.
+      #
+      # `:?` rather than `:-` on everything the realm cannot be correct without.
+      # This matters more than usual here, because --import-realm is
+      # IGNORE_EXISTING: a wrong value is baked into the database on first start
+      # and correcting .env afterwards changes nothing until the volume is gone.
+      ADA_NOTIFY_CLIENT_SECRET: ${ADA_NOTIFY_CLIENT_SECRET:?set ADA_NOTIFY_CLIENT_SECRET in .env}
+      ADA_AUTH_CLIENT_SECRET: ${ADA_AUTH_CLIENT_SECRET:?set ADA_AUTH_CLIENT_SECRET in .env}
+      ADA_ML_CLIENT_SECRET: ${ADA_ML_CLIENT_SECRET:?set ADA_ML_CLIENT_SECRET in .env}
+      ADA_GOOGLE_CLIENT_ID: ${ADA_GOOGLE_CLIENT_ID:-}
+      ADA_GOOGLE_CLIENT_SECRET: ${ADA_GOOGLE_CLIENT_SECRET:-}
+      ADA_GOOGLE_HOSTED_DOMAIN: ${ADA_GOOGLE_HOSTED_DOMAIN:-pcsmcpl.net}
+      ADA_GITHUB_CLIENT_ID: ${ADA_GITHUB_CLIENT_ID:-}
+      ADA_GITHUB_CLIENT_SECRET: ${ADA_GITHUB_CLIENT_SECRET:-}
+      # Realm mail: password reset and address verification. Defaults point at
+      # mailpit, so a clean checkout completes enrolment with no mail account.
+      # KC_SMTP_* is our own naming, not a Keycloak server option — 26.7.2
+      # ignores these as server configuration, and the realm import is the only
+      # thing that reads them.
+      KC_SMTP_HOST: ${KC_SMTP_HOST:-mailpit}
+      KC_SMTP_PORT: "${KC_SMTP_PORT:-1025}"
+      # Must be a syntactically valid address. Keycloak validates the sender
+      # while importing the realm and then refuses to start, so a typo here is a
+      # crash-looping container, not merely mail that does not arrive.
+      KC_SMTP_FROM: ${KC_SMTP_FROM:-ada@pcsmcpl.net}
+      KC_SMTP_FROM_DISPLAY_NAME: ${KC_SMTP_FROM_DISPLAY_NAME:-ADA}
+      KC_SMTP_USERNAME: ${KC_SMTP_USERNAME:-}
+      KC_SMTP_PASSWORD: ${KC_SMTP_PASSWORD:-}
+      KC_SMTP_STARTTLS: "${KC_SMTP_STARTTLS:-false}"
+      KC_SMTP_SSL: "${KC_SMTP_SSL:-false}"
+    ports:
+      # The login page is the one thing here a person's browser must reach.
+      - "${KC_HTTP_HOST_PORT:-8090}:${KC_HTTP_PORT:-8090}"
+      # Management port — health and metrics. Never public.
+      - "127.0.0.1:${KC_MANAGEMENT_PORT:-9000}:9000"
+    volumes:
+      # Read-only so Keycloak cannot rewrite the version-controlled file. If the
+      # file is ever missing, Docker creates an empty DIRECTORY at that path
+      # rather than failing, and Keycloak then starts quite happily with no
+      # realm at all. If the realm is absent after a start, check that
+      # keycloak/realm-ada.json is still a file.
+      - ./keycloak/realm-ada.json:/opt/keycloak/data/import/realm-ada.json:ro
+      # The login theme, as a provider jar. Built from keycloak-theme/ with
+      # `npm run build-keycloak-theme`; the realm's loginTheme names it "ada".
+      #
+      # The "all-other-versions" jar, not the 22-to-25 one: this is Keycloak
+      # 26. Keycloakify emits both because the theme SPI changed between those
+      # lines, and picking the wrong one is a theme Keycloak silently ignores.
+      #
+      # Read-only, and a bind rather than a copy so a rebuilt theme is one
+      # `docker compose restart keycloak` away. Providers are scanned at
+      # startup, so the restart is not optional.
+      - ../keycloak-theme/dist_keycloak/keycloak-theme-for-kc-all-other-versions.jar:/opt/keycloak/providers/ada-login-theme.jar:ro
+    # 2 GB, not 1.5 GB. Keycloak sizes its heap at roughly 70% of the container
+    # limit and needs about 1,250 MB of heap plus 300 MB non-heap. A 1.5 GB
+    # limit yields around 1,050 MB, and the shortfall arrives as an
+    # OutOfMemoryError under load rather than as a failure at startup.
+    mem_limit: 2g
+    healthcheck:
+      # The Keycloak image ships neither curl nor wget. This compiles a
+      # five-line HTTP client with the bundled JDK on first run and reuses it —
+      # the approach Keycloak's own documentation gives. /health/ready rather
+      # than /health/live, so anything depending on this waits for the realm
+      # import to finish rather than for the process to exist.
+      test: ["CMD-SHELL", "[ -f /tmp/HealthCheck.java ] || echo \"public class HealthCheck { public static void main(String[] args) throws java.lang.Throwable { java.net.URI uri = java.net.URI.create(args[0]); System.exit(java.net.HttpURLConnection.HTTP_OK == ((java.net.HttpURLConnection)uri.toURL().openConnection()).getResponseCode() ? 0 : 1); } }\" > /tmp/HealthCheck.java && java /tmp/HealthCheck.java http://localhost:9000${KC_HTTP_RELATIVE_PATH:-/idp}/health/ready"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      # A first start builds Keycloak's hundred-odd tables and imports the
+      # realm. Thirty seconds is not enough, and the container gets marked
+      # unhealthy while it is working correctly.
+      start_period: 90s
+    networks: [ada]
+
+  mailpit:
+    # A local SMTP sink with a web inbox, so a clean checkout can demonstrate a
+    # real, inspectable email — the analysis-complete notification and
+    # Keycloak's own verification mail — with no external account.
+    image: axllent/mailpit:v1.21
+    container_name: ada-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_HTTP_PORT:-8025}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+    volumes:
+      - ada_mailpitdata:/data
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    networks: [ada]
+
+  # --- ada-auth -----------------------------------------------------------
+  #
+  # Phone plus one-time code. One of three sign-in mechanisms and the only one
+  # that needs a service: username/password and TOTP are Keycloak's own login
+  # page. Holds nothing durable — a pending code lives in Redis with a TTL.
+  ada-auth:
+    build:
+      context: ../backend
+      dockerfile: auth/Dockerfile
+    image: ada/auth:0.1.0
+    container_name: ada-auth
+    restart: unless-stopped
+    depends_on:
+      redis:
+        # Genuinely required: a pending code has nowhere to live without it, and
+        # so does the throttling ladder that is the only thing standing between
+        # a six-digit code and a guessing loop.
+        condition: service_healthy
+      # Keycloak is deliberately NOT a dependency. Verification is local, and a
+      # depends_on would make every Keycloak restart a restart of this service.
+      # Without Keycloak the login endpoints answer 503 and recover on their own.
+    environment:
+      ADA_ISSUER: ${ADA_ISSUER:?set ADA_ISSUER in .env}
+      ADA_INTERNAL_ISSUER_URL: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
+      ADA_REDIS_URL: ${ADA_REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
+      ADA_ENV: ${ADA_ENV:-local}
+      ADA_LOG_LEVEL: ${ADA_LOG_LEVEL:-INFO}
+      # The client whose service account holds realm-management 'impersonation'.
+      ADA_AUTH_CLIENT_ID: ${ADA_AUTH_CLIENT_ID:-ada-auth}
+      ADA_AUTH_CLIENT_SECRET: ${ADA_AUTH_CLIENT_SECRET:?set ADA_AUTH_CLIENT_SECRET in .env}
+      # `:?` rather than `:-`. The default in app/config.py is a keyed hash with
+      # a known key, which is not a hash, and the service refuses to start
+      # without a real value outside ADA_ENV=local — so the failure is a
+      # container that will not come up rather than reversible stored codes.
+      ADA_OTP_HMAC_KEY: ${ADA_OTP_HMAC_KEY:?set ADA_OTP_HMAC_KEY in .env}
+      # console writes the code to this container's log and sends no SMS, which
+      # is what makes a clean `up` produce a working OTP login with no provider
+      # account. The provider refuses to be constructed when ADA_ENV is
+      # production, so this default cannot leak into one.
+      ADA_SMS_PROVIDER: ${ADA_SMS_PROVIDER:-console}
+      ADA_TWOFACTOR_API_KEY: ${ADA_TWOFACTOR_API_KEY:-}
+      ADA_TWOFACTOR_TEMPLATE: ${ADA_TWOFACTOR_TEMPLATE:-OTP1}
+      # --- email one-time codes ---
+      # Its own relay, not ada-notify's: a login code must not wait behind an
+      # outbox with a retry ladder measured in minutes. Defaults to mailpit, so
+      # a clean checkout can sign in by email with no mail account.
+      ADA_EMAIL_OTP_PROVIDER: ${ADA_EMAIL_OTP_PROVIDER:-console}
+      ADA_AUTH_SMTP_HOST: ${ADA_AUTH_SMTP_HOST:-mailpit}
+      ADA_AUTH_SMTP_PORT: "${ADA_AUTH_SMTP_PORT:-1025}"
+      ADA_AUTH_SMTP_USERNAME: ${ADA_AUTH_SMTP_USERNAME:-}
+      ADA_AUTH_SMTP_PASSWORD: ${ADA_AUTH_SMTP_PASSWORD:-}
+      ADA_AUTH_SMTP_STARTTLS: "${ADA_AUTH_SMTP_STARTTLS:-false}"
+      ADA_AUTH_SMTP_SSL: "${ADA_AUTH_SMTP_SSL:-false}"
+      ADA_AUTH_EMAIL_FROM: ${ADA_AUTH_EMAIL_FROM:-ada@pcsmcpl.net}
+      ADA_AUTH_EMAIL_FROM_NAME: ${ADA_AUTH_EMAIL_FROM_NAME:-ADA}
+      ADA_OTP_REVEAL_UNKNOWN_EMAIL: ${ADA_OTP_REVEAL_UNKNOWN_EMAIL:-false}
+
+      ADA_OTP_PHONE_ATTRIBUTE: ${ADA_OTP_PHONE_ATTRIBUTE:-phoneNumber}
+      ADA_OTP_REVEAL_UNKNOWN_PHONE: ${ADA_OTP_REVEAL_UNKNOWN_PHONE:-false}
+      ADA_DEV_OTP: ${ADA_DEV_OTP:-000000}
+      ADA_ALLOW_OTP_DEV_BYPASS: ${ADA_ALLOW_OTP_DEV_BYPASS:-false}
+    ports:
+      - "127.0.0.1:${ADA_AUTH_PORT:-8002}:8002"
+    healthcheck:
+      # /health/live, not /health/ready: readiness checks Redis, and a liveness
+      # probe that fails on a dependency restarts every replica when that
+      # dependency blips.
+      test:
+        - CMD-SHELL
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8002/health/live', timeout=3).status==200 else 1)\""
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [ada]
+
+  # --- ada-notify ---------------------------------------------------------
+  #
+  # Ingestion only. It accepts a notification, authorises it against the token's
+  # azp claim, and writes the notification row and its outbox row in one
+  # transaction. It publishes nothing and delivers nothing — that is ada-worker.
+  notify-migrate:
+    # Migrations run as their own container, not from the application's start
+    # command. Two replicas both running `alembic upgrade head` at boot race on
+    # the version table, and the loser crash-loops. A one-shot container that
+    # must exit 0 before the application starts has no such race.
+    build:
+      context: ../backend
+      dockerfile: notify/Dockerfile
+    image: ada/notify:0.1.0
+    container_name: ada-notify-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Built here from POSTGRES_*, NOT taken from ADA_NOTIFY_DATABASE_URL.
+      # That variable is the HOST-facing URL — localhost and the published
+      # port — which is right for running this service or its tests outside
+      # Docker and wrong in here, where localhost is the container itself:
+      #   [Errno 111] Connect call failed ('127.0.0.1', 5435)
+      # Same override the ada-api and ada-ml services do for DATABASE_URL.
+      ADA_DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_NOTIFY_DB:-ada_notify}"
+      # Settings validation constructs the whole model, so the issuer has to be
+      # present even for a process that never verifies a token.
+      ADA_ISSUER: ${ADA_ISSUER:?set ADA_ISSUER in .env}
+      ADA_ENV: ${ADA_ENV:-local}
+      ADA_LOG_LEVEL: ${ADA_LOG_LEVEL:-INFO}
+    command: ["alembic", "upgrade", "head"]
+    networks: [ada]
+
+  ada-notify:
+    build:
+      context: ../backend
+      dockerfile: notify/Dockerfile
+    image: ada/notify:0.1.0
+    container_name: ada-notify
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      notify-migrate:
+        # Not service_started. The application would otherwise start against a
+        # schema that does not exist yet and fail every request until it was
+        # restarted by hand.
+        condition: service_completed_successfully
+      # Keycloak is deliberately NOT a dependency: token verification is local
+      # precisely so a Keycloak restart does not take the estate with it. The
+      # JWKS is fetched on first use, not at startup.
+    environment:
+      # Built here from POSTGRES_*, NOT taken from ADA_NOTIFY_DATABASE_URL.
+      # That variable is the HOST-facing URL — localhost and the published
+      # port — which is right for running this service or its tests outside
+      # Docker and wrong in here, where localhost is the container itself:
+      #   [Errno 111] Connect call failed ('127.0.0.1', 5435)
+      # Same override the ada-api and ada-ml services do for DATABASE_URL.
+      ADA_DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_NOTIFY_DB:-ada_notify}"
+      ADA_ISSUER: ${ADA_ISSUER:?set ADA_ISSUER in .env}
+      # The address that same issuer actually answers on from inside this
+      # network. ADA_ISSUER says localhost:8090, which in here is this container,
+      # not Keycloak. Discovery and JWKS are fetched from this URL and the issuer
+      # string is compared against the one above; conflating the two gives a
+      # choice between an unresolvable host and a blanket 401.
+      ADA_INTERNAL_ISSUER_URL: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
+      ADA_ENV: ${ADA_ENV:-local}
+      ADA_LOG_LEVEL: ${ADA_LOG_LEVEL:-INFO}
+      ADA_REQUIRED_SCOPE: ${ADA_REQUIRED_SCOPE:-notify:send}
+    ports:
+      - "127.0.0.1:${ADA_NOTIFY_PORT:-8001}:8001"
+    healthcheck:
+      # The slim Python image ships neither curl nor wget, but it does ship
+      # Python, and urllib is in the standard library.
+      test:
+        - CMD-SHELL
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health/live', timeout=3).status==200 else 1)\""
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [ada]
+
+  # --- ada-worker ---------------------------------------------------------
+  #
+  # Everything that happens after a 202. Five loops in one process — outbox
+  # dispatcher, fan-out, delivery, retry scheduler, reclaimer.
+  #
+  # Deliberately a separate container from ada-notify, sharing one image.
+  # Ingestion must keep answering while delivery is broken: the outbox row is
+  # durable in PostgreSQL the moment the request returns, so a worker that is
+  # down, or a Redis that is down, delays delivery and loses nothing.
+  #
+  # Scale with `--scale ada-worker=N`. Every loop is safe to run more than once:
+  # SKIP LOCKED on the outbox, a consumer group on the streams, an atomic
+  # promotion script for the schedule, and a five-minute idle threshold before
+  # anything is reclaimed.
+  ada-worker:
+    build:
+      context: ../backend
+      dockerfile: notify/Dockerfile
+    image: ada/notify:0.1.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        # Unlike the API, this one genuinely cannot work without Redis: every
+        # loop in it either consumes from a stream or writes to one.
+        condition: service_healthy
+      notify-migrate:
+        condition: service_completed_successfully
+    environment:
+      # Built here from POSTGRES_*, NOT taken from ADA_NOTIFY_DATABASE_URL.
+      # That variable is the HOST-facing URL — localhost and the published
+      # port — which is right for running this service or its tests outside
+      # Docker and wrong in here, where localhost is the container itself:
+      #   [Errno 111] Connect call failed ('127.0.0.1', 5435)
+      # Same override the ada-api and ada-ml services do for DATABASE_URL.
+      ADA_DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_NOTIFY_DB:-ada_notify}"
+      ADA_ISSUER: ${ADA_ISSUER:?set ADA_ISSUER in .env}
+      ADA_INTERNAL_ISSUER_URL: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
+      ADA_ENV: ${ADA_ENV:-local}
+      ADA_LOG_LEVEL: ${ADA_LOG_LEVEL:-INFO}
+      # If the password contains a character that is special in a URL — @ : / ?
+      # # or % — it has to be percent-encoded here, or the client parses the URL
+      # into the wrong host and reports a connection error rather than a bad
+      # password. Set ADA_REDIS_URL explicitly in .env in that case.
+      ADA_REDIS_URL: ${ADA_REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
+      # 'smtp' sends real mail. 'stub' accepts and discards. 'failing_stub'
+      # refuses every message on purpose, which is how the retry ladder and the
+      # dead-letter queue are demonstrated — not something provable against a
+      # relay that works.
+      ADA_EMAIL_PROVIDER: ${ADA_EMAIL_PROVIDER:-smtp}
+      ADA_SMTP_HOST: ${ADA_SMTP_HOST:-mailpit}
+      ADA_SMTP_PORT: "${ADA_SMTP_PORT:-1025}"
+      ADA_SMTP_USERNAME: ${ADA_SMTP_USERNAME:-}
+      ADA_SMTP_PASSWORD: ${ADA_SMTP_PASSWORD:-}
+      # Mailpit speaks plain SMTP on 1025 and refuses STARTTLS. A real relay
+      # needs this true — leaving it false against one sends the password in
+      # clear, so the host and this flag must be changed together.
+      ADA_SMTP_STARTTLS: "${ADA_SMTP_STARTTLS:-false}"
+      ADA_SMTP_SSL: "${ADA_SMTP_SSL:-false}"
+      ADA_EMAIL_FROM: ${ADA_EMAIL_FROM:-ada@pcsmcpl.net}
+      ADA_EMAIL_FROM_NAME: ${ADA_EMAIL_FROM_NAME:-ADA}
+      # Recipient resolution: a recipient is a Keycloak subject, and the email
+      # channel needs an address, so it is read from the admin API and cached.
+      ADA_ADMIN_CLIENT_ID: ${ADA_ADMIN_CLIENT_ID:-ada-notify}
+      ADA_ADMIN_CLIENT_SECRET: ${ADA_NOTIFY_CLIENT_SECRET:?set ADA_NOTIFY_CLIENT_SECRET in .env}
+    command: ["python", "-m", "app.worker"]
+    networks: [ada]
+
+  # --- ada-ml -------------------------------------------------------------
+  #
+  # The model service. Owns the GPU, the weights, the job worker and the schema.
+  ada-ml:
+    build:
+      # backend/, because the image installs shared/ada-core and
+      # shared/ada-platform-sdk from source.
+      context: ../backend
+      dockerfile: ml/Dockerfile
+    image: ada/ml:0.1.0
+    container_name: ada-ml
+    restart: unless-stopped
+    # PID 1 is uvicorn, which does not reap children. The pipeline forks worker
+    # threads/processes (GDAL, onnxruntime, torch), and when one exits during a
+    # long analysis it becomes a zombie that PID 1 never collects. Docker then
+    # cannot stop the container at all:
+    #   "PID ... is zombie and can not be killed. Use the --init option"
+    # tini as PID 1 forwards signals and reaps orphans, so restarts work.
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      DATA_DIR: /app/data
+      ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # First-boot convenience (see backend/ml/entrypoint.sh)
+      AUTO_FETCH_WEIGHTS: ${AUTO_FETCH_WEIGHTS:-true}
+      AUTO_SAMPLE_DATA: ${AUTO_SAMPLE_DATA:-true}
+      # --- notifications ---
+      # Off by default: a deployment without ada-notify must not trail every
+      # finished analysis with a warning nobody can act on.
+      NOTIFY_ENABLED: ${NOTIFY_ENABLED:-true}
+      NOTIFY_URL: ${NOTIFY_URL:-http://ada-notify:8001}
+      # The REACHABLE realm URL, not the one stamped into tokens: this is
+      # fetched (client_credentials), never compared.
+      NOTIFY_ISSUER: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
+      NOTIFY_CLIENT_ID: ${NOTIFY_CLIENT_ID:-ada-ml}
+      NOTIFY_CLIENT_SECRET: ${ADA_ML_CLIENT_SECRET:?set ADA_ML_CLIENT_SECRET in .env}
+      # The origin a person's browser reaches ADA on — used to build the link in
+      # the message body, which is neither container's own address.
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+      # --- ML tunables — same names as .env, defaults match app/config.py ---
+      MODEL_MODE: ${MODEL_MODE:-segdiff}
+      MODEL_BACKEND: ${MODEL_BACKEND:-auto}
+      SEED_MODE: ${SEED_MODE:-encroachment}
+      SAM_REFINE: ${SAM_REFINE:-true}
+      CHIP_SIZE: ${CHIP_SIZE:-256}
+      CHIP_OVERLAP: ${CHIP_OVERLAP:-64}
+      CHANGE_THRESHOLD: ${CHANGE_THRESHOLD:-0.5}
+      MIN_CHANGE_AREA_M2: ${MIN_CHANGE_AREA_M2:-15.0}
+      # Compute placement. REQUIRE_GPU=true turns a silent CPU fallback into a
+      # startup error — worth enabling here, because in a container a fallback is
+      # invisible and the symptom is just "analyses take forever".
+      #
+      # `auto` picks CUDA, then Apple Metal, then CPU. In THIS container it can
+      # only ever resolve to cuda or cpu: Docker Desktop on macOS does not pass
+      # the GPU through to a Linux VM, and there is no Metal device inside one to
+      # pass. On an Apple Silicon machine run ada-ml on the host against the
+      # Postgres service here, and leave this container for the NVIDIA
+      # deployment. See README.
+      ML_DEVICE: ${ML_DEVICE:-auto}
+      REQUIRE_GPU: ${REQUIRE_GPU:-false}
+      ONNX_CPU_THREADS: ${ONNX_CPU_THREADS:-4}
+      GPU_MEMORY_LIMIT_GB: ${GPU_MEMORY_LIMIT_GB:-4.0}
+      HOST_MEMORY_LIMIT_GB: ${HOST_MEMORY_LIMIT_GB:-18.0}
+      # Building segmenter: changestar (ViT-B, 1024 px) | geobase (U-Net, 256 px)
+      BUILDING_BACKEND: ${BUILDING_BACKEND:-changestar}
+      # Vegetation: learned (SegFormer-B5 / LoveDA) | index (NDVI + excess-green)
+      VEGETATION_MODE: ${VEGETATION_MODE:-learned}
+      # Warp from the COG (has overviews) rather than the originals.
+      SUPERIMPOSE_SOURCE: ${SUPERIMPOSE_SOURCE:-auto}
+      # Refinement: sam2 | sam3 (sam3 needs access to the GATED facebook/sam3)
+      SAM_BACKEND: ${SAM_BACKEND:-sam2}
+      SAM_MODEL_REPO: ${SAM_MODEL_REPO:-facebook/sam2.1-hiera-large}
+      SAM_MODEL_LOCAL: ${SAM_MODEL_LOCAL:-sam2.1-hiera-large}
+      # Instance decision: rules | shadow | active
+      INSTANCE_DECIDER: ${INSTANCE_DECIDER:-shadow}
+      MIN_TRAINING_SAMPLES: ${MIN_TRAINING_SAMPLES:-150}
+      DETECT_DEMOLITION: ${DETECT_DEMOLITION:-true}
+      REQUEUE_STALE_ON_STARTUP: ${REQUEUE_STALE_ON_STARTUP:-true}
+      # Needed only to pull the gated SAM 3 weights; harmless when unset.
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      # Uploads, COGs, masks, vendored weights and the demo pair all live here
+      # and survive `docker compose down`.
+      - ../data:/app/data
+      # Share the host's HuggingFace cache so a rebuild does not re-download
+      # ~1.5 GB of weights that are already on disk.
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+    ports:
+      # Loopback. Nothing outside this network has any business queueing work.
+      - "127.0.0.1:${ML_PORT:-8100}:8100"
+    # GPU passthrough lives in docker-compose.gpu.yml, NOT here.
+    #
+    # A `deploy.resources.reservations.devices` block naming the nvidia driver
+    # is not ignored on a host without it — Compose refuses to start the
+    # container at all:
+    #
+    #   Error response from daemon: could not select device driver "nvidia"
+    #   with capabilities: [[gpu]]
+    #
+    # which makes the base file unusable on any Mac or any CPU-only Linux box.
+    # On an NVIDIA host, add the override:
+    #
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+    networks: [ada]
+
+  # --- ada-api ------------------------------------------------------------
+  ada-api:
+    build:
+      context: ../backend
+      dockerfile: api/Dockerfile
+    image: ada/api:0.1.0
+    container_name: ada-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ada-ml:
+        # service_healthy, not service_started: ada-ml owns the schema, and an
+        # API that starts first answers every request with "relation does not
+        # exist" until something restarts it. Its first boot can spend minutes
+        # downloading model weights, which is what the long start_period on the
+        # ada-ml healthcheck is for.
+        condition: service_healthy
+      # Keycloak is NOT a dependency: verification is local and the JWKS is
+      # fetched on first use.
+    environment:
+      DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      DATA_DIR: /app/data
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # The PUBLIC issuer — compared against the 'iss' claim character for
+      # character — and the address it actually answers on from in here.
+      OIDC_ISSUER: ${ADA_ISSUER:?set ADA_ISSUER in .env}
+      OIDC_INTERNAL_ISSUER_URL: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-ada-web}
+      ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ada-ml:8100}
+      ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
+      # The browser reaches the API through the frontend's nginx, so API and
+      # website are one origin.
+      WEBSITE_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+    volumes:
+      # The same bind mount as ada-ml. The tile and preview routes read COGs
+      # that ada-ml wrote, so the path recorded in the row has to resolve in
+      # both containers.
+      - ../data:/app/data
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    networks: [ada]
+
+  frontend:
+    build:
+      context: ../frontend
+    image: ada/frontend:0.1.0
+    container_name: ada-frontend
+    restart: unless-stopped
+    depends_on:
+      # service_started, not service_healthy: nginx only needs the `ada-api`
+      # DNS name to resolve at config load.
+      ada-api:
+        condition: service_started
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    networks: [ada]
+
+volumes:
+  ada_pgdata:
+  ada_redisdata:
+  ada_mailpitdata:
+
+networks:
+  ada:
+    driver: bridge

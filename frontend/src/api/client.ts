@@ -9,7 +9,7 @@ import type {
   ReviewStatus,
   TileInfo,
 } from "./types";
-import Session from "supertokens-auth-react/recipe/session";
+import { accessToken, login } from "../auth/oidc";
 
 import type { Polygon } from "geojson";
 
@@ -25,14 +25,29 @@ export class ApiError extends Error {
 
 function redirectToAuth(): void {
   if (!window.location.pathname.startsWith("/auth")) {
-    window.location.assign("/auth");
+    void login();
   }
+}
+
+/**
+ * The Authorization header for an outgoing request.
+ *
+ * Under SuperTokens the browser attached a session cookie by itself and no
+ * request had to think about this. With Keycloak the token is ours to send, so
+ * every path out of this module goes through here — including the ones the
+ * browser would otherwise issue on its own (map tiles, the preview <img>, the
+ * report downloads), which is why those three now fetch rather than link.
+ */
+export async function authHeader(): Promise<Record<string, string>> {
+  const token = await accessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  const headers = { ...(await authHeader()), ...(init?.headers ?? {}) };
   try {
-    res = await fetch(path, { credentials: "same-origin", ...init });
+    res = await fetch(path, { ...init, headers });
   } catch {
     throw new ApiError(0, "Network error — backend unreachable");
   }
@@ -126,12 +141,55 @@ export const api = {
     ),
 };
 
-/** Download URLs — plain links so the browser handles the file save dialog. */
+/**
+ * Report paths.
+ *
+ * These used to be plain <a href> links, which worked because a cookie went
+ * with them. A bearer token does not: the browser attaches nothing to a link,
+ * so a direct href now answers 401 and the officer gets a downloaded error
+ * page. Use `download()` below, which fetches with the header and hands the
+ * bytes to the save dialog through a blob URL.
+ */
 export const downloadUrl = {
   reportGeojson: (jobId: Id) => `/api/analyses/${jobId}/report.geojson`,
   reportCsv: (jobId: Id) => `/api/analyses/${jobId}/report.csv`,
   feedbackDataset: (pid: Id) => `/api/projects/${pid}/feedback-dataset`,
 };
+
+/** Fetch an authenticated file and save it under `filename`. */
+export async function download(path: string, filename: string): Promise<void> {
+  const res = await fetch(path, { headers: await authHeader() });
+  if (res.status === 401) {
+    redirectToAuth();
+    throw new ApiError(401, "Session expired");
+  }
+  if (!res.ok) throw new ApiError(res.status, `${res.status}: ${res.statusText}`);
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick, not immediately: Safari has not finished reading
+  // the blob when click() returns, and revoking synchronously saves an empty
+  // file.
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * An authenticated URL for an <img> or any other browser-issued GET.
+ *
+ * Returns a blob URL the caller must revoke. Used by the per-polygon preview,
+ * which is an <img src> and therefore cannot carry a header.
+ */
+export async function objectUrl(path: string): Promise<string> {
+  const res = await fetch(path, { headers: await authHeader() });
+  if (!res.ok) throw new ApiError(res.status, `${res.status}: ${res.statusText}`);
+  return URL.createObjectURL(await res.blob());
+}
 
 export interface RasterUploadFields {
   name: string;
@@ -144,11 +202,7 @@ export interface RasterUploadFields {
 
 /** Refresh the access token, reporting whether a session survives. */
 async function refreshSession(): Promise<boolean> {
-  try {
-    return await Session.attemptRefreshingSession();
-  } catch {
-    return false;
-  }
+  return (await accessToken()) !== null;
 }
 
 /**
@@ -161,11 +215,12 @@ async function refreshSession(): Promise<boolean> {
  * bouncing the user to /auth — throwing away the entire transfer AND signing
  * them out, while their refresh token was still perfectly valid.
  */
-function sendUpload(
+async function sendUpload(
   pid: Id,
   fields: RasterUploadFields,
   onProgress: (fraction: number) => void,
 ): Promise<Raster> {
+  const headers = await authHeader();
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     fd.append("name", fields.name);
@@ -177,7 +232,9 @@ function sendUpload(
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `/api/projects/${pid}/rasters`);
-    xhr.withCredentials = true;
+    for (const [name, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(name, value);
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };

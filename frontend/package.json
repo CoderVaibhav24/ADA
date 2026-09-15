@@ -11,10 +11,10 @@
   },
   "dependencies": {
     "maplibre-gl": "^5.24.0",
+    "oidc-client-ts": "^3.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^6.30.4",
-    "supertokens-auth-react": "^0.51.2",
     "terra-draw": "^1.32.0",
     "terra-draw-maplibre-gl-adapter": "^1.4.1",
     "zustand": "^5.0.14"

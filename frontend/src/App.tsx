@@ -1,22 +1,23 @@
-import * as reactRouterDom from "react-router-dom";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { getSuperTokensRoutesForReactRouterDom } from "supertokens-auth-react/ui";
-import { EmailPasswordPreBuiltUI } from "supertokens-auth-react/recipe/emailpassword/prebuiltui";
-import { SessionAuth } from "supertokens-auth-react/recipe/session";
+import AuthGate, { Callback, SignedOut } from "./auth/AuthGate";
+import { CALLBACK_PATH, SIGNED_OUT_PATH } from "./auth/oidc";
 import Dashboard from "./components/Dashboard";
 
+/**
+ * The two auth routes are siblings of the gated one, not children of it: the
+ * callback is what establishes the session, so it cannot require a session.
+ */
 export default function App() {
   return (
     <Routes>
-      {getSuperTokensRoutesForReactRouterDom(reactRouterDom, [
-        EmailPasswordPreBuiltUI,
-      ])}
+      <Route path={CALLBACK_PATH} element={<Callback />} />
+      <Route path={SIGNED_OUT_PATH} element={<SignedOut />} />
       <Route
         path="/"
         element={
-          <SessionAuth>
+          <AuthGate>
             <Dashboard />
-          </SessionAuth>
+          </AuthGate>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
