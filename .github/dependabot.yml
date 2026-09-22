@@ -31,7 +31,7 @@ updates:
     open-pull-requests-limit: 0
 
   - package-ecosystem: "npm"
-    directory: "/keycloak-theme"
+    directory: "/frontend/keycloak-theme"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0

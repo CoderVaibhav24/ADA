@@ -1,6 +1,26 @@
 {
   "realm": "pcsmcpl",
   "displayName": "PCS MCPL",
+  "roles": {
+    "realm": [
+      {
+        "name": "super-admin",
+        "description": "Administration: users, zones, lookup values. Holds no ICMS case transition - see app/icms/workflow.py."
+      },
+      {
+        "name": "pcs-nodal-officer",
+        "description": "ICMS: assigns cases, verifies inspections, decides re-surveys, hands over to the authority."
+      },
+      {
+        "name": "field-surveyor",
+        "description": "ICMS: checks in, captures evidence, records findings and submits, on cases assigned to them."
+      },
+      {
+        "name": "ada-project-lead",
+        "description": "ICMS: confirms a handover, issues a notice, closes a case."
+      }
+    ]
+  },
   "displayNameHtml": "<strong>PCS MCPL</strong>",
   "enabled": true,
   "sslRequired": "external",
@@ -18,8 +38,8 @@
     "password"
   ],
   "defaultSignatureAlgorithm": "RS256",
-  "accessTokenLifespan": 60,
-  "accessTokenLifespanForImplicitFlow": 60,
+  "accessTokenLifespan": 3600,
+  "accessTokenLifespanForImplicitFlow": 3600,
   "ssoSessionIdleTimeout": 2592000,
   "ssoSessionMaxLifespan": 31536000,
   "ssoSessionIdleTimeoutRememberMe": 0,
@@ -35,7 +55,7 @@
   "refreshTokenMaxReuse": 0,
   "accessCodeLifespan": 60,
   "accessCodeLifespanUserAction": 300,
-  "accessCodeLifespanLogin": 1800,
+  "accessCodeLifespanLogin": 3600,
   "actionTokenGeneratedByAdminLifespan": 43200,
   "actionTokenGeneratedByUserLifespan": 900,
   "oauth2DeviceCodeLifespan": 600,

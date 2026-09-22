@@ -31,7 +31,7 @@ docs/
   ba/           the BA pack (BRD/PRD/FRD) as PDFs
   pdf-build/    the toolchain that renders them; build/ output is not tracked
 frontend/       React + TypeScript console (Vite), served by nginx in Docker
-keycloak-theme/ Keycloakify login theme — a second, separate Vite project
+  keycloak-theme/ Keycloakify login theme — a second, separate Vite project
 infra/          everything needed to run the estate
   docker-compose.yml       the whole stack
   docker-compose.gpu.yml   NVIDIA passthrough overlay

@@ -1,0 +1,60 @@
+users:
+  - username: ada.superadmin
+    email: superadmin@example.invalid
+    firstName: Asha
+    lastName: Verma
+    roles:
+      - super-admin
+    emailVerified: true
+    attributes:
+      phoneNumber: "9000000001"
+
+  - username: pcs.nodal
+    email: nodal.officer@example.invalid
+    firstName: Rakesh
+    lastName: Nair
+    roles:
+      - pcs-nodal-officer
+    emailVerified: true
+    attributes:
+      phoneNumber: "9000000002"
+
+  - username: field.surveyor1
+    email: surveyor.one@example.invalid
+    firstName: Imran
+    lastName: Qureshi
+    roles:
+      - field-surveyor
+    attributes:
+      phoneNumber: "9000000003"
+
+  - username: field.surveyor2
+    email: surveyor.two@example.invalid
+    firstName: Meera
+    lastName: Joshi
+    roles:
+      - field-surveyor
+    enabled: true
+    attributes:
+      phoneNumber: "9000000004"
+
+  - username: ada.lead
+    email: project.lead@example.invalid
+    firstName: Sunita
+    lastName: Rao
+    roles:
+      - ada-project-lead
+    emailVerified: true
+    attributes:
+      phoneNumber: "9000000005"
+  
+  - username: ada.pilot.dual
+    email: pilot.dual@example.invalid
+    firstName: Vikram
+    lastName: Desai
+    roles:
+      - pcs-nodal-officer
+      - ada-project-lead
+    emailVerified: true
+    attributes:
+      phoneNumber: "9000000006"
