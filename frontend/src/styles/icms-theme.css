@@ -1,0 +1,805 @@
+/* ============================================================================
+   ICMS design tokens — Illegal Construction Monitoring System
+   ----------------------------------------------------------------------------
+   PROVENANCE
+   The Figma file hSyLFWm2yjSU5iZ6Jw0eRa is the design authority, but its entire
+   published variable set is five colour values:
+
+       color 1     #CE862E   ochre accent
+       brown 2     #2D261E   near-black warm brown
+       dark brown  #42382E   surface brown
+       Earthy      #FFFFFF -> #806C5B   (a two-stop ramp)
+
+   There are NO spacing, typography, radius, elevation or motion variables in
+   the file, and the colour variables are barely applied (get_variable_defs on
+   the login screen returns {}). Everything below that is not tagged FIGMA is
+   therefore DERIVED, and each derivation carries a one-line rationale plus,
+   where possible, the screen pixel it was reconciled against.
+
+   METHOD
+   Neutral steps are interpolated in OKLab at the mean hue of the three brown
+   anchors (H = 66.68deg) so the ramp is perceptually even and stays on the axis
+   Figma already chose. Accent and semantic ramps are +/- lightness offsets from
+   their base in OKLCH at constant hue. Contrast figures in the comments are
+   WCAG 2.1 ratios, computed, not estimated.
+
+   The superseded "Design Brief" cool-blue scheme (#0a0e13 / #ff7a29) is NOT
+   used here. The legacy src/styles.css still carries it; the two coexist until
+   the migration lands.
+
+   THEMING
+   Dark is the default and lives on :root, because every designed screen is
+   dark. Light is defined from the same contract under [data-theme="light"] /
+   .light so it exists and stays valid; it is not used by any screen yet.
+   Nesting works: a [data-theme="light"] subtree inside the dark app is valid
+   and is what the design-system showcase uses to render both themes at once.
+   ========================================================================== */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Tailwind v4 auto-source detection starts at this file's directory. The app
+   source, and both HTML entries, sit above it. */
+@source "../";
+@source "../../index.html";
+@source "../../design-system.html";
+
+/* The `dark:` variant.
+   This needs two rules, not one. A document with no data-theme attribute is
+   already dark (see :root below), so a variant that only matched an explicit
+   [data-theme="dark"] would silently drop every dark: utility shadcn ships
+   until something wrote the attribute — and main.tsx, which would write it, is
+   owned by another workstream. So:
+     rule 1  an explicitly dark scope;
+     rule 2  anything NOT inside a light scope, which covers the default.
+   Both are emitted; an element matching both just gets the same declaration
+   twice, which is harmless. Light islands nested in the dark app still opt out
+   correctly, which is what the design-system showcase relies on.
+   Both the data attribute and the .dark/.light class conventions are honoured. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *, .dark, .dark *) {
+    @slot;
+  }
+  &:not(:where([data-theme="light"], [data-theme="light"] *, .light, .light *)) {
+    @slot;
+  }
+}
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *, .light, .light *));
+
+/* ==========================================================================
+   1. PRIMITIVES — raw scales. Never reference these from a component; go
+   through the semantic aliases in section 2 so themes can move underneath.
+   ========================================================================== */
+
+:root {
+  /* ---- 1.1 Neutral "earth" ramp -----------------------------------------
+     Anchors: 850/800 are `brown 2` / `dark brown`; 500 and 0 are the two
+     stops of `Earthy`. Everything else is OKLab-interpolated at H=66.68. */
+  --earth-0:   #FFFFFF; /* FIGMA  Earthy light stop */
+  --earth-50:  #FBF3EB; /* derived L .968 — light-theme page canvas */
+  --earth-100: #EFE6DE; /* derived L .930 — light-theme card */
+  --earth-200: #D7CEC4; /* derived L .856 — light-theme border */
+  --earth-300: #B9AFA5; /* derived L .760 — dark-theme muted text, 6.92:1 on 850 */
+  --earth-400: #978D83; /* derived L .649 — dark-theme faint text, 4.58:1 on 850 (AA) */
+  --earth-500: #806C5B; /* FIGMA  Earthy dark stop — decorative only, 2.99:1 */
+  --earth-600: #665C53; /* derived L .482 — strong border / disabled fill */
+  --earth-700: #544B42; /* derived L .419 — hover border, 1.75:1 against 850 */
+  --earth-800: #42382E; /* FIGMA  dark brown — raised surface, input well.
+                           Reconciled: search input on 29:1219 samples #42382E exactly. */
+  --earth-850: #2D261E; /* FIGMA  brown 2 — card/panel. Card body on 29:1219 samples #2D261E exactly. */
+  --earth-900: #1C1610; /* derived L .205 — app background behind cards */
+  --earth-950: #150B03; /* derived L .161, chroma raised to .026 — sunken.
+                           Reconciled against the table header strip on 29:1219 (#1C1008). */
+
+  /* ---- 1.2 Ochre accent ramp --------------------------------------------
+     500 is `color 1` verbatim; the other steps are +/-0.065 OKLCH lightness,
+     which is the smallest step that reads as a distinct state at this chroma. */
+  --ochre-300: #F2AE63; /* derived +0.12 L — focus ring / on-accent text, 7.82:1 on 850 */
+  --ochre-400: #E19947; /* derived +0.06 L — hover fill, 6.29:1 on 850 */
+  --ochre-500: #CE862E; /* FIGMA  color 1 — primary fill, 5.03:1 on 850 (AA) */
+  --ochre-600: #B87315; /* derived -0.065 L — pressed fill */
+  --ochre-700: #A06100; /* derived -0.13 L — light-theme text, 4.99:1 on white (AA) */
+  --ochre-800: #8B5000; /* derived -0.19 L — light-theme primary fill, 6.47:1 on white */
+
+  /* ---- 1.3 Semantic hues — ENTIRELY ABSENT FROM FIGMA -------------------
+     Figma hardcodes status colours per text layer. Each base below is the
+     colour lifted from the screenshots, then regularised onto one OKLCH
+     lightness grid so the four families behave identically across states. */
+
+  /* danger — HIGH priority and Overdue. Base lifted from the HIGH glyph on
+     29:1219 (#D4582A) and the dashboard "45" (#C04830), nudged to H=34.2. */
+  --danger-300: #FF8567; /* 6.25:1 on 850 — chip text, the only step that clears AA on a tint */
+  --danger-400: #F66E4F; /* 5.16:1 on 850 — inline text */
+  --danger-500: #E2593A; /* base — solid fill / destructive button */
+  --danger-600: #CA4527; /* pressed */
+  --danger-700: #AF3518; /* light-theme text, 6.28:1 on white */
+  --danger-800: #982405; /* light-theme fill, 8.11:1 on white */
+
+  /* warning — Pending Inspection / In Progress. Base lifted from the PENDING
+     INSPECTION glyph (#C87820), pushed +0.06 L so it separates from the ochre
+     accent: Figma uses one colour for both and the two are not the same idea. */
+  --warning-300: #FFC370;
+  --warning-400: #F6AF53; /* 7.94:1 on 850 — chip text */
+  --warning-500: #E39B3A; /* base */
+  --warning-600: #CC8723;
+  --warning-700: #B47513;
+  --warning-800: #9F6400; /* light-theme text, 4.89:1 on white (AA) */
+
+  /* success — Closed / Completed / Responded / LOW priority. Base from the
+     CLOSED and LOW glyphs (#4A9A58) and the dashboard chip (#7AB840). */
+  --success-300: #8AE595;
+  --success-400: #71D27E; /* 7.97:1 on 850 — chip text */
+  --success-500: #5BBF6A; /* base */
+  --success-600: #47AA58;
+  --success-700: #399449;
+  --success-800: #29813A; /* light-theme text, 4.89:1 on white (AA) */
+
+  /* info — Complaint Filed / Scheduled. Base from the COMPLAINT FILED glyph
+     (#B0F5F2, anti-aliased) and the dashboard relative-time link (#04A3E4). */
+  --info-300: #84E9FE;
+  --info-400: #68D6EC; /* 8.82:1 on 850 — chip text */
+  --info-500: #4FC3D9; /* base */
+  --info-600: #39AEC3;
+  --info-700: #2A99AC;
+  --info-800: #0F7385; /* light-theme text, 5.1:1 on white (AA) */
+
+  /* ---- 1.4 Chart series -------------------------------------------------
+     Five hues at constant OKLCH L=0.70 C=0.13, so no series dominates another
+     by luminance. Series 1 is the ochre so the primary metric stays on-brand.
+     Figma's dashboard donut uses four ad-hoc hues; this regularises them. */
+  --chart-a: #D48D39;
+  --chart-b: #63B46D;
+  --chart-c: #00B3CD;
+  --chart-d: #E37E67;
+  --chart-e: #AB8BE3;
+
+  /* ==========================================================================
+     1.5 SPACING — 4px base. Not in Figma; derived by measuring the register
+     screens, whose gutters land on 8 / 12 / 16 / 24 / 32. 4 divides all of them
+     and is the smallest unit any designed element uses.
+     Tailwind's dynamic scale (p-4 etc.) reads --spacing; the named steps below
+     exist for hand-written CSS and for layout constants.
+     ========================================================================== */
+  --space-0:   0rem;
+  --space-px:  1px;
+  --space-0-5: 0.125rem; /*  2px — icon nudges only */
+  --space-1:   0.25rem;  /*  4px — base unit */
+  --space-1-5: 0.375rem; /*  6px — chip padding-y */
+  --space-2:   0.5rem;   /*  8px — control inner gap */
+  --space-3:   0.75rem;  /* 12px — table cell padding-y (measured 29:1219) */
+  --space-4:   1rem;     /* 16px — control padding-x, toolbar gap (measured) */
+  --space-5:   1.25rem;  /* 20px */
+  --space-6:   1.5rem;   /* 24px — card padding (measured 29:1219 card header) */
+  --space-8:   2rem;     /* 32px — section gap */
+  --space-10:  2.5rem;   /* 40px */
+  --space-12:  3rem;     /* 48px */
+  --space-16:  4rem;     /* 64px */
+  --space-20:  5rem;     /* 80px */
+  --space-24:  6rem;     /* 96px */
+
+  /* Layout constants lifted from the frames (1440 wide) */
+  --layout-rail-w:        82px;   /* FIGMA-measured: the `Frame 12` icon rail */
+  --layout-sidebar-w:     248px;  /* FIGMA-measured: expanded nav on 3:1302 */
+  --layout-header-h:      64px;   /* FIGMA-measured: Top Header Bar */
+  --layout-footer-h:      56px;   /* derived — no footer exists in Figma */
+  --layout-content-max:   1440px; /* FIGMA-measured: frame width */
+  --layout-gutter:        var(--space-6);
+
+  /* ==========================================================================
+     1.7 RADIUS BASE — measured off the frames; no radius variable in Figma.
+     The full scale lives in the static @theme below; this is the single knob
+     shadcn components read directly as var(--radius).
+     ========================================================================== */
+  --radius: 0.5rem; /* 8px — button and input corner, measured on 29:1219 */
+
+  /* ==========================================================================
+     1.8 BORDER WIDTHS — derived. Figma draws 1px hairlines everywhere except
+     the KPI tiles, which carry a 3px ochre bar down their left edge (3:1302).
+     ========================================================================== */
+  --border-hairline: 1px;
+  --border-thick:    2px; /* focus ring and selected state */
+  --border-accent:   3px; /* KPI tile leading edge (measured) */
+
+  /* ==========================================================================
+     1.9 ELEVATION — derived. Figma has no shadow style. On a warm dark ground a
+     neutral black shadow reads grey, so every level pairs a near-black umbra
+     with a warm-tinted ambient keyed to earth-950. Named --elev-* rather than
+     --shadow-* so the Tailwind shadow namespace can map onto them without a
+     self-referential declaration; the light theme overrides them in section 2.
+     ========================================================================== */
+  --elev-xs: 0 1px 2px -1px rgb(0 0 0 / 0.40);
+  --elev-sm: 0 1px 3px 0 rgb(0 0 0 / 0.45), 0 1px 2px -1px rgb(0 0 0 / 0.35);
+  --elev-md: 0 4px 10px -2px rgb(0 0 0 / 0.50), 0 2px 4px -2px rgb(21 11 3 / 0.45);
+  --elev-lg: 0 12px 24px -6px rgb(0 0 0 / 0.55), 0 4px 8px -4px rgb(21 11 3 / 0.45);
+  --elev-xl: 0 24px 48px -12px rgb(0 0 0 / 0.65), 0 8px 16px -8px rgb(21 11 3 / 0.50);
+  --elev-glow-accent: 0 0 0 1px rgb(206 134 46 / 0.35), 0 8px 24px -8px rgb(206 134 46 / 0.30);
+
+  /* ==========================================================================
+     1.10 Z-INDEX LAYERS — derived. Radix portals mount at the end of <body>,
+     so these mainly order app chrome against each other and against the map,
+     which is why the map canvas gets an explicit floor of 0.
+     ========================================================================== */
+  --z-base:      0;
+  --z-map:       0;
+  --z-raised:    10;
+  --z-sticky:    100;  /* sticky table headers */
+  --z-header:    200;
+  --z-sidebar:   210;
+  --z-dropdown:  300;
+  --z-overlay:   400;  /* dialog/sheet scrim */
+  --z-modal:     410;
+  --z-popover:   500;
+  --z-toast:     600;
+  --z-tooltip:   700;
+
+}
+
+/* ==========================================================================
+   2. SEMANTIC ALIASES — the only names a component may use.
+   Dark first: :root carries dark, so the app is dark with no attribute set.
+   ========================================================================== */
+
+:root,
+[data-theme="dark"],
+.dark {
+  color-scheme: dark;
+
+  /* shadcn contract */
+  --background: var(--earth-900);
+  --foreground: var(--earth-50);
+  --card: var(--earth-850);
+  --card-foreground: var(--earth-50);
+  --popover: var(--earth-800);
+  --popover-foreground: var(--earth-50);
+  --primary: var(--ochre-500);
+  --primary-foreground: var(--earth-950); /* NOT white. Figma puts #FFFFFF on the
+        ochre button (29:1219 "New Complaint"); that is 2.97:1 and fails WCAG AA.
+        earth-950 gives 6.54:1 on the same fill. Deliberate deviation, logged. */
+  --secondary: var(--earth-800);
+  --secondary-foreground: var(--earth-100);
+  --muted: var(--earth-800);
+  --muted-foreground: var(--earth-300); /* 6.92:1 on card */
+  --accent: var(--earth-800);           /* hover/highlight fill inside menus */
+  --accent-foreground: var(--earth-50);
+  --destructive: var(--danger-500);
+  --destructive-foreground: var(--earth-950);
+  --border: color-mix(in oklab, var(--earth-500) 28%, transparent); /* derived: a
+        translucent hairline keeps one border token legible on every surface
+        level instead of needing a per-surface border colour */
+  --input: color-mix(in oklab, var(--earth-500) 38%, transparent);
+  --ring: var(--ochre-400);
+
+  --chart-1: var(--chart-a);
+  --chart-2: var(--chart-b);
+  --chart-3: var(--chart-c);
+  --chart-4: var(--chart-d);
+  --chart-5: var(--chart-e);
+
+  --sidebar: var(--earth-950);
+  --sidebar-foreground: var(--earth-200);
+  --sidebar-primary: var(--ochre-500);
+  --sidebar-primary-foreground: var(--earth-950);
+  --sidebar-accent: var(--earth-850);
+  --sidebar-accent-foreground: var(--earth-0);
+  --sidebar-border: color-mix(in oklab, var(--earth-500) 22%, transparent);
+  --sidebar-ring: var(--ochre-400);
+
+  /* ICMS surface levels — shadcn has no name for "sunken" or "canvas" */
+  --surface-canvas: var(--earth-900); /* page ground */
+  --surface-1: var(--earth-850);      /* card, panel, table row */
+  --surface-2: var(--earth-800);      /* input well, toolbar, raised tile */
+  --surface-3: var(--earth-700);      /* hovered row, active tab */
+  --surface-sunken: var(--earth-950); /* table header strip, code block */
+  --surface-overlay: color-mix(in oklab, var(--earth-950) 72%, transparent); /* dialog scrim */
+
+  /* Text levels */
+  --text-strong: var(--earth-0);
+  --text-base-c: var(--earth-100);
+  --text-muted: var(--earth-300);
+  --text-faint: var(--earth-400); /* 4.58:1 — the floor; nothing dimmer carries text */
+  --text-on-accent: var(--earth-950);
+  --text-link: var(--ochre-400);
+
+  /* Border levels */
+  --border-subtle: color-mix(in oklab, var(--earth-500) 18%, transparent);
+  --border-base: color-mix(in oklab, var(--earth-500) 28%, transparent);
+  --border-strong: color-mix(in oklab, var(--earth-400) 45%, transparent);
+  --border-accent-c: var(--ochre-500);
+
+  /* Interactive accent states. 15% ochre over the card resolves to #453420,
+     which is within 1 step of the observed "ASSIGN INSPECTION" fill #443420 —
+     the derivation reproduces the design rather than replacing it. */
+  --accent-solid: var(--ochre-500);
+  --accent-solid-hover: var(--ochre-400);
+  --accent-solid-active: var(--ochre-600);
+  --accent-solid-disabled: color-mix(in oklab, var(--ochre-500) 38%, var(--earth-800));
+  --accent-soft: color-mix(in oklab, var(--ochre-500) 15%, var(--surface-1));
+  --accent-soft-hover: color-mix(in oklab, var(--ochre-500) 24%, var(--surface-1));
+  --accent-soft-border: color-mix(in oklab, var(--ochre-500) 32%, var(--surface-1));
+
+  /* Status families. Six families cover all 11 Figma chip labels plus the
+     three priority labels. fg is the step that clears 4.5:1 ON THE TINT,
+     not on the card — a chip sits on its own background. */
+  --status-neutral-fg: var(--earth-200);
+  --status-neutral-bg: var(--earth-800);
+  --status-neutral-border: color-mix(in oklab, var(--earth-400) 35%, transparent);
+
+  --status-accent-fg: var(--ochre-300);
+  --status-accent-bg: color-mix(in oklab, var(--ochre-500) 14%, var(--surface-1));
+  --status-accent-border: color-mix(in oklab, var(--ochre-500) 32%, var(--surface-1));
+
+  --status-info-fg: var(--info-400);
+  --status-info-bg: color-mix(in oklab, var(--info-500) 14%, var(--surface-1));
+  --status-info-border: color-mix(in oklab, var(--info-500) 32%, var(--surface-1));
+
+  --status-success-fg: var(--success-400);
+  --status-success-bg: color-mix(in oklab, var(--success-500) 14%, var(--surface-1));
+  --status-success-border: color-mix(in oklab, var(--success-500) 32%, var(--surface-1));
+
+  --status-warning-fg: var(--warning-400);
+  --status-warning-bg: color-mix(in oklab, var(--warning-500) 14%, var(--surface-1));
+  --status-warning-border: color-mix(in oklab, var(--warning-500) 32%, var(--surface-1));
+
+  --status-danger-fg: var(--danger-300); /* -400 is 4.38:1 on its own tint; -300 is 5.3:1 */
+  --status-danger-bg: color-mix(in oklab, var(--danger-500) 14%, var(--surface-1));
+  --status-danger-border: color-mix(in oklab, var(--danger-500) 32%, var(--surface-1));
+}
+
+/* ---- Light theme. Same contract, inverted surface stack. No screen uses it;
+   it exists so the token layer is theme-complete and so the showcase can prove
+   no component has a dark value baked in. ---------------------------------- */
+[data-theme="light"],
+.light {
+  color-scheme: light;
+
+  --background: var(--earth-50);
+  --foreground: var(--earth-900);
+  --card: var(--earth-0);
+  --card-foreground: var(--earth-900);
+  --popover: var(--earth-0);
+  --popover-foreground: var(--earth-900);
+  --primary: var(--ochre-800);            /* 6.47:1 with white on it; ochre-500 would be 2.97:1 */
+  --primary-foreground: var(--earth-0);
+  --secondary: var(--earth-100);
+  --secondary-foreground: var(--earth-900);
+  --muted: var(--earth-100);
+  --muted-foreground: var(--earth-600);   /* 5.6:1 on white */
+  --accent: var(--earth-100);
+  --accent-foreground: var(--earth-900);
+  --destructive: var(--danger-800);
+  --destructive-foreground: var(--earth-0);
+  --border: color-mix(in oklab, var(--earth-500) 30%, transparent);
+  --input: color-mix(in oklab, var(--earth-500) 42%, transparent);
+  --ring: var(--ochre-700);
+
+  --chart-1: #B06600;
+  --chart-2: #359045;
+  --chart-3: #008EAA;
+  --chart-4: #BE563E;
+  --chart-5: #8864C0;
+
+  --sidebar: var(--earth-100);
+  --sidebar-foreground: var(--earth-900);
+  --sidebar-primary: var(--ochre-800);
+  --sidebar-primary-foreground: var(--earth-0);
+  --sidebar-accent: var(--earth-200);
+  --sidebar-accent-foreground: var(--earth-900);
+  --sidebar-border: color-mix(in oklab, var(--earth-500) 26%, transparent);
+  --sidebar-ring: var(--ochre-700);
+
+  --surface-canvas: var(--earth-50);
+  --surface-1: var(--earth-0);
+  --surface-2: var(--earth-100);
+  --surface-3: var(--earth-200);
+  --surface-sunken: var(--earth-100);
+  --surface-overlay: color-mix(in oklab, var(--earth-900) 45%, transparent);
+
+  --text-strong: var(--earth-950);
+  --text-base-c: var(--earth-900);
+  --text-muted: var(--earth-600);
+  --text-faint: var(--earth-500);
+  --text-on-accent: var(--earth-0);
+  --text-link: var(--ochre-800);
+
+  --border-subtle: color-mix(in oklab, var(--earth-500) 18%, transparent);
+  --border-base: color-mix(in oklab, var(--earth-500) 30%, transparent);
+  --border-strong: color-mix(in oklab, var(--earth-600) 55%, transparent);
+  --border-accent-c: var(--ochre-800);
+
+  --accent-solid: var(--ochre-800);
+  --accent-solid-hover: var(--ochre-700);
+  --accent-solid-active: #6F3F00;
+  --accent-solid-disabled: color-mix(in oklab, var(--ochre-800) 35%, var(--earth-100));
+  --accent-soft: color-mix(in oklab, var(--ochre-500) 12%, var(--surface-1));
+  --accent-soft-hover: color-mix(in oklab, var(--ochre-500) 20%, var(--surface-1));
+  --accent-soft-border: color-mix(in oklab, var(--ochre-500) 34%, var(--surface-1));
+
+  --status-neutral-fg: var(--earth-700);
+  --status-neutral-bg: var(--earth-100);
+  --status-neutral-border: color-mix(in oklab, var(--earth-600) 30%, transparent);
+
+  --status-accent-fg: var(--ochre-800);
+  --status-accent-bg: color-mix(in oklab, var(--ochre-500) 12%, var(--earth-0));
+  --status-accent-border: color-mix(in oklab, var(--ochre-500) 34%, var(--earth-0));
+
+  --status-info-fg: var(--info-800);
+  --status-info-bg: color-mix(in oklab, var(--info-500) 12%, var(--earth-0));
+  --status-info-border: color-mix(in oklab, var(--info-500) 34%, var(--earth-0));
+
+  --status-success-fg: var(--success-800);
+  --status-success-bg: color-mix(in oklab, var(--success-500) 12%, var(--earth-0));
+  --status-success-border: color-mix(in oklab, var(--success-500) 34%, var(--earth-0));
+
+  --status-warning-fg: var(--warning-800);
+  --status-warning-bg: color-mix(in oklab, var(--warning-500) 12%, var(--earth-0));
+  --status-warning-border: color-mix(in oklab, var(--warning-500) 34%, var(--earth-0));
+
+  --status-danger-fg: var(--danger-800);
+  --status-danger-bg: color-mix(in oklab, var(--danger-500) 12%, var(--earth-0));
+  --status-danger-border: color-mix(in oklab, var(--danger-500) 34%, var(--earth-0));
+
+  /* A light ground needs a weaker, less saturated shadow or every card looks
+     bruised. Same geometry, ~1/4 the opacity, tinted with brown 2 not black. */
+  --elev-xs: 0 1px 2px -1px rgb(45 38 30 / 0.10);
+  --elev-sm: 0 1px 3px 0 rgb(45 38 30 / 0.12), 0 1px 2px -1px rgb(45 38 30 / 0.08);
+  --elev-md: 0 4px 10px -2px rgb(45 38 30 / 0.12), 0 2px 4px -2px rgb(45 38 30 / 0.08);
+  --elev-lg: 0 12px 24px -6px rgb(45 38 30 / 0.14), 0 4px 8px -4px rgb(45 38 30 / 0.10);
+  --elev-xl: 0 24px 48px -12px rgb(45 38 30 / 0.18), 0 8px 16px -8px rgb(45 38 30 / 0.12);
+  --elev-glow-accent: 0 0 0 1px rgb(139 80 0 / 0.30), 0 8px 24px -8px rgb(139 80 0 / 0.22);
+}
+
+/* ==========================================================================
+   3. TAILWIND THEME MAPPING
+
+   Two blocks, and the split matters.
+
+   3a. `@theme` (static) holds everything that is the SAME in both themes:
+       fonts, the type scale, radii, spacing, motion, layout widths. Tailwind
+       emits these as real custom properties, so hand-written CSS can read
+       var(--text-lg) or var(--font-mono) directly.
+
+   3b. `@theme inline` holds everything that CHANGES with the theme: colour and
+       elevation. `inline` makes the utility emit var(--token) instead of a
+       copied value, which is what lets a single `bg-card` follow the theme
+       across a [data-theme] boundary. Anything in 3b must point at a variable
+       declared in section 2 under a DIFFERENT name (--elev-* not --shadow-*),
+       otherwise the emitted declaration is self-referential and drops out.
+   ========================================================================== */
+
+@theme {
+  /* ---- Typography ------------------------------------------------------
+     No font variable exists in Figma; families are identified from the
+     renders. Headings are a geometric sans; map/coordinate readouts are
+     monospace ("28.6139degN, 77.2090degE", "500m", "LAST 6 MONTHS").
+     Every stack carries a Devanagari face BEFORE the generic fallback because
+     EN/HI is in scope: Latin glyphs still come from the Latin face, and the
+     Devanagari face only claims codepoints the Latin face lacks. No component
+     may name a family directly — font-sans / font-display / font-mono only. */
+  --font-sans: "Inter", "Noto Sans Devanagari", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Poppins", "Montserrat", "Noto Sans Devanagari", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "Noto Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ~1.2 modular scale anchored at 14px body, which is what the 1440-wide
+     frames render body copy at. Steps that fell between two measured sizes
+     were kept rather than rounded away. Line heights pair per step: display
+     sizes tighten, body stays at 1.5 because anything lower clips Devanagari
+     matras and EN/HI share one grid. */
+  --text-2xs: 0.625rem;              /* 10px — dense table meta */
+  --text-2xs--line-height: 1.5;
+  --text-xs: 0.6875rem;              /* 11px — column headers, chips (measured) */
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.8125rem;              /* 13px — secondary / table body */
+  --text-sm--line-height: 1.5;
+  --text-base: 0.875rem;             /* 14px — body, form controls (measured) */
+  --text-base--line-height: 1.5;
+  --text-md: 1rem;                   /* 16px — emphasised body */
+  --text-md--line-height: 1.5;
+  --text-lg: 1.25rem;                /* 20px — card title, "Complaints Register" (measured) */
+  --text-lg--line-height: 1.3;
+  --text-xl: 1.5rem;                 /* 24px — section heading */
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.875rem;              /* 30px */
+  --text-2xl--line-height: 1.3;
+  --text-3xl: 2.25rem;               /* 36px — page H1, "Complaints" (measured) */
+  --text-3xl--line-height: 1.15;
+  --text-4xl: 2.75rem;               /* 44px — KPI value on 3:1302 */
+  --text-4xl--line-height: 1.15;
+
+  --leading-none: 1;
+  --leading-tight: 1.15;             /* display only */
+  --leading-snug: 1.3;               /* headings */
+  --leading-normal: 1.5;             /* body — floor for Devanagari */
+  --leading-relaxed: 1.65;           /* notice body / long-form legal text */
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;           /* Figma page titles and card titles are both bold */
+
+  --tracking-tight: -0.02em;         /* display sizes only */
+  --tracking-normal: 0em;
+  --tracking-wide: 0.04em;
+  --tracking-wider: 0.08em;          /* uppercase column headers and overlines (measured) */
+
+  /* ---- Radii — measured off the frames ---------------------------------- */
+  --radius-xs: 0.25rem;   /*  4px — checkbox, tag */
+  --radius-sm: 0.375rem;  /*  6px — small control */
+  --radius-md: 0.5rem;    /*  8px — button, input (measured) */
+  --radius-lg: 0.75rem;   /* 12px — card (measured) */
+  --radius-xl: 1rem;      /* 16px — modal (measured, 46:4561) */
+  --radius-2xl: 1.5rem;   /* 24px — glass panels on the login screen */
+  --radius-full: 9999px;  /* pills: status chips, the Back badge, avatars */
+
+  /* ---- Spacing ----------------------------------------------------------
+     4px base. Not in Figma; derived by measuring the register screens, whose
+     gutters land on 8/12/16/24/32 — 4 divides all of them and is the smallest
+     unit any designed element uses. This one value drives p-1 .. p-24. */
+  --spacing: 0.25rem;
+
+  /* Layout widths as spacing names, so the shell is buildable with utilities
+     (w-rail, ml-sidebar, h-header). All four measured off the 1440 frames
+     except the footer, which Figma never designed. */
+  --spacing-rail: 82px;
+  --spacing-sidebar: 248px;
+  --spacing-header: 64px;
+  --spacing-footer: 56px;
+
+  /* ---- Motion -----------------------------------------------------------
+     Durations follow the distance-travelled rule: the further a surface moves,
+     the longer it takes. Three easings, so entering and leaving never share
+     one curve. Overridden wholesale by prefers-reduced-motion in section 4. */
+  --duration-instant: 0ms;
+  --duration-fast: 120ms;    /* colour/opacity only: hover, chip, icon */
+  --duration-base: 180ms;    /* small transforms: dropdown, tooltip, popover */
+  --duration-slow: 260ms;    /* dialog, accordion, tab panel */
+  --duration-slower: 400ms;  /* sheet and drawer — full-height travel */
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);    /* entering */
+  --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);  /* leaving */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1.1);
+}
+
+@theme inline {
+  /* ---- shadcn semantic contract ---------------------------------------- */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ---- ICMS surface levels — shadcn has no name for "canvas" or "sunken",
+     but the registers need five distinct depths: page ground, card, input
+     well, hovered row, and the near-black table-header strip. ------------- */
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-overlay: var(--surface-overlay);
+
+  /* ---- Text levels. Named fg-* rather than reusing `muted`, because shadcn
+     already spends `muted` on a SURFACE: text-muted-foreground is the text
+     colour, bg-muted is the fill. text-fg-muted is the unambiguous spelling
+     and both resolve to the same value. ----------------------------------- */
+  --color-fg-strong: var(--text-strong);
+  --color-fg-base: var(--text-base-c);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-faint: var(--text-faint);
+  --color-fg-on-accent: var(--text-on-accent);
+  --color-fg-link: var(--text-link);
+
+  /* ---- Border levels --------------------------------------------------- */
+  --color-line-subtle: var(--border-subtle);
+  --color-line: var(--border-base);
+  --color-line-strong: var(--border-strong);
+  --color-line-accent: var(--border-accent-c);
+
+  /* ---- Accent interaction states --------------------------------------- */
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-solid-hover: var(--accent-solid-hover);
+  --color-accent-solid-active: var(--accent-solid-active);
+  --color-accent-solid-disabled: var(--accent-solid-disabled);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-hover: var(--accent-soft-hover);
+  --color-accent-soft-border: var(--accent-soft-border);
+
+  /* ---- Status families: six cover all 11 Figma chip labels and the three
+     priority labels. Each is a fg/bg/border triple so a chip never has to
+     compose its own colours. ---------------------------------------------- */
+  --color-status-neutral: var(--status-neutral-bg);
+  --color-status-neutral-fg: var(--status-neutral-fg);
+  --color-status-neutral-border: var(--status-neutral-border);
+  --color-status-accent: var(--status-accent-bg);
+  --color-status-accent-fg: var(--status-accent-fg);
+  --color-status-accent-border: var(--status-accent-border);
+  --color-status-info: var(--status-info-bg);
+  --color-status-info-fg: var(--status-info-fg);
+  --color-status-info-border: var(--status-info-border);
+  --color-status-success: var(--status-success-bg);
+  --color-status-success-fg: var(--status-success-fg);
+  --color-status-success-border: var(--status-success-border);
+  --color-status-warning: var(--status-warning-bg);
+  --color-status-warning-fg: var(--status-warning-fg);
+  --color-status-warning-border: var(--status-warning-border);
+  --color-status-danger: var(--status-danger-bg);
+  --color-status-danger-fg: var(--status-danger-fg);
+  --color-status-danger-border: var(--status-danger-border);
+
+  /* ---- Raw ramps, exposed by name. A raw hex in a .tsx is a defect;
+     bg-earth-800 or text-ochre-400 is not. These do NOT flip with the theme —
+     reach for a semantic token first. ------------------------------------- */
+  --color-earth-0: var(--earth-0);
+  --color-earth-50: var(--earth-50);
+  --color-earth-100: var(--earth-100);
+  --color-earth-200: var(--earth-200);
+  --color-earth-300: var(--earth-300);
+  --color-earth-400: var(--earth-400);
+  --color-earth-500: var(--earth-500);
+  --color-earth-600: var(--earth-600);
+  --color-earth-700: var(--earth-700);
+  --color-earth-800: var(--earth-800);
+  --color-earth-850: var(--earth-850);
+  --color-earth-900: var(--earth-900);
+  --color-earth-950: var(--earth-950);
+  --color-ochre-300: var(--ochre-300);
+  --color-ochre-400: var(--ochre-400);
+  --color-ochre-500: var(--ochre-500);
+  --color-ochre-600: var(--ochre-600);
+  --color-ochre-700: var(--ochre-700);
+  --color-ochre-800: var(--ochre-800);
+  --color-danger-300: var(--danger-300);
+  --color-danger-400: var(--danger-400);
+  --color-danger-500: var(--danger-500);
+  --color-danger-600: var(--danger-600);
+  --color-danger-700: var(--danger-700);
+  --color-danger-800: var(--danger-800);
+  --color-warning-300: var(--warning-300);
+  --color-warning-400: var(--warning-400);
+  --color-warning-500: var(--warning-500);
+  --color-warning-600: var(--warning-600);
+  --color-warning-700: var(--warning-700);
+  --color-warning-800: var(--warning-800);
+  --color-success-300: var(--success-300);
+  --color-success-400: var(--success-400);
+  --color-success-500: var(--success-500);
+  --color-success-600: var(--success-600);
+  --color-success-700: var(--success-700);
+  --color-success-800: var(--success-800);
+  --color-info-300: var(--info-300);
+  --color-info-400: var(--info-400);
+  --color-info-500: var(--info-500);
+  --color-info-600: var(--info-600);
+  --color-info-700: var(--info-700);
+  --color-info-800: var(--info-800);
+
+  /* ---- Elevation. Theme-varying, hence inline and hence the --elev-* alias. */
+  --shadow-xs: var(--elev-xs);
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --shadow-lg: var(--elev-lg);
+  --shadow-xl: var(--elev-xl);
+  --shadow-glow-accent: var(--elev-glow-accent);
+}
+
+/* ==========================================================================
+   4. BASE LAYER
+   ========================================================================== */
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* One focus treatment everywhere. Two rings (ochre over the background
+     colour) so it stays visible on both the darkest and the lightest surface. */
+  :focus-visible {
+    outline: var(--border-thick) solid var(--ring);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--ochre-500) 40%, transparent);
+    color: var(--text-strong);
+  }
+
+  /* Coordinates, IDs, areas and timestamps are monospace throughout the
+     designs. .tabular is for numbers that must not jitter between renders. */
+  .font-data { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* Scrollbars: the default light scrollbar on a dark warm ground is the
+     single loudest unstyled element in the app. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--earth-700) transparent;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--earth-700);
+    border-radius: var(--radius-full);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--earth-600); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ==========================================================================
+   5. LEGACY COMPATIBILITY
+   src/styles.css (1,535 lines, the blue/orange console theme) is still live and
+   is NOT migrated by this change. Tailwind's Preflight resets heading and list
+   elements to unstyled; the legacy screens render 5 <h1>, 2 <h2>, 1 <ul>,
+   1 <ol> and 7 <li> that relied on UA defaults. This block restores just those
+   defaults, scoped to the legacy console column (.console-shell — renamed from
+   .app-shell when the portal shell took that name), so the two coexist.
+   DELETE THIS BLOCK when the last legacy screen is migrated.
+   ========================================================================== */
+
+@layer base {
+  .console-shell :is(h1, h2, h3, h4, h5, h6) {
+    font-weight: var(--font-weight-bold);
+    margin-block: 0.67em;
+  }
+  .console-shell h1 { font-size: 2em; }
+  .console-shell h2 { font-size: 1.5em; }
+  .console-shell h3 { font-size: 1.17em; }
+  .console-shell :is(ul, ol) {
+    list-style: revert;
+    margin-block: 1em;
+    padding-inline-start: 2.5em;
+  }
+}

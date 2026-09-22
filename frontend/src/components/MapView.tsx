@@ -181,19 +181,35 @@ export default function MapView() {
       // hand an access token to a third party.
       //
       // `transformRequest` is synchronous, so it can only use a token already
-      // in hand. AuthGate primes that cache before this component mounts and
-      // the effect above keeps it fresh.
+      // in hand. The route guard (routes/RequireAuth) primes that cache before
+      // this component mounts, and the effect above keeps it fresh.
       transformRequest: (url, resourceType) => {
-        if (
-          resourceType === "Tile" &&
-          url.startsWith(`${window.location.origin}/api/`)
-        ) {
-          const token = cachedAccessToken();
-          return token
-            ? { url, headers: { Authorization: `Bearer ${token}` } }
-            : { url };
+        if (resourceType !== "Tile") return { url };
+        // MapLibre substitutes {z}/{x}/{y} into the tile template and hands the
+        // result here unchanged, so our own tiles arrive as the relative path
+        // "/api/tiles/..." — never as an absolute URL. A startsWith(origin)
+        // test therefore never matched, every raster and mask tile went out
+        // without the bearer token, and the API answered 401: layers READY in
+        // the sidebar, nothing drawn on the map. Resolve against the page
+        // first, then decide.
+        let target: URL;
+        try {
+          target = new URL(url, window.location.href);
+        } catch {
+          return { url };
         }
-        return { url };
+        // Same-origin /api only: sending the header to the OpenStreetMap
+        // basemap would hand an access token to a third party.
+        if (
+          target.origin !== window.location.origin ||
+          !target.pathname.startsWith("/api/")
+        ) {
+          return { url };
+        }
+        const token = cachedAccessToken();
+        return token
+          ? { url, headers: { Authorization: `Bearer ${token}` } }
+          : { url };
       },
       style: {
         version: 8,

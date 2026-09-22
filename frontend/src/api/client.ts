@@ -9,7 +9,7 @@ import type {
   ReviewStatus,
   TileInfo,
 } from "./types";
-import { accessToken, login } from "../auth/oidc";
+import { accessToken, notifySessionEnded } from "../auth/oidc";
 
 import type { Polygon } from "geojson";
 
@@ -23,21 +23,10 @@ export class ApiError extends Error {
   }
 }
 
-function redirectToAuth(): void {
-  if (!window.location.pathname.startsWith("/auth")) {
-    void login();
-  }
+function sessionExpired(): void {
+  notifySessionEnded();
 }
 
-/**
- * The Authorization header for an outgoing request.
- *
- * Under SuperTokens the browser attached a session cookie by itself and no
- * request had to think about this. With Keycloak the token is ours to send, so
- * every path out of this module goes through here — including the ones the
- * browser would otherwise issue on its own (map tiles, the preview <img>, the
- * report downloads), which is why those three now fetch rather than link.
- */
 export async function authHeader(): Promise<Record<string, string>> {
   const token = await accessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -53,7 +42,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (res.status === 401) {
-    redirectToAuth();
+    sessionExpired();
     throw new ApiError(401, "Session expired");
   }
   if (!res.ok) {
@@ -64,7 +53,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         detail = JSON.stringify((body as { detail: unknown }).detail);
       }
     } catch {
-      /* non-JSON error body */
     }
     throw new ApiError(res.status, `${res.status}: ${detail}`);
   }
@@ -160,7 +148,7 @@ export const downloadUrl = {
 export async function download(path: string, filename: string): Promise<void> {
   const res = await fetch(path, { headers: await authHeader() });
   if (res.status === 401) {
-    redirectToAuth();
+    sessionExpired();
     throw new ApiError(401, "Session expired");
   }
   if (!res.ok) throw new ApiError(res.status, `${res.status}: ${res.statusText}`);
@@ -221,6 +209,14 @@ async function sendUpload(
   onProgress: (fraction: number) => void,
 ): Promise<Raster> {
   const headers = await authHeader();
+  // No token means no Authorization header, and FastAPI answers a headerless
+  // request with {"detail":"Not authenticated"} — a 401 that looks exactly
+  // like an expired session but is really this client sending the file
+  // unauthenticated. Refuse before the bytes go out; uploadRaster turns this
+  // into one refresh and one retry.
+  if (!("Authorization" in headers)) {
+    return Promise.reject(new ApiError(401, "Session expired"));
+  }
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     fd.append("name", fields.name);
@@ -266,7 +262,14 @@ export async function uploadRaster(
   // Refresh BEFORE the body goes out. A multi-gigabyte upload can easily run
   // past the access token's lifetime, and one cheap round trip up front beats
   // discovering it after sending every byte.
-  await refreshSession();
+  //
+  // The result is checked, not discarded: a false here means there is no token
+  // to send, and uploading gigabytes that are certain to be refused is the
+  // worst possible way to find that out.
+  if (!(await refreshSession())) {
+    sessionExpired();
+    throw new ApiError(401, "Session expired");
+  }
   try {
     return await sendUpload(pid, fields, onProgress);
   } catch (err) {
@@ -274,7 +277,7 @@ export async function uploadRaster(
     // Raced the expiry anyway. Refresh once and re-send; only a refresh token
     // that is genuinely dead means the user has to sign in again.
     if (!(await refreshSession())) {
-      redirectToAuth();
+      sessionExpired();
       throw err;
     }
     onProgress(0);

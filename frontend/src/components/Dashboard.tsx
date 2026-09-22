@@ -6,7 +6,7 @@ import {
   pollAnalysis,
   refreshRasters,
 } from "../state/actions";
-import Header from "./Header";
+import ProjectToolbar from "./ProjectToolbar";
 import Sidebar from "./Sidebar";
 import MapView from "./MapView";
 import NewProjectModal from "./NewProjectModal";
@@ -57,8 +57,8 @@ export default function Dashboard() {
   }, [activeAnalysisIds]);
 
   return (
-    <div className="app-shell">
-      <Header />
+    <div className="console-shell">
+      <ProjectToolbar />
       {globalError && (
         <div className="global-error" role="alert">
           {globalError}

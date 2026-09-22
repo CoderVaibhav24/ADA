@@ -134,28 +134,43 @@ interface AppState {
   requestFit: (bounds: [number, number, number, number]) => void;
   setGlobalError: (message: string | null) => void;
   clearProjectData: () => void;
+  /**
+   * Back to the state a freshly loaded tab has.
+   *
+   * Sign-out calls this. clearProjectData() is not enough: it deliberately
+   * keeps `projects`, `projectsLoaded` and `currentProjectId` because it runs
+   * when the officer SWITCHES project. At sign-out the previous officer's
+   * project list must go too, or the next person to sign in on the same
+   * workstation sees it in the header before the first fetch returns.
+   */
+  resetAll: () => void;
 }
+
+/** The state a freshly loaded tab has. Shared by the initial store and resetAll. */
+const INITIAL = {
+  projects: [] as Project[],
+  projectsLoaded: false,
+  currentProjectId: null as string | null,
+  rasters: [] as Raster[],
+  analyses: [] as Analysis[],
+  redZones: [] as RedZone[],
+  rasterUI: {} as Record<string, LayerUI>,
+  rasterOrder: [] as string[],
+  maskUI: {} as Record<string, LayerUI>,
+  polyUI: {} as Record<string, LayerUI>,
+  zoneVisible: {} as Record<string, boolean>,
+  features: {} as Record<string, ChangeFeatureCollection>,
+  drawActive: false,
+  fitRequest: null as FitRequest | null,
+  globalError: null as string | null,
+};
 
 const RASTER_DEFAULT: LayerUI = { visible: true, opacity: 1 };
 const MASK_DEFAULT: LayerUI = { visible: true, opacity: 0.75 };
 const POLY_DEFAULT: LayerUI = { visible: true, opacity: 1 };
 
 export const useStore = create<AppState>()((set) => ({
-  projects: [],
-  projectsLoaded: false,
-  currentProjectId: null,
-  rasters: [],
-  analyses: [],
-  redZones: [],
-  rasterUI: {},
-  rasterOrder: [],
-  maskUI: {},
-  polyUI: {},
-  zoneVisible: {},
-  features: {},
-  drawActive: false,
-  fitRequest: null,
-  globalError: null,
+  ...INITIAL,
 
   setProjects: (projects) =>
     set((s) => {
@@ -313,4 +328,6 @@ export const useStore = create<AppState>()((set) => ({
       features: {},
       drawActive: false,
     }),
+
+  resetAll: () => set({ ...INITIAL }),
 }));

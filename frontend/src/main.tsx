@@ -1,22 +1,41 @@
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
+import ErrorBoundary from "./routes/ErrorBoundary";
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./styles/icms-theme.css";
 import "./styles.css";
-
-// No SDK init here any more. SuperTokens needed a synchronous SuperTokens.init
-// before the first render; the OIDC UserManager is built lazily inside
-// auth/oidc.ts, because its configuration is fetched from /api/auth/config and
-// an await cannot happen before createRoot.
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("Missing #root element");
 
-// Note: StrictMode is intentionally omitted — the MapLibre + terra-draw
-// instances are imperative singletons and dev double-mounting them adds
-// noise without value for this POC.
+/**
+ * The query cache for the ICMS registers.
+ *
+ * Defaults chosen against a government LAN and a shared desk machine:
+ *
+ *   - `refetchOnWindowFocus: false`. An officer alt-tabs to a PDF and back
+ *     constantly; refetching every time would repaginate the register under
+ *     them. The registers refetch when their query changes, which is the only
+ *     moment the rows can have become wrong for the officer's own actions.
+ *   - `staleTime: 30s`. Long enough that going into a case and back is free,
+ *     short enough that a colleague's assignment shows up on the next move.
+ *   - `retry: 1` at the root; the ICMS hooks narrow this further so a 4xx —
+ *     a verdict, not a blip — is never retried at all.
+ */
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { refetchOnWindowFocus: false, staleTime: 30_000, retry: 1 },
+  },
+});
+
 ReactDOM.createRoot(rootEl).render(
-  <BrowserRouter>
-    <App />
-  </BrowserRouter>,
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </QueryClientProvider>
+  </ErrorBoundary>,
 );

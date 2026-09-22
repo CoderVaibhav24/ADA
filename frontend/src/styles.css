@@ -60,9 +60,7 @@ body {
   color: var(--danger-soft);
 }
 
-/* ---------------------------------------------------------- shell */
-
-.app-shell {
+.console-shell {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -84,60 +82,23 @@ body {
   font-family: var(--font-mono);
 }
 
-/* ---------------------------------------------------------- header */
-
-.app-header {
+.console-toolbar {
   display: flex;
   align-items: center;
-  gap: 24px;
-  height: 54px;
-  padding: 0 16px;
+  min-height: 46px;
+  padding: 6px 16px;
   background: linear-gradient(180deg, var(--bg-raised-2), var(--bg-raised));
   border-bottom: 1px solid var(--line);
-  border-top: 2px solid var(--accent);
   flex-shrink: 0;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.brand-logo {
-  /* Height-driven so the mark keeps the aspect ratio baked into the SVG
-     (49x42). The artwork is a square bitmap the file already squashes to that
-     box with preserveAspectRatio="none", so forcing any other ratio here
-     distorts it a second time. */
-  height: 30px;
-  width: auto;
-  display: block;
-  flex-shrink: 0;
-}
-
-.brand-text h1 {
-  font-family: var(--font-display);
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  margin: 0;
-  line-height: 1.1;
-  white-space: nowrap;
-}
-
-.brand-text span {
-  display: block;
-  font-size: 10.5px;
-  color: var(--text-faint);
-  letter-spacing: 0.04em;
-  white-space: nowrap;
 }
 
 .header-project {
   display: flex;
   align-items: center;
+  /* Wraps rather than overflowing: at 360px the four controls do not fit on
+     one line, and a toolbar that scrolls sideways takes the whole page with
+     it. */
+  flex-wrap: wrap;
   gap: 8px;
   flex: 1;
   min-width: 0;
@@ -149,22 +110,6 @@ body {
   letter-spacing: 0.12em;
   font-size: 12px;
   color: var(--text-faint);
-}
-
-.header-user {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.user-email {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--text-dim);
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------- controls */

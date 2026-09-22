@@ -1,30 +1,63 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-// Dev proxy: all same-origin /api/* calls are forwarded to ada-api, so the
-// dev server and the API share one origin and no CORS preflight is involved.
-// Keycloak is NOT proxied — the browser is redirected to it directly, and the
-// realm's redirect URIs list this origin.
+function infraEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  let text: string;
+  try {
+    text = readFileSync(resolve(__dirname, "../infra/.env"), "utf8");
+  } catch {
+    return out;
+  }
+  for (const line of text.split("\n")) {
+    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+  }
+  return out;
+}
+
+const env = infraEnv();
+const port = (name: string, fallback: number): number =>
+  Number(process.env[name] ?? env[name] ?? fallback);
+
+const showcase = process.env.ICMS_DESIGN_SYSTEM === "1";
+
+const NESTED_PROJECT = "**/keycloak-theme/**";
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  optimizeDeps: {
+    entries: ["index.html", "design-system.html"],
+  },
+  resolve: {
+    alias: { "@": resolve(__dirname, "./src") },
+  },
+  build: showcase
+    ? {
+        rollupOptions: {
+          input: {
+            main: resolve(__dirname, "index.html"),
+            designSystem: resolve(__dirname, "design-system.html"),
+          },
+        },
+      }
+    : undefined,
   server: {
+    watch: { ignored: [NESTED_PROJECT] },
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: `http://localhost:${port("BACKEND_PORT", 8010)}`,
         changeOrigin: true,
       },
-      // ada-auth. The published host port is 8012 because 8002 was already
-      // taken on this machine; the path is the same one nginx serves in the
-      // container build, so the app code does not know the difference.
-      // Keycloak, same-origin, exactly as nginx serves it in the container
-      // build. No rewrite: KC_HTTP_RELATIVE_PATH is /idp, so Keycloak expects
-      // the prefix to survive.
       "/idp": {
-        target: "http://localhost:8091",
+        target: `http://localhost:${port("KC_HTTP_HOST_PORT", 8091)}`,
         changeOrigin: true,
       },
       "/auth-api": {
-        target: "http://localhost:8012",
+        target: `http://localhost:${port("ADA_AUTH_PORT", 8012)}`,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/auth-api/, ""),
       },

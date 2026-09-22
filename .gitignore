@@ -9,6 +9,24 @@
 !.env.example
 !infra/.env.example
 
+# Everything infra/scripts/ generates.
+#
+# `.env.*` above already catches the timestamped backups gen-env.mjs writes
+# (infra/.env.backup.<ISO8601>), because those are literally `.env.` plus a
+# suffix. The two below are NOT caught by any rule above, and both matter:
+#
+#   infra/secrets/    create_users.py writes user-credentials-<UTC>.txt here,
+#                     mode 0600 — one line per person, credential in the clear.
+#   infra/users.yaml  the real roster. It holds no credential, but it is a list
+#                     of real names, addresses and phone numbers, which is
+#                     personal data and does not belong in a repository.
+#
+# The committed templates are re-admitted immediately after, so the examples
+# stay in git and only the real files stay out.
+infra/secrets/
+infra/users.yaml
+!infra/users.example.yaml
+
 # ── Python ───────────────────────────────────────────────────
 .venv/
 **/.venv/
@@ -29,9 +47,9 @@ htmlcov/
 # ── Node ─────────────────────────────────────────────────────
 #
 # Repo-wide, not frontend/-specific: there are two Vite projects (the console
-# and keycloak-theme/) and a path-anchored rule silently fails to cover the
-# second. keycloak-theme/node_modules alone is 3,381 files and carries
-# platform-specific binaries plus a Maven cache full of jars.
+# and frontend/keycloak-theme/) and a path-anchored rule silently fails to
+# cover the second. frontend/keycloak-theme/node_modules alone is 3,381 files
+# and carries platform-specific binaries plus a Maven cache full of jars.
 node_modules/
 dist/
 # Keycloakify's output: two theme jars, rebuilt by
@@ -98,3 +116,6 @@ docs
 backend/ml/scripts
 backend/ml/training
 backend/scripts
+.claude
+
+token.git
