@@ -291,4 +291,7 @@ class TestErrorEnvelopeAndTracing:
         response = client.get("/api/projects/999999")
 
         assert response.status_code == 404
-        assert response.json() == {"detail": "Project not found"}
+        body = response.json()
+        # `detail` is untouched; request_id rides alongside it.
+        assert body["detail"] == "Project not found"
+        assert set(body) == {"detail", "request_id"}

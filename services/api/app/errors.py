@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import logging
-import re
-import uuid
 from collections.abc import Iterable, Sequence
-from contextvars import ContextVar
-from typing import Any
 
+from ada_platform.logging import get_request_id as current_request_id
+from ada_platform.requestid import REQUEST_ID_HEADER, RequestIdMiddleware
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .icms.workflow import (
@@ -34,49 +31,7 @@ __all__ = [
 
 log = logging.getLogger("ada.api.errors")
 
-REQUEST_ID_HEADER = "X-Request-ID"
 ICMS_PREFIX = "/api/icms"
-
-_request_id: ContextVar[str] = ContextVar("ada_request_id", default="")
-
-_UNSAFE_ID = re.compile(r"[^A-Za-z0-9._-]")
-_MAX_ID_LENGTH = 64
-
-
-def current_request_id() -> str:
-    return _request_id.get()
-
-
-def _clean_request_id(value: str | None) -> str:
-    if not value:
-        return uuid.uuid4().hex
-    cleaned = _UNSAFE_ID.sub("", value)[:_MAX_ID_LENGTH]
-    return cleaned or uuid.uuid4().hex
-
-
-class RequestIdMiddleware:
-    def __init__(self, app: Any) -> None:
-        self.app = app
-
-    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        request_id = _clean_request_id(Headers(scope=scope).get("x-request-id"))
-        token = _request_id.set(request_id)
-
-        async def send_with_id(message: dict) -> None:
-            if message["type"] == "http.response.start":
-                MutableHeaders(scope=message)[REQUEST_ID_HEADER] = request_id
-            await send(message)
-
-        try:
-            await self.app(scope, receive, send_with_id)
-        except Exception:
-            raise
-        else:
-            _request_id.reset(token)
 
 
 def envelope(
@@ -149,6 +104,12 @@ def _field_of(error: dict) -> str | None:
     return ".".join(location) or None
 
 
+# The pre-ICMS body. `detail` keeps its shape because the console parses it;
+# request_id rides alongside so a reported failure can be found in the logs.
+def _detail(detail: object) -> dict:
+    return {"detail": detail, "request_id": current_request_id()}
+
+
 def install_error_handlers(app: FastAPI) -> None:
     app.add_middleware(RequestIdMiddleware)
 
@@ -177,7 +138,7 @@ def install_error_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         errors = jsonable_encoder(exc.errors())
         if not _is_icms(request):
-            return JSONResponse(status_code=422, content={"detail": errors})
+            return JSONResponse(status_code=422, content=_detail(errors))
         first = errors[0] if errors else {}
         return JSONResponse(
             status_code=422,
@@ -193,7 +154,7 @@ def install_error_handlers(app: FastAPI) -> None:
         headers = getattr(exc, "headers", None)
         if not _is_icms(request):
             return JSONResponse(
-                status_code=exc.status_code, content={"detail": exc.detail}, headers=headers
+                status_code=exc.status_code, content=_detail(exc.detail), headers=headers
             )
         code = _STATUS_CODES.get(exc.status_code, "error")
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
@@ -205,14 +166,13 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        log.exception(
-            "unhandled error serving %s %s [request_id=%s]",
-            request.method, request.url.path, current_request_id(),
-        )
+        # request_id is on the line already: the logging config reads it from
+        # the same contextvar the middleware set.
+        log.exception("unhandled error serving %s %s", request.method, request.url.path)
         headers = {REQUEST_ID_HEADER: current_request_id()}
         if not _is_icms(request):
             return JSONResponse(
-                status_code=500, content={"detail": "Internal Server Error"}, headers=headers
+                status_code=500, content=_detail("Internal Server Error"), headers=headers
             )
         return JSONResponse(
             status_code=500,

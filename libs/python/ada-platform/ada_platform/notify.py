@@ -55,6 +55,7 @@ from dataclasses import dataclass
 import httpx
 
 from ada_platform.errors import ADAConfigError
+from ada_platform.requestid import outbound_headers
 from ada_platform.tokens import MachineTokenSource
 
 logger = logging.getLogger("ada_platform.notify")
@@ -135,8 +136,13 @@ class ADANotify:
         payload: dict | None = None,
         channels: list[str] | None = None,
         locale: str = "en",
+        request_id: str | None = None,
     ) -> SendOutcome:
-        """Submit one notification. Never raises."""
+        """Submit one notification. Never raises.
+
+        request_id defaults to the one bound for the current request or job, and
+        travels as X-Request-ID so ADA's log lines join the caller's.
+        """
         body = {
             "idempotency_key": idempotency_key,
             # The closed recipient type (AD-8). Not an email address — ADA
@@ -152,6 +158,7 @@ class ADANotify:
 
         last_error = "not attempted"
         last_status: int | None = None
+        trace = outbound_headers(request_id)
 
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
@@ -165,7 +172,7 @@ class ADANotify:
                 response = self._client.post(
                     f"{self._base_url}/v1/notifications",
                     json=body,
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers={"Authorization": f"Bearer {token}", **trace},
                 )
             except httpx.HTTPError as exc:
                 last_error = f"transport error: {exc}"

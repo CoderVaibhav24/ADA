@@ -30,6 +30,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from ada_platform.requestid import outbound_headers
 
 from ..config import settings
 from ..errors import ApiError
@@ -119,6 +120,7 @@ class KeycloakAdmin:
                     "client_id": self._client_id,
                     "client_secret": self._client_secret,
                 },
+                headers=outbound_headers(),
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:
@@ -183,7 +185,7 @@ class KeycloakAdmin:
                 url,
                 json=json,
                 params=params,
-                headers={"Authorization": f"Bearer {bearer}"},
+                headers={"Authorization": f"Bearer {bearer}", **outbound_headers()},
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:

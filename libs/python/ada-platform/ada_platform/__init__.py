@@ -35,7 +35,10 @@ from ada_platform.errors import (
     ADAUnavailable,
     JwksUnavailableError,
 )
+from ada_platform.logging import configure as configure_logging
+from ada_platform.logging import get_request_id
 from ada_platform.notify import ADANotify, SendOutcome
+from ada_platform.requestid import REQUEST_ID_HEADER, RequestIdMiddleware
 from ada_platform.verify import Principal, TokenVerifier
 
 __version__ = "0.1.0"
@@ -50,7 +53,11 @@ __all__ = [
     "ADAUnavailable",
     "JwksUnavailableError",
     "Principal",
+    "REQUEST_ID_HEADER",
+    "RequestIdMiddleware",
     "SendOutcome",
     "TokenVerifier",
     "__version__",
+    "configure_logging",
+    "get_request_id",
 ]

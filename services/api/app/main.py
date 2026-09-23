@@ -42,8 +42,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from ada_core.database import SessionLocal, get_engine
-from fastapi import FastAPI
+from ada_platform.logging import configure as configure_logging
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from .config import settings
 from .errors import install_error_handlers
@@ -63,9 +65,11 @@ from .routers import (
     redzones,
     tiles,
 )
-from .security import JWTMiddleware
+from .security import JWTMiddleware, auth
 
-logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+# JSON unless ADA_ENV=local (or ADA_LOG_FORMAT says otherwise); uvicorn's own
+# loggers are re-pointed at the same handler, so access lines are JSON too.
+configure_logging("ada-api", settings.log_level)
 log = logging.getLogger("ada.api")
 
 
@@ -150,6 +154,46 @@ app.include_router(app_screens.router, prefix=API)
 @app.get("/api/health")
 async def health() -> dict:
     return {"status": "ok", "service": settings.service_name}
+
+
+def _check_database() -> None:
+    with get_engine().connect() as conn:
+        conn.execute(text("SELECT 1"))
+
+
+# Ready when keys are cached and inside their hard TTL, or can be fetched now.
+def _check_jwks() -> None:
+    cache = auth._jwks
+    with cache._lock:
+        if not cache._keys:
+            cache._refresh()
+    if not cache._keys:
+        raise RuntimeError("the realm published no signing keys")
+
+
+@app.get("/api/health/ready")
+async def ready(response: Response) -> dict:
+    """Readiness: the database answers and tokens can be verified.
+
+    /api/health stays liveness. Reasons go to the log, not the body: this path
+    is anonymous and a driver error names hosts and users.
+    """
+    checks: dict[str, str] = {}
+    for name, check in (("database", _check_database), ("jwks", _check_jwks)):
+        try:
+            await asyncio.to_thread(check)
+            checks[name] = "ok"
+        except Exception:
+            log.warning("readiness check %s failed", name, exc_info=True)
+            checks[name] = "unavailable"
+    ok = all(value == "ok" for value in checks.values())
+    if not ok:
+        response.status_code = 503
+    return {
+        "status": "ok" if ok else "unavailable",
+        "service": settings.service_name,
+        "checks": checks,
+    }
 
 
 @app.get("/api/auth/config")

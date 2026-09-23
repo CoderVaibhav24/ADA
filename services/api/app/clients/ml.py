@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 import httpx
+from ada_platform.requestid import outbound_headers
 from fastapi import HTTPException
 
 from ..config import settings
@@ -28,10 +29,13 @@ _UNAVAILABLE = (
 )
 
 
+# X-Request-ID rides along so the worker's log lines for this job carry the id
+# of the officer's request that queued it.
 def _headers() -> dict[str, str]:
-    if not settings.ml_service_token:
-        return {}
-    return {"X-ADA-Service-Token": settings.ml_service_token}
+    headers = outbound_headers()
+    if settings.ml_service_token:
+        headers["X-ADA-Service-Token"] = settings.ml_service_token
+    return headers
 
 
 def _post(path: str, body: dict, what: str) -> None:

@@ -31,7 +31,9 @@ does not replace.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
+import os
 from contextlib import asynccontextmanager
 
 # .config FIRST, and the isort directive above is what keeps it there.
@@ -45,14 +47,48 @@ from .config import settings  # isort: skip
 
 from ada_core.database import get_engine
 from ada_core.migrate import run_migrations
+from ada_platform.logging import configure as configure_logging
+from ada_platform.logging import request_id_bound
+from ada_platform.requestid import RequestIdMiddleware, new_request_id
 from fastapi import FastAPI
 from sqlalchemy import text
 
 from . import jobs
 from .api.v1 import health, work
 
-logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+configure_logging("ada-ml", settings.log_level)
 log = logging.getLogger("ada.ml")
+
+
+# Read here rather than in config.py: false when a separate `api-migrate` step
+# owns the DDL and this process should only wait for the database.
+def _migrations_on_startup() -> bool:
+    raw = os.environ.get("RUN_MIGRATIONS_ON_STARTUP", "true")
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+# The queue item is (runner, id) and the dequeue lives in jobs.py, so the id
+# work.py enqueued carries the submitting request's id as an attribute and this
+# wrapper binds it on the worker thread for the life of the job.
+def _carrying_request_id(runner):
+    if getattr(runner, "_ada_binds_request_id", False):
+        return runner
+
+    @functools.wraps(runner)
+    def run(item):
+        request_id = getattr(item, "request_id", "") or new_request_id()
+        with request_id_bound(request_id):
+            return runner(int(item))
+
+    run._ada_binds_request_id = True
+    return run
+
+
+for _runner in ("_run_analysis_safe", "_run_ingest_safe"):
+    if callable(getattr(jobs, _runner, None)):
+        setattr(jobs, _runner, _carrying_request_id(getattr(jobs, _runner)))
+    else:
+        log.warning("jobs.%s not found; worker logs will not carry request ids", _runner)
 
 
 @asynccontextmanager
@@ -61,11 +97,15 @@ async def lifespan(app: FastAPI):
     # tables, so exactly one of them has to own the DDL, and the ML service is
     # the one that cannot function against a stale schema — it writes to every
     # column. ada-api waits for this service to become healthy.
+    migrate = _migrations_on_startup()
+    if not migrate:
+        log.info("RUN_MIGRATIONS_ON_STARTUP is false; expecting api-migrate to have run")
     for attempt in range(30):
         try:
             with get_engine().connect() as conn:
                 conn.execute(text("SELECT 1"))
-            run_migrations()
+            if migrate:
+                run_migrations()
             log.info("Database ready")
             break
         except Exception as exc:  # noqa: BLE001 - retried, then raised below
@@ -103,6 +143,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url=None,
 )
+
+# Accepts ada-api's X-Request-ID (or mints one), echoes it, and binds it for logs.
+app.add_middleware(RequestIdMiddleware)
 
 app.include_router(health.router)
 app.include_router(work.router)

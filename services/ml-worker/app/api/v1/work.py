@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from ada_core.database import SessionLocal
 from ada_core.models import AnalysisJob, Raster
+from ada_platform.logging import get_request_id
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,21 @@ from ... import jobs
 from ...security import require_service_token
 
 router = APIRouter(prefix="/v1", tags=["work"], dependencies=[Depends(require_service_token)])
+
+
+class RequestScopedId(int):
+    """A row id that remembers the request which queued it; main.py binds it on the worker."""
+
+    request_id: str
+
+    def __new__(cls, value: int, request_id: str) -> RequestScopedId:
+        tagged = super().__new__(cls, value)
+        tagged.request_id = request_id
+        return tagged
+
+
+def _tagged(value: int) -> int:
+    return RequestScopedId(value, get_request_id())
 
 
 class IngestRequest(BaseModel):
@@ -51,7 +67,7 @@ def enqueue_ingest(body: IngestRequest) -> Accepted:
         if db.get(Raster, body.raster_id) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND,
                                 f"No raster {body.raster_id}")
-    jobs.submit_ingest(body.raster_id)
+    jobs.submit_ingest(_tagged(body.raster_id))
     return Accepted(queue_depth=jobs.queue_depth())
 
 
@@ -61,5 +77,5 @@ def enqueue_analysis(body: AnalysisRequest) -> Accepted:
         if db.get(AnalysisJob, body.job_id) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND,
                                 f"No analysis job {body.job_id}")
-    jobs.submit_analysis(body.job_id)
+    jobs.submit_analysis(_tagged(body.job_id))
     return Accepted(queue_depth=jobs.queue_depth())
