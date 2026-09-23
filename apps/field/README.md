@@ -41,7 +41,7 @@ The import rules between those directories are linted, not merely documented —
 
 ```bash
 npm install            # at the monorepo root, not in app/
-npm run api:types      # regenerate the typed client from the running API
+npm run api:types      # at the root: regenerate @ada/api-types from the API source
 npm run typecheck
 npm run lint
 npm run android        # builds and installs a dev client
@@ -50,8 +50,11 @@ npm run android        # builds and installs a dev client
 This app cannot run in Expo Go: `react-native-mmkv` and `expo-secure-store` are native
 modules. Use a development build.
 
-`ADA_API_URL` points `npm run api:types` at the OpenAPI document; it defaults to the
-active env's API (for `local`, `127.0.0.1` on the ada-api port in `ada.config.ts`).
+API types are not generated per app. The root `npm run api:types` dumps the OpenAPI
+specs from the Python source (no running API needed) into `libs/ts/api-types`, and
+`npm run api:types:check` fails if the committed types are stale. Import them from the
+shared package: `import type { components } from '@ada/api-types/ada-api'` (or
+`'@ada/api-types/notify-api'` for ada-notify).
 
 ### Switching environment
 

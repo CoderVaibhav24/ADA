@@ -31,7 +31,6 @@ does not replace.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -48,8 +47,7 @@ from .config import settings  # isort: skip
 from ada_core.database import get_engine
 from ada_core.migrate import run_migrations
 from ada_platform.logging import configure as configure_logging
-from ada_platform.logging import request_id_bound
-from ada_platform.requestid import RequestIdMiddleware, new_request_id
+from ada_platform.requestid import RequestIdMiddleware
 from fastapi import FastAPI
 from sqlalchemy import text
 
@@ -65,30 +63,6 @@ log = logging.getLogger("ada.ml")
 def _migrations_on_startup() -> bool:
     raw = os.environ.get("RUN_MIGRATIONS_ON_STARTUP", "true")
     return raw.strip().lower() not in {"0", "false", "no", "off"}
-
-
-# The queue item is (runner, id) and the dequeue lives in jobs.py, so the id
-# work.py enqueued carries the submitting request's id as an attribute and this
-# wrapper binds it on the worker thread for the life of the job.
-def _carrying_request_id(runner):
-    if getattr(runner, "_ada_binds_request_id", False):
-        return runner
-
-    @functools.wraps(runner)
-    def run(item):
-        request_id = getattr(item, "request_id", "") or new_request_id()
-        with request_id_bound(request_id):
-            return runner(int(item))
-
-    run._ada_binds_request_id = True
-    return run
-
-
-for _runner in ("_run_analysis_safe", "_run_ingest_safe"):
-    if callable(getattr(jobs, _runner, None)):
-        setattr(jobs, _runner, _carrying_request_id(getattr(jobs, _runner)))
-    else:
-        log.warning("jobs.%s not found; worker logs will not carry request ids", _runner)
 
 
 @asynccontextmanager

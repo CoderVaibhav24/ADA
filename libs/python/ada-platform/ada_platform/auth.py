@@ -24,6 +24,7 @@ a web framework. An application that does use the decorators has FastAPI already
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from typing import Any
@@ -37,6 +38,8 @@ from ada_platform.errors import (
     JwksUnavailableError,
 )
 from ada_platform.verify import JWKSCache, Principal, TokenVerifier
+
+log = logging.getLogger("ada_platform.auth")
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": 'Bearer realm="ada"'}
 
@@ -91,6 +94,22 @@ class ADAAuth:
     def verify(self, token: str) -> Principal:
         """Verify a raw token. Raises ADAAuthError. No network call per call."""
         return self._verifier.verify(token)
+
+    def ready(self) -> bool:
+        """True when a signing key is cached or can be fetched now. Never raises.
+
+        A cached key counts even past its hard TTL: readiness asks whether this
+        process can reach a working state, and the next verify refreshes it.
+        """
+        cache = self._jwks
+        try:
+            with cache._lock:
+                if not cache._keys:
+                    cache._refresh()
+                return bool(cache._keys)
+        except Exception:
+            log.warning("JWKS not ready", exc_info=True)
+            return False
 
     # --- FastAPI -------------------------------------------------------------
 

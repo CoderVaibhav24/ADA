@@ -161,14 +161,10 @@ def _check_database() -> None:
         conn.execute(text("SELECT 1"))
 
 
-# Ready when keys are cached and inside their hard TTL, or can be fetched now.
+# Ready when a signing key is cached or can be fetched now; see ADAAuth.ready.
 def _check_jwks() -> None:
-    cache = auth._jwks
-    with cache._lock:
-        if not cache._keys:
-            cache._refresh()
-    if not cache._keys:
-        raise RuntimeError("the realm published no signing keys")
+    if not auth.ready():
+        raise RuntimeError("no JWKS signing key cached or fetchable")
 
 
 @app.get("/api/health/ready")

@@ -30,6 +30,8 @@ from ada_core.database import SessionLocal
 from ada_core.models import AnalysisJob, ChangePolygon, Raster, RedZone
 from ada_core.models_icms import Case as IcmsCase
 from ada_core.storage import MissingImageryError, require_file
+from ada_platform.logging import request_id_bound
+from ada_platform.requestid import new_request_id
 from sqlalchemy import or_, select
 
 from . import notifier, preprocess, vectorize
@@ -43,11 +45,16 @@ _worker: threading.Thread | None = None
 _worker_lock = threading.Lock()
 
 
+# Binds the id work.py tagged onto the row (RequestScopedId); requeued ints get a fresh one.
 def _pump() -> None:
     while True:
         fn, arg = _queue.get()
+        request_id = getattr(arg, "request_id", "") or new_request_id()
+        if isinstance(arg, int):
+            arg = int(arg)
         try:
-            fn(arg)
+            with request_id_bound(request_id):
+                fn(arg)
         except Exception:                       # never let the worker die
             log.error("job runner caught an unhandled error:\n%s",
                       traceback.format_exc())

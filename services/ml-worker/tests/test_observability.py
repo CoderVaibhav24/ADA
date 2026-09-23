@@ -46,15 +46,17 @@ def test_the_queued_id_carries_the_submitting_request(client, job, submitted):
     assert submitted[0].request_id == "officer-9"
 
 
-def test_the_worker_thread_logs_under_the_submitting_request(engine):
-    """The dequeue is in jobs.py; main.py's wrapper binds the id around each job."""
+def test_the_worker_thread_binds_the_submitting_request(engine):
+    """_pump binds the tagged id around each job; requeued plain ints get a fresh one."""
     from ada_platform.logging import get_request_id
 
-    from app import jobs, main
+    from app import jobs
     from app.api.v1.work import RequestScopedId
 
     seen: list[tuple[str, type]] = []
-    runner = main._carrying_request_id(lambda item: seen.append((get_request_id(), type(item))))
+
+    def runner(item):
+        seen.append((get_request_id(), type(item)))
 
     jobs._submit(runner, RequestScopedId(5, "officer-10"))
     jobs._submit(runner, 6)  # requeue_stale submits plain ints
@@ -62,13 +64,41 @@ def test_the_worker_thread_logs_under_the_submitting_request(engine):
 
     assert seen[0] == ("officer-10", int)
     assert len(seen[1][0]) == 32 and seen[1][1] is int
+    assert get_request_id() == ""
 
 
-def test_the_job_runners_are_wrapped():
-    from app import jobs, main  # noqa: F401 - importing main installs the wrapper
+def test_a_job_logs_under_the_queued_request_id(engine):
+    """A log line written inside the worker thread carries the RequestScopedId's id."""
+    import io
+    import json
+    import logging
 
-    assert getattr(jobs._run_analysis_safe, "_ada_binds_request_id", False)
-    assert getattr(jobs._run_ingest_safe, "_ada_binds_request_id", False)
+    from ada_platform.logging import configure
+
+    from app import jobs
+    from app.api.v1.work import RequestScopedId
+
+    sink = io.StringIO()
+    configure("ada-ml", "INFO", json=True, stream=sink)
+    try:
+        jobs._submit(
+            lambda item: logging.getLogger("ada.jobs").info("job %s running", item),
+            RequestScopedId(7, "officer-11"),
+        )
+        jobs._queue.join()
+    finally:
+        configure("ada-ml", "INFO")
+
+    lines = [json.loads(line) for line in sink.getvalue().splitlines()]
+    ours = [line for line in lines if line.get("event") == "job 7 running"]
+    assert ours and ours[0]["request_id"] == "officer-11"
+
+
+def test_main_no_longer_wraps_the_runners():
+    from app import jobs, main  # noqa: F401
+
+    assert not hasattr(main, "_carrying_request_id")
+    assert not getattr(jobs._run_analysis_safe, "_ada_binds_request_id", False)
 
 
 @pytest.mark.parametrize("value,expected", [("false", False), ("0", False), ("true", True)])
