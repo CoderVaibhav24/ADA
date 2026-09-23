@@ -76,7 +76,9 @@ export function AppShell({
       data-slot="app-shell"
       data-collapsed={collapsed}
       className={cn(
-        "flex min-h-dvh w-full flex-col bg-surface-canvas text-foreground",
+        // Pinned to the viewport: the rail never scrolls, only the content
+        // column to its right does (it carries overflow-y-auto below).
+        "flex h-dvh w-full flex-col overflow-hidden bg-surface-canvas text-foreground",
         className,
       )}
     >
@@ -127,7 +129,7 @@ export function AppShell({
           </ScrollArea>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
           {/* min-w-0 so a long page title truncates inside the header instead of
               pushing the account pill off-screen at 360px. */}
           <header className="sticky top-0 z-30 flex h-header shrink-0 items-center gap-2 border-b border-line-subtle bg-surface-1/95 px-3 backdrop-blur-sm sm:px-4">
