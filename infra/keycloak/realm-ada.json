@@ -38,17 +38,17 @@
     "password"
   ],
   "defaultSignatureAlgorithm": "RS256",
-  "accessTokenLifespan": 3600,
+  "accessTokenLifespan": 900,
   "accessTokenLifespanForImplicitFlow": 3600,
-  "ssoSessionIdleTimeout": 2592000,
-  "ssoSessionMaxLifespan": 31536000,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 43200,
   "ssoSessionIdleTimeoutRememberMe": 0,
   "ssoSessionMaxLifespanRememberMe": 0,
   "clientSessionIdleTimeout": 0,
   "clientSessionMaxLifespan": 0,
   "offlineSessionIdleTimeout": 2592000,
-  "offlineSessionMaxLifespanEnabled": false,
-  "offlineSessionMaxLifespan": 5184000,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 7776000,
   "clientOfflineSessionIdleTimeout": 0,
   "clientOfflineSessionMaxLifespan": 0,
   "revokeRefreshToken": true,
@@ -848,7 +848,7 @@
       "providerId": "google",
       "enabled": false,
       "updateProfileFirstLoginMode": "on",
-      "trustEmail": true,
+      "trustEmail": false,
       "storeToken": false,
       "addReadTokenRoleOnCreate": false,
       "authenticateByDefault": false,
@@ -858,7 +858,7 @@
       "config": {
         "clientId": "${ADA_GOOGLE_CLIENT_ID}",
         "clientSecret": "${ADA_GOOGLE_CLIENT_SECRET}",
-        "hostedDomain": "",
+        "hostedDomain": "${ADA_GOOGLE_HOSTED_DOMAIN}",
         "defaultScope": "openid profile email",
         "useJwksUrl": "true",
         "syncMode": "FORCE",
@@ -900,6 +900,15 @@
         "client": "ada-notify",
         "roles": [
           "view-users"
+        ]
+      },
+      {
+        "client": "ada-api",
+        "roles": [
+          "view-users",
+          "query-users",
+          "manage-users",
+          "view-realm"
         ]
       }
     ]
@@ -951,6 +960,7 @@
       "protocolMappers": []
     },
     {
+      "id": "5a1d7e2c-3b4f-4c8a-9e61-0ada00000001",
       "clientId": "ada-web",
       "name": "ADA Web",
       "description": "Human plane. The ADA single-page application. Authorisation code + PKCE S256 (RFC 7636); a public client holds no secret, so PKCE is what stops a stolen authorisation code being redeemed by anyone else.",
@@ -961,7 +971,7 @@
       "clientAuthenticatorType": "client-secret",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "authorizationServicesEnabled": false,
       "fullScopeAllowed": true,
@@ -1015,6 +1025,69 @@
         "phone"
       ],
       "protocolMappers": []
+    },
+    {
+      "clientId": "ada-field",
+      "name": "ADA ICMS Field App",
+      "description": "Native field app. Public client: a binary cannot hold a secret.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "adaicms://*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "adaicms://*",
+        "use.refresh.tokens": "true",
+        "access.token.signed.response.alg": "RS256",
+        "id.token.signed.response.alg": "RS256",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "true",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "require.pushed.authorization.requests": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "phoneNumber",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "phoneNumber",
+            "claim.name": "phoneNumber",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "acr",
+        "basic",
+        "email",
+        "profile",
+        "roles",
+        "web-origins"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
     },
     {
       "clientId": "ada-auth",
@@ -1089,6 +1162,121 @@
       ],
       "optionalClientScopes": [],
       "protocolMappers": []
+    },
+    {
+      "clientId": "ada-api",
+      "name": "ADA API service",
+      "description": "ada-api's own service account for /api/icms/admin/users. No secret here: Keycloak generates one on import; apply-realm-config.sh writes it out.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "use.refresh.tokens": "false",
+        "client_credentials.use_refresh_token": "false",
+        "access.token.signed.response.alg": "RS256"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "roles"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "realm-management",
+      "name": "${client_realm-management}",
+      "enabled": true,
+      "bearerOnly": true,
+      "authorizationServicesEnabled": true,
+      "authorizationSettings": {
+        "allowRemoteResourceManagement": false,
+        "policyEnforcementMode": "ENFORCING",
+        "decisionStrategy": "UNANIMOUS",
+        "resources": [
+          {
+            "name": "client.resource.5a1d7e2c-3b4f-4c8a-9e61-0ada00000001",
+            "type": "Client",
+            "ownerManagedAccess": false,
+            "scopes": [
+              {
+                "name": "view"
+              },
+              {
+                "name": "manage"
+              },
+              {
+                "name": "configure"
+              },
+              {
+                "name": "map-roles"
+              },
+              {
+                "name": "map-roles-client-scope"
+              },
+              {
+                "name": "map-roles-composite"
+              },
+              {
+                "name": "token-exchange"
+              }
+            ]
+          }
+        ],
+        "policies": [
+          {
+            "name": "ada-auth may exchange",
+            "description": "auth-otp (ada-auth) may exchange to audience ada-web.",
+            "type": "client",
+            "logic": "POSITIVE",
+            "decisionStrategy": "UNANIMOUS",
+            "config": {
+              "clients": "[\"ada-auth\"]"
+            }
+          },
+          {
+            "name": "token-exchange.permission.client.5a1d7e2c-3b4f-4c8a-9e61-0ada00000001",
+            "type": "scope",
+            "logic": "POSITIVE",
+            "decisionStrategy": "UNANIMOUS",
+            "config": {
+              "resources": "[\"client.resource.5a1d7e2c-3b4f-4c8a-9e61-0ada00000001\"]",
+              "scopes": "[\"token-exchange\"]",
+              "applyPolicies": "[\"ada-auth may exchange\"]"
+            }
+          }
+        ],
+        "scopes": [
+          {
+            "name": "view"
+          },
+          {
+            "name": "manage"
+          },
+          {
+            "name": "configure"
+          },
+          {
+            "name": "map-roles"
+          },
+          {
+            "name": "map-roles-client-scope"
+          },
+          {
+            "name": "map-roles-composite"
+          },
+          {
+            "name": "token-exchange"
+          }
+        ]
+      }
     }
   ],
   "users": [
@@ -1117,6 +1305,19 @@
       "username": "service-account-ada-ml",
       "enabled": true,
       "serviceAccountClientId": "ada-ml"
+    },
+    {
+      "username": "service-account-ada-api",
+      "enabled": true,
+      "serviceAccountClientId": "ada-api",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "manage-users",
+          "view-realm"
+        ]
+      }
     }
   ],
   "components": {
@@ -1183,5 +1384,15 @@
       }
     ]
   },
-  "loginTheme": "ada"
+  "loginTheme": "ada",
+  "scopeMappings": [
+    {
+      "client": "ada-auth",
+      "roles": [
+        "pcs-nodal-officer",
+        "field-surveyor",
+        "ada-project-lead"
+      ]
+    }
+  ]
 }

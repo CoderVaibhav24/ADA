@@ -33,9 +33,11 @@ $EDITOR infra/compose/.env
 # 4. Start the stack. Keycloak imports realm-ada.json on FIRST start only.
 cd infra/compose && docker compose up -d && cd ../..
 
-# 5. Create the four ICMS realm roles on the running realm.
+# 5. Create the four ICMS realm roles, then apply what the import cannot hold
+#    (master frontendUrl, APP_ORIGIN on ada-web, the ada-api secret file).
 set -a; source infra/compose/.env; set +a
 ./infra/keycloak/create-icms-roles.sh
+./infra/keycloak/apply-realm-config.sh
 
 # 6. Build the roster, then create the people and assign their roles.
 cp infra/users.example.yaml infra/users.yaml
@@ -48,8 +50,10 @@ python3 infra/scripts/create_users.py
 
 Step 5 is not optional even though `realm-ada.json` declares the same four
 roles. `--import-realm` uses `IGNORE_EXISTING`: once the realm is in the
-database, edits to the JSON do nothing. The shell script is what makes a
-*live* realm match the file.
+database, edits to the JSON do nothing. The two scripts are what make a
+*live* realm match the file. `infra/keycloak/README.md` lists what only
+`apply-realm-config.sh` can set. ada-web direct grants, the ada-api client,
+the ada-field client and the session lifetimes are now in the JSON as well.
 
 Step 6 closes the gap that script leaves — it creates the roles and assigns
 them to nobody, printing an `add-roles` command for you to run once per
@@ -161,6 +165,11 @@ environment substitutions:
 - `ADA_GOOGLE_CLIENT_SECRET`, `ADA_GITHUB_CLIENT_SECRET` — identity providers,
   both `enabled: false`
 - `KC_SMTP_PASSWORD` — realm mail
+
+`ada-api` is the exception. The JSON declares the client with no secret, so
+Keycloak generates one on import. `apply-realm-config.sh` writes it to
+`infra/secrets/keycloak/ada-api-client-secret` (0600) and never prints it.
+Copy it into `.env` as `ADA_API_CLIENT_SECRET`.
 
 **Decision: keep substitution, do not strip.** Keycloak 26.7.2 resolves
 `${NAME}` and `${NAME:default}` during a realm import from the container
