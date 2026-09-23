@@ -16,12 +16,30 @@ moment Parivartan writes a row, the client already has somewhere to put it.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Annotated, Any
 
 from ada_core.datetimes import IstDateTime
-from ada_core.validation import CaseRef, Code, Name, NoMarkupText, SafeLongText
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from ada_core.validation import (
+    CaseRef,
+    Code,
+    KhasraNo,
+    Name,
+    NoMarkupText,
+    SafeLongText,
+    SafeText,
+)
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from .collection import CollectionParams
 from .schemas import UserId, ZoneCode
@@ -64,19 +82,57 @@ COMPLIANCE_DEFAULT_DAYS = 30
 # was issued under when this value changes.
 REPRESENTATION_DAYS = 7
 
-PostalAddress = Annotated[str, Field(min_length=1, max_length=500)]
+MAX_GROUNDS = 20
+MAX_GROUND_LENGTH = 500
+# The heading and the signature are drawn unwrapped; longer runs off the page.
+MAX_ONE_LINE = 120
+
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-# The Notice Create form's "Reason / Grounds" control is ONE textarea, so the
-# portal sends a string; `body` numbers grounds separately. Blank lines are the
-# break — a single paragraph stays a single ground.
-def _as_grounds(value: Any) -> Any:
-    if isinstance(value, str):
-        return [part.strip() for part in value.split("\n\n") if part.strip()]
+# YYYY-MM-DD only: a datetime or timestamp names an IST day only by guesswork.
+def _iso_day_only(value: Any) -> Any:
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str) or not _ISO_DAY.match(value):
+        raise ValueError("must be a calendar date, YYYY-MM-DD, with no time or zone")
     return value
 
 
-Grounds = Annotated[list[SafeLongText], BeforeValidator(_as_grounds)]
+IsoDay = Annotated[date, BeforeValidator(_iso_day_only)]
+
+
+def _no_markup(value: Any) -> Any:
+    if isinstance(value, str) and ("<" in value or ">" in value):
+        raise ValueError("must not contain '<' or '>'")
+    return value
+
+
+PostalAddress = Annotated[SafeLongText, AfterValidator(_no_markup), Field(max_length=500)]
+OneLine = Annotated[NoMarkupText, Field(max_length=MAX_ONE_LINE)]
+Ground = Annotated[SafeText, Field(max_length=MAX_GROUND_LENGTH)]
+GroundsText = Annotated[
+    SafeLongText, Field(max_length=MAX_GROUNDS * (MAX_GROUND_LENGTH + 2))
+]
+GroundList = Annotated[list[Ground], Field(min_length=1, max_length=MAX_GROUNDS)]
+
+
+# The portal's one textarea sends a string, split on blank lines to the list's bounds.
+def _as_ground_list(value: str | list[str]) -> list[str]:
+    if isinstance(value, list):
+        return value
+    parts = [part for part in value.split("\n\n") if part.strip()]
+    try:
+        return _GROUND_LIST.validate_python(parts)
+    except ValidationError as error:
+        raise ValueError(
+            f"split on blank lines, grounds must be 1-{MAX_GROUNDS} paragraphs of at "
+            f"most {MAX_GROUND_LENGTH} characters each: {error.errors()[0]['msg']}"
+        ) from None
+
+
+Grounds = Annotated[GroundsText | GroundList, AfterValidator(_as_ground_list)]
+_GROUND_LIST: TypeAdapter[list[str]] = TypeAdapter(GroundList)
 
 
 class NoticeBodyOverrides(BaseModel):
@@ -90,7 +146,7 @@ class NoticeBodyOverrides(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    notice_type: NoMarkupText | None = Field(
+    notice_type: OneLine | None = Field(
         default=None,
         description="The heading. Defaults to the wording for the leading section cited.",
     )
@@ -100,16 +156,18 @@ class NoticeBodyOverrides(BaseModel):
     recipient_address: PostalAddress | None = Field(
         default=None,
         description="Defaults to the property address and its postal parts.")
-    khasra_no: NoMarkupText | None = Field(
+    khasra_no: KhasraNo | None = Field(
         default=None, description="Defaults to the case's khasra_no.")
     encroached_area_sqm: float | None = Field(
         default=None, ge=0, le=10_000_000,
         description="Defaults to the last round's measured_area_sqm.")
     grounds: Grounds | None = Field(
-        default=None, max_length=50,
-        description="A string or a list of strings. A string is split on blank lines "
-                    "into separate numbered grounds. Defaults to the last round's "
-                    "recorded findings, in order.")
+        default=None,
+        description=f"A string or a list of 1-{MAX_GROUNDS} strings of at most "
+                    f"{MAX_GROUND_LENGTH} characters. A string is split on blank lines "
+                    "into separate numbered grounds and held to the same bounds; the "
+                    "stored `body.grounds` is always a list. Defaults to the last "
+                    "round's recorded findings, in order.")
 
 
 class NoticeCreate(BaseModel):
@@ -122,13 +180,13 @@ class NoticeCreate(BaseModel):
         description="Sections of that act. Each must be an active `section` row whose "
                     "`parent_code` is `act_cd`; an unknown code is refused, never stored.",
     )
-    compliance_due: date | None = Field(
+    compliance_due: IsoDay | None = Field(
         default=None,
         description=f"Between {COMPLIANCE_MIN_DAYS} and {COMPLIANCE_MAX_DAYS} days after "
                     f"the issue date, per Section 27. Omit for "
                     f"{COMPLIANCE_DEFAULT_DAYS} days.",
     )
-    issuing_authority: NoMarkupText | None = Field(
+    issuing_authority: OneLine | None = Field(
         default=None,
         description="The officer the notice is issued over. Provisional default until "
                     "ADA confirms the authority.",
@@ -142,17 +200,24 @@ class NoticeCreate(BaseModel):
         return self
 
 
+MAX_FILTER_VALUES = 50
+
+
 class NoticeQuery(CollectionParams):
-    case_ref: list[CaseRef] | None = Field(default=None, description="Repeatable; OR.")
+    case_ref: list[CaseRef] | None = Field(
+        default=None, max_length=MAX_FILTER_VALUES, description="Repeatable; OR.")
     status: list[str] | None = Field(
-        default=None,
+        default=None, max_length=MAX_FILTER_VALUES,
         description=f"Repeatable. One of: {', '.join(NOTICE_STATUSES)}. `overdue` is "
                     "derived from compliance_due and matches no stored value.")
-    act_cd: list[Code] | None = Field(default=None, description="Repeatable.")
-    zone_cd: list[ZoneCode] | None = Field(default=None, description="Repeatable.")
-    issued_by: list[UserId] | None = Field(default=None, description="Repeatable.")
-    issued_from: date | None = Field(default=None, description="Inclusive, IST day.")
-    issued_to: date | None = Field(default=None, description="Inclusive, IST day.")
+    act_cd: list[Code] | None = Field(
+        default=None, max_length=MAX_FILTER_VALUES, description="Repeatable.")
+    zone_cd: list[ZoneCode] | None = Field(
+        default=None, max_length=MAX_FILTER_VALUES, description="Repeatable.")
+    issued_by: list[UserId] | None = Field(
+        default=None, max_length=MAX_FILTER_VALUES, description="Repeatable.")
+    issued_from: IsoDay | None = Field(default=None, description="Inclusive, IST day.")
+    issued_to: IsoDay | None = Field(default=None, description="Inclusive, IST day.")
 
     @model_validator(mode="after")
     def _known_vocabulary(self) -> NoticeQuery:

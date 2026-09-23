@@ -551,3 +551,31 @@ class TestOwnershipIsNotAConstraintHere:
 
         assert response.status_code == 403
         assert error_of(response)["code"] == "role_not_permitted"
+
+
+class TestTheNoteIsBounded:
+    @pytest.mark.parametrize("action,case_ref,role", [
+        ("handover", VERIFIED, NODAL), ("confirm", HANDED_OVER, LEAD),
+    ])
+    def test_an_over_long_note_is_refused_and_nothing_moves(
+        self, icms_client, stages_six_and_seven, db, action, case_ref, role
+    ):
+        before = status_of(db, case_ref)
+        response = icms_client.sign_in(role).post(
+            f"{CASES}/{case_ref}/{action}", json={"note": "n" * 501})
+
+        assert response.status_code == 422
+        assert error_of(response)["code"] == "validation_failed"
+        assert status_of(db, case_ref) == before
+
+    @pytest.mark.parametrize("action,case_ref,role", [
+        ("handover", VERIFIED, NODAL), ("confirm", HANDED_OVER, LEAD),
+    ])
+    def test_control_characters_are_stripped_from_the_note(
+        self, icms_client, stages_six_and_seven, events, action, case_ref, role
+    ):
+        response = icms_client.sign_in(role).post(
+            f"{CASES}/{case_ref}/{action}", json={"note": " Agreed\x00​ on site. "})
+
+        assert response.status_code == 200, response.text
+        assert events(stages_six_and_seven[case_ref].id)[-1]["note"] == "Agreed on site."

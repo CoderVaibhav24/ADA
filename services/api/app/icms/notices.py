@@ -168,11 +168,14 @@ def _own_notices_only(roles) -> bool:
     return str(wf.Role.FIELD_SURVEYOR) in held and not (held & _SUPERVISORY)
 
 
+# The case register's rule: the OPEN survey assignment, not any row ever written.
 def _assigned_to(user_id: str):
     return (
         select(CaseAssignment.id)
         .where(
             CaseAssignment.case_id == Case.id,
+            CaseAssignment.active.is_(True),
+            CaseAssignment.assignment_type == "survey",
             CaseAssignment.assignee_user_id == user_id,
         )
         .correlate(Case)
@@ -263,9 +266,12 @@ def notice_detail(
     return data
 
 
+PDF_MAGIC = b"%PDF-"
+
+
 @dataclass(frozen=True)
 class StoredNotice:
-    path: Path
+    content: bytes
     filename: str
 
 
@@ -277,9 +283,10 @@ def artefact(
     if row is None:
         return None
 
-    path = _resolve_stored(row.artefact_path)
-    if path is None or not path.is_file():
-        log.error("notice %s is recorded at %r and is not on disk",
+    content = _read_verified(
+        _resolve_stored(row.artefact_path, notice_ref=notice_ref), row.artefact_sha256)
+    if content is None:
+        log.error("notice %s is recorded at %r and is not in the store intact",
                   notice_ref, row.artefact_path)
         # Deliberately not a re-render. The document that was served is the only
         # document there is; drawing a new one would answer a different question.
@@ -288,17 +295,36 @@ def artefact(
             "the notice exists but its rendered document is not in the store, and a "
             "notice is never re-rendered: the artefact IS the instrument that was served",
         )
-    return StoredNotice(path=path, filename=f"{notice_ref}.pdf")
+    return StoredNotice(content=content, filename=f"{notice_ref}.pdf")
 
 
-# artefact_path is ours and relative, but a stored path that escapes the root is
-# worth one comparison rather than a trusted join.
-def _resolve_stored(artefact_path: str | None) -> Path | None:
+# Read once, then checked: a PDF, and the bytes whose digest was recorded at issue.
+def _read_verified(path: Path | None, sha256: str | None) -> bytes | None:
+    if path is None or not path.is_file():
+        return None
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return None
+    if not content.startswith(PDF_MAGIC):
+        return None
+    if sha256 and hashlib.sha256(content).hexdigest() != sha256:
+        return None
+    return content
+
+
+# Resolved (symlinks included) and required to sit inside this notice's own folder.
+def _resolve_stored(
+    artefact_path: str | None, *, notice_ref: str | None = None
+) -> Path | None:
     if not artefact_path:
         return None
     root = settings.icms_notice_dir.resolve()
+    folder = (root / notice_ref).resolve() if notice_ref else root
+    if not folder.is_relative_to(root):
+        return None
     candidate = (root / artefact_path).resolve()
-    return candidate if candidate.is_relative_to(root) else None
+    return candidate if candidate.is_relative_to(folder) and candidate != folder else None
 
 
 # ------------------------------------------------------------------- the write

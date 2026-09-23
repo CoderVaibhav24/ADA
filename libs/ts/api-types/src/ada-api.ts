@@ -1196,7 +1196,8 @@ export interface paths {
          *     must not be.
          *
          *     `attachment`, never `inline`: the browser saves the file rather than
-         *     rendering it inside the application's own origin.
+         *     rendering it inside the application's own origin. The bytes are served only
+         *     if they still start `%PDF-` and still hash to `artefact_sha256`.
          */
         get: operations["get_notice_pdf_api_icms_notices__notice_ref__pdf_get"];
         put?: never;
@@ -2530,9 +2531,9 @@ export interface components {
             encroached_area_sqm?: number | null;
             /**
              * Grounds
-             * @description A string or a list of strings. A string is split on blank lines into separate numbered grounds. Defaults to the last round's recorded findings, in order.
+             * @description A string or a list of 1-20 strings of at most 500 characters. A string is split on blank lines into separate numbered grounds and held to the same bounds; the stored `body.grounds` is always a list. Defaults to the last round's recorded findings, in order.
              */
-            grounds?: string[] | null;
+            grounds?: string | string[] | null;
             /**
              * Khasra No
              * @description Defaults to the case's khasra_no.

@@ -3425,25 +3425,31 @@
           "grounds": {
             "anyOf": [
               {
+                "maxLength": 10040,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
                 "items": {
-                  "maxLength": 5000,
+                  "maxLength": 500,
                   "minLength": 1,
                   "type": "string"
                 },
-                "maxItems": 50,
+                "maxItems": 20,
+                "minItems": 1,
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "A string or a list of strings. A string is split on blank lines into separate numbered grounds. Defaults to the last round's recorded findings, in order.",
+            "description": "A string or a list of 1-20 strings of at most 500 characters. A string is split on blank lines into separate numbered grounds and held to the same bounds; the stored `body.grounds` is always a list. Defaults to the last round's recorded findings, in order.",
             "title": "Grounds"
           },
           "khasra_no": {
             "anyOf": [
               {
-                "maxLength": 500,
+                "maxLength": 24,
                 "minLength": 1,
                 "type": "string"
               },
@@ -3457,7 +3463,7 @@
           "notice_type": {
             "anyOf": [
               {
-                "maxLength": 500,
+                "maxLength": 120,
                 "minLength": 1,
                 "type": "string"
               },
@@ -3534,7 +3540,7 @@
           "issuing_authority": {
             "anyOf": [
               {
-                "maxLength": 500,
+                "maxLength": 120,
                 "minLength": 1,
                 "type": "string"
               },
@@ -8241,6 +8247,7 @@
             "required": true,
             "schema": {
               "description": "`west,south,east,north` in EPSG:4326. Required, and no wider than 1.0 degrees a side.",
+              "maxLength": 200,
               "title": "Bbox",
               "type": "string"
             }
@@ -9998,6 +10005,7 @@
                   "items": {
                     "type": "string"
                   },
+                  "maxItems": 50,
                   "type": "array"
                 },
                 {
@@ -10019,6 +10027,7 @@
                   "items": {
                     "type": "string"
                   },
+                  "maxItems": 50,
                   "type": "array"
                 },
                 {
@@ -10040,6 +10049,7 @@
                   "items": {
                     "type": "string"
                   },
+                  "maxItems": 50,
                   "type": "array"
                 },
                 {
@@ -10064,6 +10074,7 @@
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9_.\\-/]{0,39}$",
                     "type": "string"
                   },
+                  "maxItems": 50,
                   "type": "array"
                 },
                 {
@@ -10088,6 +10099,7 @@
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._@:\\-]{0,63}$",
                     "type": "string"
                   },
+                  "maxItems": 50,
                   "type": "array"
                 },
                 {
@@ -10222,7 +10234,7 @@
     },
     "/api/icms/notices/{notice_ref}/pdf": {
       "get": {
-        "description": "The bytes stored at generation, never a fresh render.\n\nA missing artefact is a 404 and not a re-render. The template is provisional\nand will be swapped; a reprint drawn from today's template would be a\ndifferent document from the one served, which is the one thing a reprint\nmust not be.\n\n`attachment`, never `inline`: the browser saves the file rather than\nrendering it inside the application's own origin.",
+        "description": "The bytes stored at generation, never a fresh render.\n\nA missing artefact is a 404 and not a re-render. The template is provisional\nand will be swapped; a reprint drawn from today's template would be a\ndifferent document from the one served, which is the one thing a reprint\nmust not be.\n\n`attachment`, never `inline`: the browser saves the file rather than\nrendering it inside the application's own origin. The bytes are served only\nif they still start `%PDF-` and still hash to `artefact_sha256`.",
         "operationId": "get_notice_pdf_api_icms_notices__notice_ref__pdf_get",
         "parameters": [
           {

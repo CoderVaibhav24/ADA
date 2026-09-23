@@ -24,6 +24,7 @@ __all__ = [
     "A4_HEIGHT",
     "A4_WIDTH",
     "FONTS",
+    "MAX_PAGES",
     "Document",
     "Page",
     "text_width",
@@ -42,6 +43,9 @@ FONTS: dict[str, str] = {
     "sans-italic": "Helvetica-Oblique",
     "serif-bold": "Times-Bold",
 }
+
+# A backstop, not a layout rule: the schema bounds every field well short of it.
+MAX_PAGES = 20
 
 _TAGS: dict[str, str] = {name: f"F{index}" for index, name in enumerate(FONTS, start=1)}
 
@@ -147,6 +151,8 @@ class Document:
         self.pages: list[Page] = []
 
     def page(self) -> Page:
+        if len(self.pages) >= MAX_PAGES:
+            raise ValueError(f"a document is at most {MAX_PAGES} pages")
         page = Page()
         self.pages.append(page)
         return page

@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from ada_core.datetimes import IstDateTime
 from ada_core.validation import BBox
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .. import bbox as bbox_rules
 
@@ -116,6 +116,7 @@ class CaseMapQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     bbox: str = Field(
+        max_length=200,
         description="`west,south,east,north` in EPSG:4326. Required, and no wider than "
                     f"{bbox_rules.MAX_SPAN_DEGREES} degrees a side.",
     )
@@ -126,7 +127,11 @@ class CaseMapQuery(BaseModel):
     @field_validator("bbox")
     @classmethod
     def _within_the_cap(cls, value: str) -> str:
-        bbox_rules.parse(value)
+        try:
+            bbox_rules.parse(value)
+        except ValidationError as error:
+            # NaN or an infinity fails a corner's bound; name `bbox`, not `bbox.west`.
+            raise ValueError(f"not a finite extent: {error.errors()[0]['msg']}") from None
         return value
 
     @property

@@ -29,7 +29,6 @@ from ada_core.database import get_db
 from ada_core.validation import CaseRef, NoticeRef
 from ada_platform import Principal
 from fastapi import APIRouter, Depends, Path, Query, Response
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..errors import ApiError
@@ -134,7 +133,7 @@ def get_notice(
 
 @router.get(
     "/notices/{notice_ref}/pdf",
-    response_class=FileResponse,
+    response_class=Response,
     summary="The stored document, as served",
     responses={200: {"content": {"application/pdf": {}},
                      "description": "The artefact written at generation."}},
@@ -144,7 +143,7 @@ def get_notice_pdf(
     user: Principal = Depends(require_permission("notice.read")),
     scope: ZoneScope = Depends(zone_scope),
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> Response:
     """The bytes stored at generation, never a fresh render.
 
     A missing artefact is a 404 and not a re-render. The template is provisional
@@ -153,11 +152,18 @@ def get_notice_pdf(
     must not be.
 
     `attachment`, never `inline`: the browser saves the file rather than
-    rendering it inside the application's own origin.
+    rendering it inside the application's own origin. The bytes are served only
+    if they still start `%PDF-` and still hash to `artefact_sha256`.
     """
     stored = repo.artefact(db, notice_ref, scope, roles=user.roles, user_id=user.subject)
     if stored is None:
         raise ApiError(404, "notice_not_found", f"no notice {notice_ref}")
-    return FileResponse(
-        stored.path, media_type="application/pdf", filename=stored.filename
+    return Response(
+        content=stored.content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{stored.filename}"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
     )

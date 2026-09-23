@@ -403,6 +403,25 @@ class TestCasesGeoJson:
         assert_error(f"GET {MAP}", clause, read(icms_client, MAP, NODAL, bbox=bad),
                      status=422, code="validation_failed", field="bbox")
 
+    @pytest.mark.parametrize("bad,clause", [
+        ("nan,27.0,78.02,27.02", "NaN west"),
+        ("78.0,27.0,inf,27.02", "infinite east"),
+        ("78.0,-inf,78.02,27.02", "negative infinity south"),
+        ("78.0,27.0,78.02,1e400", "overflowing north"),
+        ("78.0,27.0,78.02,27.02," + "0" * 5000, "a very long string"),
+    ])
+    def test_a_non_finite_or_oversized_bbox_is_refused(self, icms_client,
+                                                       dashboard_world, bad, clause):
+        assert_error(f"GET {MAP}", clause, read(icms_client, MAP, NODAL, bbox=bad),
+                     status=422, code="validation_failed", field="bbox")
+
+    def test_the_bbox_parameter_declares_a_length_bound(self):
+        from app.main import app
+
+        parameters = app.openapi()["paths"]["/api/icms/cases.geojson"]["get"]["parameters"]
+        bbox = next(p for p in parameters if p["name"] == "bbox")
+        assert bbox["schema"]["maxLength"] <= 200
+
     def test_the_window_pages_and_the_total_does_not_move(self, icms_client,
                                                           dashboard_world):
         first = read(icms_client, MAP, SUPER_ADMIN, bbox=BOX, limit=2).json()
