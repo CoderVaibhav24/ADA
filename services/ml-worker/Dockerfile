@@ -57,7 +57,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # libglib2.0-0 -> opencv-python-headless, libgomp1 -> torch/onnxruntime OpenMP,
 # libexpat1 -> rasterio's bundled GDAL. pip is removed: nothing installs at
-# runtime. Fixed UID/GID 10001; the home directory holds the HuggingFace cache.
+# runtime. Fixed UID/GID 10001; the HuggingFace cache is HF_HOME, below.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 libexpat1 \
  && rm -rf /var/lib/apt/lists/* \
@@ -93,7 +93,12 @@ RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
 # case; with a mount the host directory's ownership wins, so on a Linux host run
 # `sudo chown -R 10001:10001 data` once (Docker Desktop maps ownership itself).
 # World-writable was rejected: it lets every local user tamper with the data.
-ENV DATA_DIR=/app/data
+#
+# The HuggingFace cache lives under it too, not under $HOME: compose may run the
+# process as the host's UID (ADA_UID), which cannot write /home/ada, and compose
+# mounts the host cache (HF_CACHE_DIR) at exactly this path.
+ENV DATA_DIR=/app/data \
+    HF_HOME=/app/data/hf-cache
 RUN install -d -o 10001 -g 10001 -m 0750 /app/data
 
 USER 10001:10001

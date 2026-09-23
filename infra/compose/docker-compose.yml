@@ -161,6 +161,11 @@ services:
       KONG_UPSTREAM_API: ${KONG_UPSTREAM_API:-http://host.docker.internal:8000}
       KONG_UPSTREAM_AUTH: ${KONG_UPSTREAM_AUTH:-http://host.docker.internal:8002}
       KONG_UPSTREAM_IDP: ${KONG_UPSTREAM_IDP:-http://keycloak:${KC_HTTP_PORT:-8090}}
+      # Behind a load balancer the per-IP rate limits see only its address: set
+      # the LB's CIDRs here and KONG_REAL_IP_HEADER=X-Forwarded-For (README.md).
+      KONG_TRUSTED_IPS: ${KONG_TRUSTED_IPS:-}
+      KONG_REAL_IP_HEADER: ${KONG_REAL_IP_HEADER:-X-Real-IP}
+      KONG_REAL_IP_RECURSIVE: ${KONG_REAL_IP_RECURSIVE:-off}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -338,6 +343,9 @@ services:
       dockerfile: services/api/Dockerfile
     image: ada/api:0.1.0
     container_name: ada-api-migrate
+    # The owner of the bind-mounted data/. On Linux set ADA_UID=$(id -u) and
+    # ADA_GID=$(id -g) in .env; on Docker Desktop leave the default.
+    user: "${ADA_UID:-10001}:${ADA_GID:-10001}"
     restart: "no"
     logging: *default-logging
     depends_on:
@@ -358,6 +366,8 @@ services:
       dockerfile: services/ml-worker/Dockerfile
     image: ada/ml:0.1.0
     container_name: ada-ml
+    # Same as api-migrate: ADA_UID/ADA_GID on Linux, the default on Docker Desktop.
+    user: "${ADA_UID:-10001}:${ADA_GID:-10001}"
     restart: unless-stopped
     logging: *default-logging
     init: true
@@ -415,7 +425,8 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ../../data:${ADA_DATA_PATH:-/app/data}
-      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      # HF_HOME in services/ml-worker/Dockerfile; the process is not root, so /root is never read.
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/app/data/hf-cache
     ports:
       - "127.0.0.1:${ML_PORT:-8100}:8100"
     networks: [ada]
@@ -427,6 +438,8 @@ services:
       dockerfile: services/api/Dockerfile
     image: ada/api:0.1.0
     container_name: ada-api
+    # Same as api-migrate: ADA_UID/ADA_GID on Linux, the default on Docker Desktop.
+    user: "${ADA_UID:-10001}:${ADA_GID:-10001}"
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -455,7 +468,7 @@ services:
       ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
       ADA_ENV: ${ADA_ENV:-local}
       # Clients whose access tokens ada-api accepts (azp), comma-separated.
-      OIDC_ALLOWED_AZP: ${OIDC_ALLOWED_AZP:-ada-web,ada-field}
+      OIDC_ALLOWED_AZP: ${OIDC_ALLOWED_AZP:-ada-web,ada-field,ada-auth}
       WEBSITE_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
     volumes:
       - ../../data:${ADA_DATA_PATH:-/app/data}

@@ -77,6 +77,16 @@ def _update(job_id: int, **fields) -> None:
         db.commit()
 
 
+# Writes only while the job is still in flight; False when another run already ended it.
+def _update_in_flight(job_id: int, **fields) -> bool:
+    with SessionLocal() as db:
+        moved = (db.query(AnalysisJob)
+                 .filter(AnalysisJob.id == job_id, AnalysisJob.status.in_(_IN_FLIGHT))
+                 .update(fields, synchronize_session=False))
+        db.commit()
+    return moved == 1
+
+
 def queue_depth() -> int:
     """How much work is waiting, for /health/ready.
 
@@ -253,14 +263,14 @@ def _run_analysis_safe(job_id: int) -> None:
         # Expected whenever a row outlives its file — the imagery was written
         # by another deployment, or deleted. One line, not a stack trace.
         log.error("job %s aborted: %s", job_id, exc)
-        _update(job_id, status="failed", error=str(exc),
-                finished_at=datetime.now(UTC))
-        notifier.analysis_failed(job_id)
+        if _update_in_flight(job_id, status="failed", error=str(exc),
+                             finished_at=datetime.now(UTC)):
+            notifier.analysis_failed(job_id)
     except Exception as exc:
         log.error("job %s failed:\n%s", job_id, traceback.format_exc())
-        _update(job_id, status="failed", error=str(exc),
-                finished_at=datetime.now(UTC))
-        notifier.analysis_failed(job_id)
+        if _update_in_flight(job_id, status="failed", error=str(exc),
+                             finished_at=datetime.now(UTC)):
+            notifier.analysis_failed(job_id)
     else:
         if finished:
             notifier.analysis_finished(job_id)
@@ -293,8 +303,11 @@ def _run_analysis(job_id: int) -> bool:
         zones = [z.geometry for z in
                  db.query(RedZone).filter(RedZone.project_id == job.project_id)]
 
-    _update(job_id, status="running", progress=0.02,
-            stage="Superimposing rasters (reproject + co-register + normalize)")
+    if not _update_in_flight(
+            job_id, status="running", progress=0.02,
+            stage="Superimposing rasters (reproject + co-register + normalize)"):
+        log.info("analysis job %s is no longer in flight; not running it", job_id)
+        return False
     pair = preprocess.superimpose(src1, src2, cog1, cog2)
     # Only the seg-diff path produces per-structure instances; the classical and
     # CD paths emit a bare probability raster and leave these None.

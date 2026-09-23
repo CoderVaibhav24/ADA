@@ -891,8 +891,24 @@ def _store(db: Session, case_ref: str, kind: str, upload: UploadFile) -> tuple:
 
     # Content-addressed: the same bytes sent twice occupy one file and two rows.
     stored = folder / f"{result.sha256}{result.extension}"
+    created = not stored.exists()
     os.replace(handle.name, stored)
-    return result, f"{case_ref}/{stored.name}"
+    return result, f"{case_ref}/{stored.name}", created
+
+
+# Removes a file this request created and no committed row points at.
+def _discard_stored(db: Session, storage_path: str, created: bool) -> None:
+    if not created:
+        return
+    try:
+        referenced = db.execute(
+            select(Evidence.id).where(Evidence.storage_path == storage_path).limit(1)
+        ).first()
+        if referenced is None:
+            (settings.icms_evidence_dir / storage_path).unlink(missing_ok=True)
+    except Exception:
+        log.warning("could not discard unreferenced evidence file %s", storage_path,
+                    exc_info=True)
 
 
 def _evidence_by_key(db: Session, key: str):
@@ -946,7 +962,7 @@ def add_evidence(
     _refuse_a_full_round(db, meta, row.inspection_id)
     flagged = _is_flagged(meta.latitude, meta.longitude, meta.accuracy_m)
 
-    result, storage_path = _store(db, row.case_ref, meta.kind, upload)
+    result, storage_path, created = _store(db, row.case_ref, meta.kind, upload)
 
     try:
         move_case(db, row.case_id, row.case_status, round_no=row.round_no)
@@ -995,6 +1011,7 @@ def add_evidence(
         db.commit()
     except IntegrityError:
         db.rollback()
+        _discard_stored(db, storage_path, created)
         replayed = _replayed_evidence(db, key, row)
         if replayed is not None:
             log.info("evidence %s raced its own replay on %s", key, inspection_ref)
@@ -1002,6 +1019,7 @@ def add_evidence(
         raise
     except Exception:
         db.rollback()
+        _discard_stored(db, storage_path, created)
         raise
 
     return {"evidence": _one_evidence(db, evidence_id), "replayed": False}
@@ -1093,6 +1111,17 @@ def _refuse_too_few_photos(db: Session, inspection_id: int) -> None:
         )
 
 
+# The idempotency key the round's latest submit event was written with.
+def _submitted_with(db: Session, inspection_id: int) -> str | None:
+    payload = db.execute(
+        select(CaseEvent.payload)
+        .where(CaseEvent.inspection_id == inspection_id,
+               CaseEvent.action == str(wf.Action.SUBMIT))
+        .order_by(CaseEvent.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    return payload.get("idempotency_key") if isinstance(payload, dict) else None
+
+
 def submit(
     db: Session, inspection_ref: str, body: SubmitRequest, scope: ZoneScope,
     *, actor: str, roles,
@@ -1142,10 +1171,12 @@ def submit(
         db.commit()
     except ApiError as refused:
         db.rollback()
-        # A retry that lost the race to its own first attempt is still a replay.
+        # A retry that lost the race to its own first attempt is still a replay;
+        # losing to a different submit (another key) is not.
         if refused.code == "invalid_transition":
             again = _locate(db, inspection_ref, scope)
-            if again is not None and again.inspection_status == SUBMITTED:
+            if (again is not None and again.inspection_status == SUBMITTED
+                    and _submitted_with(db, row.inspection_id) == payload["idempotency_key"]):
                 return {"replayed": True}
         raise
     except Exception:

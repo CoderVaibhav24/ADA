@@ -15,17 +15,25 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY libs/ts/shared/package.json libs/ts/shared/
+COPY libs/ts/api-types/package.json libs/ts/api-types/
 COPY apps/field/package.json apps/field/
 
 # apps/field/ is the Expo client: in the workspace and in the lockfile, but its
 # dependencies are several hundred megabytes and nothing here imports them.
-RUN npm ci --workspace @ada/web --workspace @ada/shared --include-workspace-root
+RUN npm ci --workspace @ada/web --workspace @ada/shared --workspace @ada/api-types \
+    --include-workspace-root
 
 COPY libs/ts/shared libs/ts/shared
+# Only tsc runs here: the generated src/*.ts are committed, so openapi-typescript
+# (the `generate` script) is never needed at image build time.
+COPY libs/ts/api-types/package.json libs/ts/api-types/tsconfig.json libs/ts/api-types/
+COPY libs/ts/api-types/src libs/ts/api-types/src
 COPY apps/web apps/web
 
-# @ada/web imports @ada/shared as built output (dist/), so it cannot go second.
-RUN npm run build --workspace @ada/shared \
+# @ada/web imports @ada/shared and @ada/api-types as built output (dist/), so
+# both libraries build first.
+RUN npm run build --workspace @ada/api-types \
+    && npm run build --workspace @ada/shared \
     && npm run build --workspace @ada/web
 
 FROM nginx:1.27-alpine

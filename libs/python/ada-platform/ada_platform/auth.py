@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -96,20 +97,35 @@ class ADAAuth:
         return self._verifier.verify(token)
 
     def ready(self) -> bool:
-        """True when a signing key is cached or can be fetched now. Never raises.
+        """True when a signing key verify() would still serve is cached, or can be
+        fetched now. Never raises.
 
-        A cached key counts even past its hard TTL: readiness asks whether this
-        process can reach a working state, and the next verify refreshes it.
+        Keys past the hard TTL do not count: verify() refuses them too. A probe
+        that has to fetch tries at most once per _READY_RETRY_SECONDS, so a
+        readiness check every second cannot turn a Keycloak outage into load.
         """
         cache = self._jwks
         try:
             with cache._lock:
-                if not cache._keys:
-                    cache._refresh()
-                return bool(cache._keys)
+                if self._servable(cache):
+                    return True
+                now = time.monotonic()
+                if now - self._ready_attempt_at < self._READY_RETRY_SECONDS:
+                    return False
+                self._ready_attempt_at = now
+                cache._refresh()
+                return self._servable(cache)
         except Exception:
             log.warning("JWKS not ready", exc_info=True)
             return False
+
+    _READY_RETRY_SECONDS = 10.0
+    _ready_attempt_at = float("-inf")
+
+    @staticmethod
+    def _servable(cache: JWKSCache) -> bool:
+        age = time.monotonic() - cache._fetched_at
+        return bool(cache._keys) and age < cache._hard_ttl_seconds
 
     # --- FastAPI -------------------------------------------------------------
 

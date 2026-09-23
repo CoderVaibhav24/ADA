@@ -304,16 +304,53 @@ class KeycloakGateway:
 
         return _tokens_from(response.json())
 
-    # Effective realm roles (groups and composites included); fails closed.
+    # Effective realm and realm-management client roles (composites included); fails closed.
     async def _refuse_denied_roles(self, subject_id: str) -> None:
         denied = {role for role in self._settings.otp_denied_roles if role}
-        if not denied:
+        denied_client = {role for role in self._settings.otp_denied_client_roles if role}
+        if not denied and not denied_client:
             return
+        user_url = f"{self._settings.admin_users_url}/{subject_id}"
+        held: list[str] = []
+        if denied:
+            roles = _role_names(await self._admin_get(
+                f"{user_url}/role-mappings/realm/composite", "role lookup"))
+            held += sorted(roles & denied)
+        if denied_client and not held:
+            client_uuid = await self._realm_management_uuid()
+            roles = _role_names(await self._admin_get(
+                f"{user_url}/role-mappings/clients/{client_uuid}/composite",
+                "client role lookup"))
+            held += sorted(roles & denied_client)
+        if held:
+            logger.warning("otp_refused_for_role", subject_id=subject_id, roles=held)
+            raise OtpNotPermitted(subject_id)
+
+    _rm_client_uuid: str | None = None
+
+    # The realm-management client's internal id, looked up once per process.
+    async def _realm_management_uuid(self) -> str:
+        if self._rm_client_uuid:
+            return self._rm_client_uuid
+        url = self._settings.admin_users_url.rsplit("/users", 1)[0] + "/clients"
+        document = await self._admin_get(url, "client lookup",
+                                         params={"clientId": "realm-management"})
+        match = [entry for entry in (document if isinstance(document, list) else [])
+                 if isinstance(entry, dict) and entry.get("clientId") == "realm-management"
+                 and entry.get("id")]
+        if not match:
+            raise DirectoryUnavailable(
+                "realm-management client not found; OTP sign-in is refused until "
+                "the subject's client roles can be read"
+            )
+        self._rm_client_uuid = str(match[0]["id"])
+        return self._rm_client_uuid
+
+    async def _admin_get(self, url: str, what: str, params: dict | None = None) -> object:
         token = await self._service_token()
-        url = f"{self._settings.admin_users_url}/{subject_id}/role-mappings/realm/composite"
         try:
             response = await self._client.get(
-                url, headers={"Authorization": f"Bearer {token}"}
+                url, params=params, headers={"Authorization": f"Bearer {token}"}
             )
         except httpx.HTTPError as exc:
             raise DirectoryUnavailable(f"Keycloak admin API unreachable: {exc}") from exc
@@ -322,20 +359,10 @@ class KeycloakGateway:
             if response.status_code in (401, 403):
                 self._forget_service_token()
             raise DirectoryUnavailable(
-                f"Keycloak returned {response.status_code} for a role lookup; "
+                f"Keycloak returned {response.status_code} for a {what}; "
                 "OTP sign-in is refused until the subject's roles can be read"
             )
-
-        document = response.json()
-        roles = {
-            entry.get("name")
-            for entry in (document if isinstance(document, list) else [])
-            if isinstance(entry, dict)
-        }
-        held = sorted(roles & denied)
-        if held:
-            logger.warning("otp_refused_for_role", subject_id=subject_id, roles=held)
-            raise OtpNotPermitted(subject_id)
+        return response.json()
 
     async def refresh(self, refresh_token: str) -> UserTokens:
         """Exchange a refresh token for a new pair.
@@ -389,6 +416,14 @@ class KeycloakGateway:
                 logger.warning("logout_refused", status=response.status_code)
         except httpx.HTTPError as exc:
             logger.warning("logout_unreachable", error=str(exc))
+
+
+def _role_names(document: object) -> set[str]:
+    return {
+        entry.get("name")
+        for entry in (document if isinstance(document, list) else [])
+        if isinstance(entry, dict)
+    }
 
 
 def _tokens_from(document: dict) -> UserTokens:

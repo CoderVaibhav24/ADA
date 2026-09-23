@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 from ada_core.models_icms import (
     Case,
+    CaseEvent,
     CheckIn,
     Evidence,
     Inspection,
@@ -80,6 +81,31 @@ def case_of(db, case_ref: str):
 def count(db, model, *where) -> int:
     db.expire_all()
     return int(db.execute(select(func.count()).select_from(model).where(*where)).scalar_one())
+
+
+def concurrent_submit(case_id: int, idempotency_key: str) -> dict:
+    """What a winning submit commits: the case, the round, and its event with its key."""
+    round_id = (select(Inspection.id).where(Inspection.inspection_ref == ROUND_OF_0006)
+                .scalar_subquery())
+    return {
+        "case": move(UNDER_INSPECTION, status="inspection_submitted", stage_no=4),
+        "round": update(Inspection).where(Inspection.inspection_ref == ROUND_OF_0006)
+        .values(status="submitted"),
+        "event": insert(CaseEvent).values(
+            case_id=case_id, inspection_id=round_id, action="submit",
+            from_status="under_inspection", to_status="inspection_submitted",
+            actor_user_id=SURVEYOR_ID, payload={"idempotency_key": idempotency_key},
+        ),
+    }
+
+
+# Bytes no other test uploads, so the content-addressed file is new to this one.
+UNIQUE_JPEG = (b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+               + b"\x07\x02" * 32 + b"\xff\xd9")
+
+
+def evidence_files(root) -> set[str]:
+    return {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
 
 
 def assert_lost_race(response, code: str = "invalid_transition") -> None:
@@ -178,6 +204,45 @@ class TestInspectionWritesAreCompareAndSet:
         assert count(db, Evidence) == 1, "only the seeded photograph"
         assert events(inspection_loop[UNDER_INSPECTION].id) == []
 
+    def test_a_refused_upload_leaves_no_file_behind(
+        self, icms_client, inspection_loop, race, db
+    ):
+        """The file is written before the transaction; a 409 must not orphan it."""
+        from app.config import settings
+        from app.icms import workflow as wf
+
+        before = evidence_files(settings.icms_evidence_dir)
+        race(wf, "check", moved=move(UNDER_INSPECTION, status="inspection_submitted"))
+        response = icms_client.sign_in(SURVEYOR).post(
+            f"{INSPECTIONS}/{ROUND_OF_0006}/evidence",
+            data=fields(idempotency_key=key("702")),
+            files={"file": ("x.jpg", UNIQUE_JPEG, "image/jpeg")})
+
+        assert_lost_race(response)
+        assert evidence_files(settings.icms_evidence_dir) == before
+
+    def test_a_refused_duplicate_keeps_the_file_an_earlier_upload_owns(
+        self, icms_client, inspection_loop, race, db
+    ):
+        """Content-addressed: identical bytes share one file, so the refusal of the
+        second upload must not delete the first one's."""
+        from app.config import settings
+        from app.icms import workflow as wf
+
+        client = icms_client.sign_in(SURVEYOR)
+        first = client.post(f"{INSPECTIONS}/{ROUND_OF_0006}/evidence",
+                            data=fields(idempotency_key=key("703")), files=jpeg())
+        assert first.status_code == 201, first.text
+        stored = db.execute(select(Evidence.storage_path).where(
+            Evidence.id == first.json()["id"])).scalar_one()
+
+        race(wf, "check", moved=move(UNDER_INSPECTION, status="inspection_submitted"))
+        response = client.post(f"{INSPECTIONS}/{ROUND_OF_0006}/evidence",
+                               data=fields(idempotency_key=key("704")), files=jpeg())
+
+        assert_lost_race(response)
+        assert (settings.icms_evidence_dir / stored).is_file()
+
     def test_findings_after_a_concurrent_submit_do_not_reopen_the_case(
         self, icms_client, inspection_loop, race, events, db
     ):
@@ -212,16 +277,29 @@ class TestInspectionWritesAreCompareAndSet:
         the loser answered as the replay it is rather than as an error."""
         from app.icms import workflow as wf
 
-        race(wf, "check",
-             case=move(UNDER_INSPECTION, status="inspection_submitted", stage_no=4),
-             round=update(Inspection).where(Inspection.inspection_ref == ROUND_OF_0006)
-             .values(status="submitted"))
+        case_id = inspection_loop[UNDER_INSPECTION].id
+        race(wf, "check", **concurrent_submit(case_id, SUBMIT_KEY))
         response = icms_client.sign_in(SURVEYOR).post(
             f"{INSPECTIONS}/{ROUND_OF_0006}/submit", json={"idempotency_key": SUBMIT_KEY})
 
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "submitted"
-        assert events(inspection_loop[UNDER_INSPECTION].id) == [], "the replay moves nothing"
+        assert len(events(case_id)) == 1, "the replay moves nothing"
+
+    def test_a_submit_that_lost_to_a_different_submit_is_a_409(
+        self, icms_client, inspection_loop, race, events, db
+    ):
+        """Another device submitted the round meanwhile under its own key: this
+        request is not a replay of that one, so it must not be told it succeeded."""
+        from app.icms import workflow as wf
+
+        case_id = inspection_loop[UNDER_INSPECTION].id
+        race(wf, "check", **concurrent_submit(case_id, "6f1d6dd9-8443-4b90-9a86-0f65c42b7999"))
+        response = icms_client.sign_in(SURVEYOR).post(
+            f"{INSPECTIONS}/{ROUND_OF_0006}/submit", json={"idempotency_key": SUBMIT_KEY})
+
+        assert_lost_race(response)
+        assert len(events(case_id)) == 1
 
     @pytest.mark.parametrize("decision", [
         {"decision": "accept"},

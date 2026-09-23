@@ -33,6 +33,9 @@ RELOAD_LIBS  := --reload-dir . --reload-dir $(ROOT)/libs/python
 # Overridable on the command line: make infra-logs SERVICE=keycloak
 SERVICE ?=
 CONFIRM ?=
+# Where api/auth/ml/notify listen. Kong reaches them via host.docker.internal,
+# which on Linux is the docker bridge, not loopback: use BIND=0.0.0.0 there.
+BIND    ?= 127.0.0.1
 
 # Shell prelude for every native target: export .env, then host-side URLs.
 NATIVE_ENV = set -a; \
@@ -66,7 +69,9 @@ help: ## Print this help
 		/^[a-zA-Z0-9_%-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf '\n\033[1mVariables\033[0m\n'
 	@printf '  SERVICE=<name>  one compose service for infra-logs\n'
-	@printf '  CONFIRM=yes     required by nuke\n\n'
+	@printf '  CONFIRM=yes     required by nuke\n'
+	@printf '  BIND=0.0.0.0    api/auth/ml/notify listen address (default 127.0.0.1);\n'
+	@printf '                  needed on Linux when using the gateway: make api BIND=0.0.0.0\n\n'
 
 ##@ Containers
 
@@ -109,24 +114,24 @@ api: ## ada-api on :BACKEND_PORT (8000) with reload
 	OIDC_ISSUER="$${OIDC_ISSUER:-$$ADA_ISSUER}" OIDC_INTERNAL_ISSUER_URL="$$KC_HOST_ISSUER" \
 	OIDC_ADMIN_CLIENT_ID="$${ADA_API_CLIENT_ID:-ada-api}" OIDC_ADMIN_CLIENT_SECRET="$${ADA_API_CLIENT_SECRET:-}" \
 	ML_SERVICE_URL="http://127.0.0.1:$${ML_PORT:-8100}" WEBSITE_ORIGIN="$${APP_ORIGIN:-http://localhost:5173}" \
-	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host 127.0.0.1 --port $${BACKEND_PORT:-8000}
+	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host $(BIND) --port $${BACKEND_PORT:-8000}
 
 ml: ## ada-ml on :ML_PORT (8100) with reload; migrates the schema on startup
 	@$(NATIVE_ENV) cd $(ML_DIR) && \
 	NOTIFY_URL="http://127.0.0.1:$${ADA_NOTIFY_PORT:-8001}" NOTIFY_ISSUER="$$KC_HOST_ISSUER" \
 	NOTIFY_CLIENT_ID="$${NOTIFY_CLIENT_ID:-ada-ml}" NOTIFY_CLIENT_SECRET="$$ADA_ML_CLIENT_SECRET" \
 	APP_ORIGIN="$${APP_ORIGIN:-http://localhost:5173}" \
-	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host 127.0.0.1 --port $${ML_PORT:-8100}
+	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host $(BIND) --port $${ML_PORT:-8100}
 
 auth: ## ada-auth (OTP) on :ADA_AUTH_PORT (8002) with reload
 	@$(NATIVE_ENV) cd $(AUTH_DIR) && \
 	ADA_AUTH_SMTP_HOST=127.0.0.1 ADA_AUTH_SMTP_PORT="$${MAILPIT_SMTP_PORT:-1025}" \
-	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host 127.0.0.1 --port $${ADA_AUTH_PORT:-8002} --no-server-header
+	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host $(BIND) --port $${ADA_AUTH_PORT:-8002} --no-server-header
 
 notify: ## ada-notify on :ADA_NOTIFY_PORT (8001) with reload; runs its alembic first
 	@$(NATIVE_ENV) cd $(NOTIFY_DIR) && export ADA_DATABASE_URL="$$NOTIFY_DATABASE_URL" && \
 	$(ALEMBIC) upgrade head && \
-	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host 127.0.0.1 --port $${ADA_NOTIFY_PORT:-8001} --no-server-header
+	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host $(BIND) --port $${ADA_NOTIFY_PORT:-8001} --no-server-header
 
 worker: ## ada-notify delivery worker (python -m app.worker); no reload
 	@$(NATIVE_ENV) cd $(NOTIFY_DIR) && \

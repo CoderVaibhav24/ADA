@@ -7,10 +7,11 @@ There is no Kong database and the Admin API is switched off (`KONG_ADMIN_LISTEN=
 
 | Path | Upstream | Notes |
 |---|---|---|
-| `/api/health`, `/api/docs`, `/api/openapi.json` (GET) | ada-api | no token needed |
+| `/api/health`, `/api/health/ready`, `/api/auth/config`, `/api/docs`, `/api/openapi.json` (GET) | ada-api | no token needed |
 | `/api/**` | ada-api | JWT required |
 | `POST /api/projects/{id}/rasters` | ada-api | 2048 MB body limit, 30/min per IP, not buffered in Kong |
 | `POST /api/projects/{id}/analyses` | ada-api | 30/min per IP |
+| `POST /auth-api/v1/auth/refresh` | ada-auth (`/v1/auth/refresh`) | 60/min per IP, its own bucket |
 | `/auth-api/**` | ada-auth (`/auth-api` stripped) | 10/min per IP |
 | `/idp/realms/**`, `/idp/resources/**` | Keycloak (nothing stripped) | |
 | `/idp/admin/**`, `/idp/realms/master/**` | none | always 404 |
@@ -33,6 +34,26 @@ their own 127.0.0.1 ports during development.
 Rate limits use `policy: local`, so each Kong node counts on its own. Under
 Docker Desktop every client appears as the same gateway IP, so in local dev the
 per-IP limits are effectively shared by everyone.
+
+### Behind a load balancer
+
+`limit_by: ip` counts the address Kong sees. Behind a load balancer or reverse
+proxy that is the proxy's own address, so every user shares one bucket and ten
+OTP requests a minute lock the whole site out. Tell Kong which hops to trust and
+where the client address is, in `infra/compose/.env` (the kong service passes
+them through; the defaults trust nobody):
+
+```bash
+KONG_TRUSTED_IPS=10.0.0.0/8          # the load balancer's CIDRs, comma-separated
+KONG_REAL_IP_HEADER=X-Forwarded-For
+KONG_REAL_IP_RECURSIVE=on            # take the last untrusted hop, not the first
+```
+
+Never set `KONG_TRUSTED_IPS=0.0.0.0/0,::/0`: any client could then choose its
+own rate-limit key with a forged `X-Forwarded-For`.
+
+Token refresh has its own route and a 60/min bucket, because a signed-in client
+refreshes every few minutes and must not spend the 10/min OTP allowance.
 
 ## JWT scheme and key sync
 
@@ -95,7 +116,10 @@ KONG_UPSTREAM_API=http://ada-api:8000 KONG_UPSTREAM_AUTH=http://ada-auth:8002 \
 
 If a native service listens on a non-default port (for example `BACKEND_PORT`),
 set `KONG_UPSTREAM_API=http://host.docker.internal:<port>` to match.
-`host.docker.internal` is mapped with `host-gateway`, so it also works on Linux.
+`host.docker.internal` is mapped with `host-gateway`. On Linux that is the
+docker bridge address, not loopback, so a native service bound to 127.0.0.1 is
+unreachable from Kong: start it with `make api BIND=0.0.0.0` (likewise `auth`,
+`ml`, `notify`). Docker Desktop forwards to loopback, so macOS needs nothing.
 
 ## Checking a change
 

@@ -74,7 +74,9 @@ services:
     routes:
       - name: api-public
         methods: [GET, HEAD]
-        paths: ["~/api/health$", "~/api/openapi\\.json$", /api/docs]
+        # auth/config bootstraps the SPA before it has a token; health/ready is the probe.
+        paths: ["~/api/health$", "~/api/health/ready$", "~/api/auth/config$",
+                "~/api/openapi\\.json$", /api/docs]
         strip_path: false
         preserve_host: true
     plugins:
@@ -94,6 +96,25 @@ services:
         paths: [/auth-api]
         strip_path: true
         preserve_host: true
+      # A signed-in client refreshes every few minutes, so refresh gets its own
+      # 60/min bucket instead of sharing the 10/min OTP one. A route-level
+      # rate-limiting replaces the service-level one for this route. A regex
+      # route cannot strip just /auth-api, so the upstream path is set here.
+      - name: auth-api-refresh
+        methods: [POST]
+        paths: ["~/auth-api/v1/auth/refresh$"]
+        strip_path: false
+        preserve_host: true
+        plugins:
+          - name: request-transformer
+            config:
+              replace:
+                uri: /v1/auth/refresh
+          - name: rate-limiting
+            config:
+              minute: 60
+              policy: local
+              limit_by: ip
     plugins:
       - name: rate-limiting
         config:

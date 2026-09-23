@@ -66,7 +66,7 @@ def analysis(db, project, pipeline):
     db.add_all([t1, t2])
     db.commit()
     job = models.AnalysisJob(project_id=project.id, raster_t1_id=t1.id,
-                             raster_t2_id=t2.id, mode="diff", status="failed")
+                             raster_t2_id=t2.id, mode="diff", status="queued")
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -127,6 +127,61 @@ class TestAFinishedJobIsFinal:
 
         assert wrote is False
         assert "late" not in polygons(db, analysis.id)
+
+
+class TestARacingRunCannotUnfinishAJob:
+    """A second run that passed the done-check must not flip `done` back (review F3)."""
+
+    def _finish_elsewhere_during_the_check(self, monkeypatch, job_id):
+        from ada_core.database import SessionLocal
+
+        from app import jobs
+
+        real = jobs.require_file
+
+        def require_file(path, label):
+            with SessionLocal() as other:
+                other.query(models.AnalysisJob).filter(
+                    models.AnalysisJob.id == job_id).update({"status": "done"})
+                other.commit()
+            return real(path, label)
+
+        monkeypatch.setattr(jobs, "require_file", require_file)
+
+    def test_the_run_stops_and_the_job_stays_done(self, db, analysis, pipeline, monkeypatch):
+        from app import jobs
+
+        seed(db, analysis.id)
+        self._finish_elsewhere_during_the_check(monkeypatch, analysis.id)
+
+        assert jobs._run_analysis(analysis.id) is False
+
+        db.refresh(analysis)
+        assert analysis.status == "done"
+        assert pipeline["ran"] == []
+        assert set(polygons(db, analysis.id)) == {"reviewed", "raised", "untouched"}
+
+    def test_a_failure_after_another_run_finished_does_not_mark_it_failed(
+        self, db, analysis, pipeline, monkeypatch
+    ):
+        from ada_core.database import SessionLocal
+
+        from app import jobs
+
+        def superimpose(*_a, **_k):
+            with SessionLocal() as other:
+                other.query(models.AnalysisJob).filter(
+                    models.AnalysisJob.id == analysis.id).update({"status": "done"})
+                other.commit()
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(jobs.preprocess, "superimpose", superimpose)
+
+        jobs._run_analysis_safe(analysis.id)
+
+        db.refresh(analysis)
+        assert analysis.status == "done"
+        assert analysis.error is None
 
 
 class TestAReRunKeepsWhatOfficersTouched:
