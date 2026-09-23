@@ -7,11 +7,13 @@ against something unintended.
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -50,14 +52,22 @@ class Settings(BaseSettings):
     auth_client_id: str = "ada-auth"
     auth_client_secret: str = ""
 
-    # Passed as `audience` on the exchange when set. Left empty the exchanged
-    # token is audienced at ada-auth itself, which is right when the caller
-    # is a first-party application reading it through the SDK.
-    exchange_audience: str = ""
+    # Passed as `audience` on the exchange, so the minted token carries the
+    # client id ada-api accepts in `azp` (OIDC_ALLOWED_AZP) rather than
+    # ada-auth's. Keycloak must grant ada-auth a token-exchange permission on
+    # this client. An empty string omits the parameter.
+    exchange_audience: str = "ada-web"
+
+    # Realm roles that may never sign in by one-time code. The exchange mints a
+    # token without any credential of theirs, so a privileged account must use
+    # password plus TOTP through Keycloak's own flow instead.
+    otp_denied_roles: Annotated[list[str], NoDecode] = ["super-admin"]
 
     # --- Service ------------------------------------------------------------
 
-    env: Literal["local", "staging", "production"] = "local"
+    # Production unless said otherwise: a missing ADA_ENV must never land on
+    # the permissive end. Compose, which is local development, sets "local".
+    env: Literal["local", "staging", "production"] = "production"
     log_level: str = "INFO"
     auth_port: int = 8002
     service_name: str = "ada-auth"
@@ -178,13 +188,15 @@ class Settings(BaseSettings):
 
     # --- Development bypass -------------------------------------------------
     #
-    # Secure by default in the strong sense: production cannot enable this, with
-    # or without the flag, so a misconfigured ADA_ENV can never turn OTP
-    # verification into a no-op.
+    # The bypass accepts any code, so it needs three independent things to be
+    # true at once:
     #
-    #   local       bypass on. The issued code is always dev_otp.
-    #   staging     bypass on ONLY with allow_otp_dev_bypass set.
-    #   production  bypass impossible.
+    #   env == "local"                   (the default is production)
+    #   allow_otp_dev_bypass == True     (explicit opt-in, default off)
+    #   the issuer host is loopback or the compose "keycloak" host
+    #
+    # Staging and production can never enable it. A non-production env with a
+    # public issuer refuses to start at all (see _refuse_public_non_production).
     allow_otp_dev_bypass: bool = False
     dev_otp: str = "000000"
 
@@ -198,13 +210,39 @@ class Settings(BaseSettings):
     def _strip_optional_trailing_slash(cls, value: str | None) -> str | None:
         return value.rstrip("/") if value else None
 
+    # An empty ADA_ENV (as a copied .env.example has it) means "not said", which
+    # is production — never a validation error, never local.
+    @field_validator("env", mode="before")
+    @classmethod
+    def _blank_env_is_production(cls, value: object) -> object:
+        return "production" if value is None or str(value).strip() == "" else value
+
+    @field_validator("otp_denied_roles", mode="before")
+    @classmethod
+    def _split_denied_roles(cls, value: object) -> object:
+        if isinstance(value, str):
+            text = value.strip().strip("[]")
+            return [part.strip().strip("\"'") for part in text.split(",") if part.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _refuse_public_non_production(self) -> Settings:
+        if self.env != "production" and not _is_private_host(_host_of(self.issuer)):
+            raise ValueError(
+                f"ADA_ENV={self.env!r} but ADA_ISSUER={self.issuer!r} is a public host. "
+                "Non-production modes relax OTP checks and are only permitted against a "
+                "localhost or private-network issuer. Set ADA_ENV=production for a "
+                "deployed service."
+            )
+        return self
+
     @property
     def dev_bypass_allowed(self) -> bool:
-        if self.env == "local":
-            return True
-        if self.env == "staging":
-            return self.allow_otp_dev_bypass
-        return False
+        return (
+            self.env == "local"
+            and self.allow_otp_dev_bypass is True
+            and _host_of(self.issuer) in _BYPASS_ISSUER_HOSTS
+        )
 
     @property
     def fetch_base(self) -> str:
@@ -244,6 +282,27 @@ class Settings(BaseSettings):
     @property
     def admin_users_url(self) -> str:
         return f"{self.server_base}/admin/realms/{self.realm}/users"
+
+
+_BYPASS_ISSUER_HOSTS = frozenset({"localhost", "127.0.0.1", "keycloak"})
+
+
+def _host_of(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower()
+
+
+# Loopback, RFC 1918 / link-local addresses, and single-label or internal names.
+def _is_private_host(host: str) -> bool:
+    if not host:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return (
+            "." not in host
+            or host.endswith((".localhost", ".local", ".internal", ".lan"))
+        )
+    return address.is_loopback or address.is_private or address.is_link_local
 
 
 @lru_cache(maxsize=1)

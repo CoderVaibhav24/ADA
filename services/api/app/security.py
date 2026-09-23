@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
 from ada_platform import ADAAuth, ADAAuthError, JwksUnavailableError, Principal
 from anyio import to_thread
 from fastapi import Depends, HTTPException, Request
@@ -43,6 +44,9 @@ PUBLIC_PATHS: frozenset[str] = frozenset({
     # holds a token. Gating it makes an unauthenticated 401 read as an unhealthy
     # service, and the orchestrator restarts a working process.
     "/api/health",
+    # Readiness (database + JWKS). Same reasoning: the probe holds no token,
+    # and a 401 here would read as "not ready" and pull a healthy replica out.
+    "/api/health/ready",
     # The issuer and client id the SPA needs BEFORE it can obtain a token.
     # Gating it is a deadlock: the page cannot learn where to send the user.
     "/api/auth/config",
@@ -52,15 +56,25 @@ PUBLIC_PATHS: frozenset[str] = frozenset({
     "/api/openapi.json",
 })
 
+def build_auth(client: httpx.Client | None = None) -> ADAAuth:
+    """The verifier as configured for this API; tests pass a client."""
+    return ADAAuth(
+        issuer=settings.oidc_issuer,
+        internal_issuer_url=settings.oidc_internal_issuer_url,
+        jwks_cache_seconds=settings.jwks_soft_ttl_seconds,
+        jwks_hard_ttl_seconds=settings.jwks_hard_ttl_seconds,
+        client=client,
+        # Access tokens only, from ADA's own user-facing clients, for a person.
+        require_typ="Bearer",
+        allowed_azp=frozenset(settings.oidc_allowed_azp),
+        reject_service_accounts=True,
+    )
+
+
 # One verifier for the process. It owns the JWKS cache, so constructing it per
 # request would refetch the realm's keys on every call — which is the coupling
 # local verification exists to remove.
-auth = ADAAuth(
-    issuer=settings.oidc_issuer,
-    internal_issuer_url=settings.oidc_internal_issuer_url,
-    jwks_cache_seconds=settings.jwks_soft_ttl_seconds,
-    jwks_hard_ttl_seconds=settings.jwks_hard_ttl_seconds,
-)
+auth = build_auth()
 
 # Declared so the schema documents the scheme and Swagger UI keeps its Authorize
 # button; auto_error=False because the refusal below is ours, with the header.

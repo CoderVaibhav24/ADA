@@ -81,11 +81,12 @@ def test_the_suite_found_the_routes_it_is_meant_to_walk():
 
 
 class TestTheAllowlist:
-    def test_is_exactly_these_four_and_nothing_else(self):
+    def test_is_exactly_these_five_and_nothing_else(self):
         """Pinned so widening it is a deliberate line in a diff somebody reviews,
         rather than a path quietly appended to a set."""
         assert PUBLIC_PATHS == {
             "/api/health",
+            "/api/health/ready",
             "/api/auth/config",
             "/api/docs",
             "/api/openapi.json",
@@ -93,11 +94,16 @@ class TestTheAllowlist:
 
     @pytest.mark.parametrize("path", sorted(PUBLIC_PATHS))
     def test_each_one_answers_without_a_token(self, anonymous_client, path):
-        """The healthcheck holds no token and the browser needs the other three
-        BEFORE it can get one. Gating any of them is a deadlock."""
+        """The health probes hold no token and the browser needs the other three
+        BEFORE it can get one. Gating any of them is a deadlock. Readiness may
+        legitimately answer 503 here (no JWKS in tests); what it must never do
+        is answer 401."""
         response = anonymous_client.get(path)
 
-        assert response.status_code == 200, f"{path} is not reachable anonymously"
+        if path == "/api/health/ready":
+            assert response.status_code in (200, 503), f"{path} answered {response.status_code}"
+        else:
+            assert response.status_code == 200, f"{path} is not reachable anonymously"
 
     def test_a_path_that_merely_starts_with_a_public_one_is_not_public(
         self, anonymous_client
@@ -178,6 +184,7 @@ def token(signing_key, **overrides) -> str:
     now = int(time.time())
     claims = {
         "iss": ISSUER, "sub": OWNER, "iat": now, "exp": now + 300, "azp": "ada-web",
+        "typ": "Bearer",
         "scope": "openid profile email", "preferred_username": "officer",
     }
     claims.update(overrides.pop("claims", {}))
@@ -192,7 +199,7 @@ def realm(monkeypatch, realm_transport):
 
     monkeypatch.setattr(
         security, "auth",
-        ADAAuth(issuer=ISSUER, client=httpx.Client(transport=realm_transport)),
+        security.build_auth(client=httpx.Client(transport=realm_transport)),
     )
     return realm_transport
 

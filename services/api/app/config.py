@@ -12,10 +12,12 @@ ada_core.CoreSettings.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated, Literal
 
 from ada_core import CoreSettings
 from ada_core.database import configure_engine
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic_settings import NoDecode
 
 
 class Settings(CoreSettings):
@@ -41,6 +43,12 @@ class Settings(CoreSettings):
     # to the frontend by /api/auth/config so the origin is configured once, on
     # the server, rather than baked into the built JavaScript.
     oidc_client_id: str = "ada-web"
+
+    # The clients whose access tokens this API accepts, read from `azp`.
+    # Anything else the shared realm issues — another application, a service
+    # account, a token exchanged for a different audience — is refused.
+    # OIDC_ALLOWED_AZP, comma-separated.
+    oidc_allowed_azp: Annotated[list[str], NoDecode] = ["ada-web", "ada-field"]
 
     # --- user administration -------------------------------------------------
     #
@@ -81,8 +89,8 @@ class Settings(CoreSettings):
 
     # --- the model service ---------------------------------------------------
     ml_service_url: str = "http://ada-ml:8100"
-    # Presented on X-ADA-Service-Token. Must match ML_SERVICE_TOKEN in ada-ml;
-    # both empty disables the check.
+    # Presented on X-ADA-Service-Token. Must match ML_SERVICE_TOKEN in ada-ml.
+    # Required unless ADA_ENV=local; see _require_ml_token_outside_local.
     ml_service_token: str = ""
     # Queueing a job is a database-backed handoff, not the work itself, so this
     # is short on purpose: if ada-ml cannot accept an id in five seconds the
@@ -159,9 +167,39 @@ class Settings(CoreSettings):
     icms_min_photos_per_round: int = 3
     icms_max_photos_per_round: int = 5
 
+    # Production unless said otherwise; compose (local development) sets local.
+    ada_env: Literal["local", "staging", "production"] = "production"
+
     service_name: str = "ada-api"
     log_level: str = "INFO"
     api_port: int = 8000
+
+    # An empty ADA_ENV (as a copied .env.example has it) means "not said", which
+    # is production — never a validation error, never local.
+    @field_validator("ada_env", mode="before")
+    @classmethod
+    def _blank_env_is_production(cls, value: object) -> object:
+        return "production" if value is None or str(value).strip() == "" else value
+
+    @field_validator("oidc_allowed_azp", mode="before")
+    @classmethod
+    def _split_allowed_azp(cls, value: object) -> object:
+        if isinstance(value, str):
+            text = value.strip().strip("[]")
+            return [part.strip().strip("\"'") for part in text.split(",") if part.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _require_ml_token_outside_local(self) -> Settings:
+        if not self.ml_service_token and self.ada_env != "local":
+            raise ValueError(
+                f"ML_SERVICE_TOKEN is empty and ADA_ENV={self.ada_env!r}. Outside local "
+                "development ada-api must authenticate to ada-ml; set ML_SERVICE_TOKEN "
+                "(the same value ada-ml has) or ADA_ENV=local for a dev stack."
+            )
+        if not self.oidc_allowed_azp:
+            raise ValueError("OIDC_ALLOWED_AZP is empty, so no token could ever be accepted")
+        return self
 
     # Under uploads_dir so one bind mount carries every officer-supplied file.
     @property

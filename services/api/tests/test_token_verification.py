@@ -29,6 +29,7 @@ def token(signing_key, **overrides) -> str:
         "iat": now,
         "exp": now + 300,
         "azp": "ada-web",
+        "typ": "Bearer",
         "scope": "openid profile email",
         "preferred_username": "officer",
         "email": "officer@pcsmcpl.net",

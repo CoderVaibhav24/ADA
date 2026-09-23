@@ -28,12 +28,14 @@ async def require_service_token(
 ) -> None:
     """Reject anything that is not ada-api.
 
-    Unset ML_SERVICE_TOKEN disables the check, which is right for a single-user
-    local run and wrong everywhere else — so the service logs a warning at
-    startup when it is unset rather than letting it pass unremarked.
+    An unset ML_SERVICE_TOKEN skips the check only with ADA_ENV=local; the
+    settings refuse to load otherwise, and this refuses again in case they
+    were changed after load.
     """
     expected = settings.ml_service_token
     if not expected:
+        if settings.ada_env != "local":
+            raise HTTPException(status_code=503, detail="Service token not configured")
         return
     # compare_digest, not ==: a plain comparison returns as soon as two bytes
     # differ, and the time it took says how long the matching prefix was.

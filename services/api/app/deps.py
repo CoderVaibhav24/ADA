@@ -21,16 +21,22 @@ before the swap.
 
 from __future__ import annotations
 
+from functools import cache
+
 from ada_core.models import Project
 from ada_platform import Principal
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 # Re-exported, not redefined. The same callable is what JWTMiddleware enforces
 # as the floor, and a second one here could answer differently from the first.
 from .security import auth, require_user  # noqa: F401
 
-__all__ = ["auth", "current_user_id", "get_owned_project", "require_user"]
+__all__ = [
+    "auth", "current_user_id", "get_owned_project", "require_imagery", "require_user",
+]
+
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 async def current_user_id(user: Principal = Depends(require_user)) -> str:
@@ -45,3 +51,20 @@ def get_owned_project(
     if project is None or project.user_id != user_id:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+# Imported late: app.icms.security imports this module for require_user.
+@cache
+def _imagery_checks():
+    from .icms.security import require_permission
+
+    return require_permission("imagery.read"), require_permission("imagery.write")
+
+
+def require_imagery(
+    request: Request, user: Principal = Depends(require_user),
+) -> Principal:
+    """imagery.read for GET, imagery.write for every other method."""
+    read, write = _imagery_checks()
+    check = read if request.method in _READ_METHODS else write
+    return check(user)

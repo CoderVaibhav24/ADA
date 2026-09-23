@@ -65,13 +65,18 @@ def statuses() -> str:
     return _render("0006:0007")
 
 
+@pytest.fixture(scope="module")
+def imagery() -> str:
+    return _render("0007:0008")
+
+
 def test_the_chain_renders_to_head(chain):
     assert "CREATE TABLE icms_workflow_transition" in chain
-    assert "UPDATE alembic_version SET version_num='0007'" in chain
+    assert "UPDATE alembic_version SET version_num='0008'" in chain
 
 
 @pytest.mark.parametrize(
-    "revision", ["policy", "upload", "screens", "code_values", "statuses"])
+    "revision", ["policy", "upload", "screens", "code_values", "statuses", "imagery"])
 def test_no_seed_statement_renders_as_all_nulls(revision, request):
     """The regression. `VALUES (NULL` is the signature of an unrenderable
     parameter list, and the SQL it produces is wrong rather than broken."""
@@ -164,3 +169,14 @@ def test_the_status_seed_is_ordered_by_the_workflow_and_not_alphabetically(statu
     """`sort_order` is what makes a status facet read like the life of a case."""
     assert "'case_status', 'raised', 'Complaint Filed', 'शिकायत दर्ज', NULL, 1)" in statuses
     assert "'case_status', 'rejected', 'Rejected', 'अस्वीकृत', NULL, 11)" in statuses
+
+
+def test_the_imagery_permissions_render_as_idempotent_literals(imagery):
+    """Two permissions, seven grants, each skippable, and a revision bump."""
+    assert imagery.count("INSERT INTO icms_permission ") == 2
+    assert imagery.count("INSERT INTO icms_role_permission ") == 7
+    assert imagery.count("ON CONFLICT DO NOTHING") == 9
+    assert "'field-surveyor', 'imagery.read'" in imagery
+    assert "'field-surveyor', 'imagery.write'" not in imagery
+    assert "'public'" not in imagery
+    assert "UPDATE icms_policy_revision SET revision = revision + 1" in imagery

@@ -43,11 +43,22 @@ async def test_a_prefix_of_the_token_is_not_enough(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_unset_token_disables_the_check(monkeypatch):
-    """Right for a single-user local run against a loopback port. The service
-    warns at startup when it is unset, because it is wrong anywhere else."""
+    """Right for a single-user local run against a loopback port, and only
+    there: ADA_ENV=local."""
     monkeypatch.setattr(security.settings, "ml_service_token", "")
+    monkeypatch.setattr(security.settings, "ada_env", "local")
     await call("")
     await call("anything at all")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env", ["production", "staging"])
+async def test_an_unset_token_outside_local_refuses_every_call(monkeypatch, env):
+    monkeypatch.setattr(security.settings, "ml_service_token", "")
+    monkeypatch.setattr(security.settings, "ada_env", env)
+    with pytest.raises(HTTPException) as caught:
+        await call("")
+    assert caught.value.status_code == 503
 
 
 def test_the_comparison_is_constant_time():

@@ -33,10 +33,16 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentSettings, Keycloak, Otp, Sms, Throttle
-from app.keycloak import DirectoryUnavailable, RefreshRejected, SubjectNotFound
+from app.keycloak import (
+    DirectoryUnavailable,
+    OtpNotPermitted,
+    RefreshRejected,
+    SubjectNotFound,
+)
 from app.otp import VerifyOutcome
 from app.sms.base import SmsError
 from app.store.base import StoreError
@@ -52,6 +58,18 @@ router = APIRouter(prefix="/v1/auth", tags=["authentication"])
 # character, and accepting several spellings here would mean a number that
 # authenticates through one spelling and not another.
 _PHONE = Field(..., min_length=10, max_length=15, pattern=r"^\d+$")
+
+# One body for every refused role, naming none of them.
+def otp_not_permitted_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={
+            "error": "otp_not_permitted_for_role",
+            "detail": "This account cannot sign in with a one-time code. "
+            "Use the standard sign-in instead.",
+        },
+    )
+
 
 _GENERIC_REQUEST_RESPONSE = {
     "message": "If this number is registered, a code has been sent."
@@ -222,6 +240,8 @@ async def verify_otp(
 
     try:
         tokens = await keycloak.exchange_for_subject(result.subject_id)
+    except OtpNotPermitted:
+        return otp_not_permitted_response()
     except DirectoryUnavailable as exc:
         # The code has already been spent at this point, deliberately: replaying
         # it after a failed exchange would be a second chance at a credential

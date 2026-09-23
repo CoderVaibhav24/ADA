@@ -22,9 +22,9 @@ from rio_tiler.io import Reader
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..deps import current_user_id, get_owned_project
+from ..deps import current_user_id, get_owned_project, require_imagery
 
-router = APIRouter(prefix="/tiles", tags=["tiles"])
+router = APIRouter(prefix="/tiles", tags=["tiles"], dependencies=[Depends(require_imagery)])
 
 # Change-heat colormap: transparent below threshold, amber->red ramp above.
 _MASK_COLORMAP: dict[int, tuple[int, int, int, int]] = {}

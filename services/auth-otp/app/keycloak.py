@@ -81,6 +81,10 @@ class SubjectNotFound(Exception):
     """No enabled account carries that phone number."""
 
 
+class OtpNotPermitted(Exception):
+    """The subject holds a realm role that may not sign in by one-time code."""
+
+
 class RefreshRejected(Exception):
     """Keycloak rejected the refresh token outright. The client should log out."""
 
@@ -258,7 +262,11 @@ class KeycloakGateway:
         infra/compose/docker-compose.yml; the failure when either is missing is a 400
         unsupported grant or a 403 "Client not allowed to exchange", and both are
         surfaced verbatim below rather than flattened into a generic error.
+
+        Raises OtpNotPermitted, before anything is minted, when the subject
+        holds any role in `otp_denied_roles`.
         """
+        await self._refuse_denied_roles(subject_id)
         subject_token = await self._service_token()
 
         data = {
@@ -295,6 +303,39 @@ class KeycloakGateway:
             )
 
         return _tokens_from(response.json())
+
+    # Effective realm roles (groups and composites included); fails closed.
+    async def _refuse_denied_roles(self, subject_id: str) -> None:
+        denied = {role for role in self._settings.otp_denied_roles if role}
+        if not denied:
+            return
+        token = await self._service_token()
+        url = f"{self._settings.admin_users_url}/{subject_id}/role-mappings/realm/composite"
+        try:
+            response = await self._client.get(
+                url, headers={"Authorization": f"Bearer {token}"}
+            )
+        except httpx.HTTPError as exc:
+            raise DirectoryUnavailable(f"Keycloak admin API unreachable: {exc}") from exc
+
+        if response.status_code >= 400:
+            if response.status_code in (401, 403):
+                self._forget_service_token()
+            raise DirectoryUnavailable(
+                f"Keycloak returned {response.status_code} for a role lookup; "
+                "OTP sign-in is refused until the subject's roles can be read"
+            )
+
+        document = response.json()
+        roles = {
+            entry.get("name")
+            for entry in (document if isinstance(document, list) else [])
+            if isinstance(entry, dict)
+        }
+        held = sorted(roles & denied)
+        if held:
+            logger.warning("otp_refused_for_role", subject_id=subject_id, roles=held)
+            raise OtpNotPermitted(subject_id)
 
     async def refresh(self, refresh_token: str) -> UserTokens:
         """Exchange a refresh token for a new pair.

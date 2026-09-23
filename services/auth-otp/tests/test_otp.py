@@ -135,7 +135,9 @@ async def test_a_missing_hmac_key_is_refused_outside_local_development(
 async def test_local_development_issues_the_fixed_code_and_accepts_anything(
     store: MemoryKeyValueStore,
 ):
-    settings = make_settings(env="local", otp_hmac_key="", dev_otp="123456")
+    settings = make_settings(
+        env="local", allow_otp_dev_bypass=True, otp_hmac_key="", dev_otp="123456"
+    )
     service = OtpService(settings, store)
 
     code = await service.issue(PHONE, SUBJECT)

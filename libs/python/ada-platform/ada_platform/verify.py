@@ -201,10 +201,32 @@ class JWKSCache:
 
 
 class TokenVerifier:
-    def __init__(self, issuer: str, jwks: JWKSCache, *, leeway_seconds: int = 10) -> None:
+    """Signature, issuer and lifetime, then what the token is FOR.
+
+    require_typ: Keycloak stamps access tokens "Bearer" and ID tokens "ID"; an
+    ID token is signed by the same key and must not pass as a session.
+    allowed_azp: the clients whose tokens this application accepts (azp, or
+    client_id when azp is absent). None accepts any client in the realm.
+    reject_service_accounts: refuse client-credentials tokens, whose
+    preferred_username is "service-account-<client>" (as ada-notify checks).
+    """
+
+    def __init__(
+        self,
+        issuer: str,
+        jwks: JWKSCache,
+        *,
+        leeway_seconds: int = 10,
+        require_typ: str | None = "Bearer",
+        allowed_azp: frozenset[str] | None = None,
+        reject_service_accounts: bool = False,
+    ) -> None:
         self._issuer = issuer.rstrip("/")
         self._jwks = jwks
         self._leeway = leeway_seconds
+        self._require_typ = require_typ
+        self._allowed_azp = frozenset(allowed_azp) if allowed_azp is not None else None
+        self._reject_service_accounts = reject_service_accounts
 
     def verify(self, token: str) -> Principal:
         try:
@@ -250,13 +272,21 @@ class TokenVerifier:
         except jwt.PyJWTError as exc:
             raise ADAAuthError(f"invalid:{type(exc).__name__}") from exc
 
-        azp = claims.get("azp") or claims.get("client_id") or ""
+        if self._require_typ is not None and claims.get("typ") != self._require_typ:
+            raise ADAAuthError(f"typ_rejected:{claims.get('typ')}")
 
-        return Principal(
+        azp = str(claims.get("azp") or claims.get("client_id") or "")
+        if self._allowed_azp is not None and azp not in self._allowed_azp:
+            raise ADAAuthError(f"azp_rejected:{azp}")
+
+        principal = Principal(
             subject=str(claims["sub"]),
-            azp=str(azp),
+            azp=azp,
             scopes=frozenset(str(claims.get("scope", "")).split()),
             username=str(claims.get("preferred_username", "")),
             email=str(claims.get("email", "")),
             claims=claims,
         )
+        if self._reject_service_accounts and principal.is_service_account:
+            raise ADAAuthError("service_account_rejected")
+        return principal

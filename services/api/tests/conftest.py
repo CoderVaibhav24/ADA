@@ -175,6 +175,9 @@ def principal() -> Principal:
         scopes=frozenset({"openid", "profile", "email"}),
         username="officer",
         email="officer@pcsmcpl.net",
+        # The imagery routers require imagery.read / imagery.write, which the
+        # project lead holds; tests/test_security_hardening.py covers the rest.
+        claims={"realm_access": {"roles": ["ada-project-lead", "offline_access"]}},
     )
 
 
@@ -519,17 +522,33 @@ def events(db):
 # code seed in that state, which is what keeps every other suite unchanged.
 
 
-def policy_seed():
-    """Migration 0003's literals, loaded as data rather than restated here."""
+def _load_revision(name: str):
     import importlib.util
 
     path = (
         Path(__file__).resolve().parents[3]
-        / "libs/python/ada-core/ada_core/alembic/versions/0003_policy_tables.py"
+        / "libs/python/ada-core/ada_core/alembic/versions" / f"{name}.py"
     )
-    spec = importlib.util.spec_from_file_location("icms_policy_seed_0003", path)
+    spec = importlib.util.spec_from_file_location(f"icms_policy_seed_{name}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+# Revisions after 0003 that add permissions and grants, applied in order.
+_POLICY_ADDENDA = ("0008_imagery_permissions",)
+
+
+def policy_seed():
+    """Migration 0003's literals plus later grant revisions, loaded as data."""
+    module = _load_revision("0003_policy_tables")
+    module.PERMISSIONS = list(module.PERMISSIONS)
+    module.GRANTS = {role: list(codes) for role, codes in module.GRANTS.items()}
+    for name in _POLICY_ADDENDA:
+        addendum = _load_revision(name)
+        module.PERMISSIONS.extend(addendum.PERMISSIONS)
+        for role, codes in addendum.GRANTS.items():
+            module.GRANTS.setdefault(role, []).extend(codes)
     return module
 
 

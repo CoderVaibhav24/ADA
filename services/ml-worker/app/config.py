@@ -13,9 +13,11 @@ backend, so an existing .env keeps working.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from ada_core import ROOT_DIR, CoreSettings
 from ada_core.database import configure_engine
+from pydantic import field_validator, model_validator
 
 
 class Settings(CoreSettings):
@@ -29,10 +31,30 @@ class Settings(CoreSettings):
     service_name: str = "ada-ml"
     log_level: str = "INFO"
 
-    # Shared secret ada-api presents on X-ADA-Service-Token. Empty disables the
-    # check — right for a single-user local run against a loopback port, wrong
-    # anywhere the network is shared, so startup warns when it is unset.
+    # Production unless said otherwise; compose (local development) sets local.
+    ada_env: Literal["local", "staging", "production"] = "production"
+
+    # Shared secret ada-api presents on X-ADA-Service-Token. Empty is accepted
+    # only with ADA_ENV=local (a single-user loopback run); anywhere else the
+    # settings refuse to load, so the service does not start with an open door.
     ml_service_token: str = ""
+
+    # An empty ADA_ENV (as a copied .env.example has it) means "not said", which
+    # is production — never a validation error, never local.
+    @field_validator("ada_env", mode="before")
+    @classmethod
+    def _blank_env_is_production(cls, value: object) -> object:
+        return "production" if value is None or str(value).strip() == "" else value
+
+    @model_validator(mode="after")
+    def _require_service_token_outside_local(self) -> Settings:
+        if not self.ml_service_token and self.ada_env != "local":
+            raise ValueError(
+                f"ML_SERVICE_TOKEN is empty and ADA_ENV={self.ada_env!r}. Outside local "
+                "development ada-ml must authenticate its caller; set ML_SERVICE_TOKEN "
+                "(the same value ada-api has) or ADA_ENV=local for a dev stack."
+            )
+        return self
 
     # --- notifications -------------------------------------------------------
     #

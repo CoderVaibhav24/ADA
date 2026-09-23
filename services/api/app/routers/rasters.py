@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 
 from ..clients import ml as ml_client
 from ..config import settings
-from ..deps import current_user_id, get_owned_project
+from ..deps import current_user_id, get_owned_project, require_imagery
 from ..schemas import RasterOut
 
 log = logging.getLogger("ada.rasters")
-router = APIRouter(tags=["rasters"])
+router = APIRouter(tags=["rasters"], dependencies=[Depends(require_imagery)])
 
 
 # --- Why every endpoint in this package is `def`, not `async def` -------------

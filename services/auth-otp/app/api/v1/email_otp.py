@@ -36,9 +36,10 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 
+from app.api.v1.otp import otp_not_permitted_response
 from app.dependencies import CurrentSettings, Email, Keycloak, Otp, Throttle
 from app.email.base import EmailError
-from app.keycloak import DirectoryUnavailable, SubjectNotFound
+from app.keycloak import DirectoryUnavailable, OtpNotPermitted, SubjectNotFound
 from app.otp import EMAIL, VerifyOutcome
 from app.store.base import StoreError
 from app.throttle import Throttled
@@ -203,6 +204,8 @@ async def verify_email_otp(
 
     try:
         tokens = await keycloak.exchange_for_subject(result.subject_id)
+    except OtpNotPermitted:
+        return otp_not_permitted_response()
     except DirectoryUnavailable as exc:
         # The code has already been spent at this point, deliberately: replaying
         # it after a failed exchange would be a second chance at a credential

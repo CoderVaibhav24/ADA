@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from app.config import Settings
 
@@ -70,9 +71,33 @@ def test_notifications_are_off_by_default():
 
 
 def test_the_service_token_is_empty_by_default():
-    """Empty disables the check, which is right for a loopback-only local run.
-    main.py warns at startup so it cannot be forgotten anywhere else."""
+    """Empty is a default only a local run may keep; see the tests below."""
     assert Settings.model_fields["ml_service_token"].default == ""
+
+
+def test_the_environment_defaults_to_production():
+    assert Settings.model_fields["ada_env"].default == "production"
+
+
+@pytest.mark.parametrize("env", ["production", "staging"])
+def test_an_empty_service_token_outside_local_refuses_to_load(env):
+    with pytest.raises(ValidationError, match="ML_SERVICE_TOKEN"):
+        make(ml_service_token="", ada_env=env)
+
+
+def test_an_empty_service_token_with_no_env_refuses_to_load(monkeypatch):
+    monkeypatch.delenv("ADA_ENV", raising=False)
+    monkeypatch.setenv("ML_SERVICE_TOKEN", "")
+    with pytest.raises(ValidationError, match="ADA_ENV='production'"):
+        make(_env_file=None)
+
+
+def test_an_empty_service_token_is_allowed_locally():
+    assert make(ml_service_token="", ada_env="local").ml_service_token == ""
+
+
+def test_a_set_service_token_loads_in_production():
+    assert make(ml_service_token="s3cret", ada_env="production").ada_env == "production"
 
 
 def test_the_ports_do_not_collide_with_the_other_services():
@@ -98,3 +123,7 @@ def test_unknown_variables_are_ignored(monkeypatch):
     monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.test/realms/pcsmcpl")
     monkeypatch.setenv("ADA_OTP_HMAC_KEY", "irrelevant")
     make()  # must not raise
+
+
+def test_a_blank_ada_env_means_production():
+    assert make(ada_env="", ml_service_token="s3cret").ada_env == "production"

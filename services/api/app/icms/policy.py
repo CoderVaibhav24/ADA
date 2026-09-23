@@ -55,14 +55,15 @@ _NOTIFY = sa.text("SELECT pg_notify('icms_policy', :payload)")
 # workflow.AMENDABLE_ROLES; the moment it exists the grant table governs.
 AMEND_PERMISSION = "case.amend"
 
-# The code side of the RBAC seed, mirroring 0003_policy_tables.py. A test asserts
+# The code side of the RBAC seed, mirroring 0003_policy_tables.py plus
+# 0008_imagery_permissions.py. A test asserts
 # the two still agree, so a grant changed in one place and not the other fails
 # the build instead of behaving differently on an unmigrated database.
 PERMISSIONS: tuple[str, ...] = (
     "reference.read", "zone.read", "zone.manage", "zone_assignment.read",
     "zone_assignment.manage", "case.read", "case.export", "inspection.read",
     "evidence.read", "notice.read", "dashboard.read", "policy.read",
-    "policy.manage", "user.read", "user.manage",
+    "policy.manage", "user.read", "user.manage", "imagery.read", "imagery.write",
 )
 
 DEFAULT_GRANTS: Mapping[str, frozenset[str]] = MappingProxyType({
@@ -78,14 +79,15 @@ DEFAULT_GRANTS: Mapping[str, frozenset[str]] = MappingProxyType({
     "pcs-nodal-officer": frozenset({
         "reference.read", "zone.read", "zone_assignment.read", "case.read",
         "case.export", "inspection.read", "evidence.read", "notice.read",
-        "dashboard.read",
+        "dashboard.read", "imagery.read", "imagery.write",
     }),
     "field-surveyor": frozenset({
         "reference.read", "zone.read", "case.read", "inspection.read", "evidence.read",
+        "imagery.read",
     }),
     "ada-project-lead": frozenset({
         "reference.read", "zone.read", "case.read", "case.export", "inspection.read",
-        "evidence.read", "notice.read", "dashboard.read",
+        "evidence.read", "notice.read", "dashboard.read", "imagery.read", "imagery.write",
     }),
     "public": frozenset(),
 })

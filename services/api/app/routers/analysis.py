@@ -12,10 +12,10 @@ from sqlalchemy.orm import Session
 from .. import bbox as bbox_rules
 from ..analysis_schemas import ChangeFeatureCollection
 from ..clients import ml as ml_client
-from ..deps import current_user_id, get_owned_project
+from ..deps import current_user_id, get_owned_project, require_imagery
 from ..schemas import AnalysisCreate, AnalysisOut, PolygonReview, PolygonReviewOut
 
-router = APIRouter(tags=["analysis"])
+router = APIRouter(tags=["analysis"], dependencies=[Depends(require_imagery)])
 
 # The detection panel stops at 200 rows and the map draws the rest; this is the
 # ceiling on one fetch, not on a run. A client wanting more sends an offset.

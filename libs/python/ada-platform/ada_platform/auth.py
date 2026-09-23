@@ -54,6 +54,9 @@ class ADAAuth:
         leeway_seconds: int = 10,
         timeout_seconds: float = 5.0,
         client: httpx.Client | None = None,
+        require_typ: str | None = "Bearer",
+        allowed_azp: frozenset[str] | None = None,
+        reject_service_accounts: bool = False,
     ) -> None:
         issuer = issuer or os.environ.get("ADA_ISSUER", "")
         if not issuer:
@@ -74,7 +77,14 @@ class ADAAuth:
             internal_issuer_url=internal_issuer_url
             or os.environ.get("ADA_INTERNAL_ISSUER_URL"),
         )
-        self._verifier = TokenVerifier(self.issuer, self._jwks, leeway_seconds=leeway_seconds)
+        self._verifier = TokenVerifier(
+            self.issuer,
+            self._jwks,
+            leeway_seconds=leeway_seconds,
+            require_typ=require_typ,
+            allowed_azp=allowed_azp,
+            reject_service_accounts=reject_service_accounts,
+        )
 
     # --- framework-free ------------------------------------------------------
 

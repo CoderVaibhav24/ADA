@@ -3,10 +3,10 @@ from ada_core.models import Project
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..deps import current_user_id, get_owned_project
+from ..deps import current_user_id, get_owned_project, require_imagery
 from ..schemas import ProjectCreate, ProjectOut
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(require_imagery)])
 
 
 @router.post("", response_model=ProjectOut)

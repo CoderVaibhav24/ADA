@@ -3,10 +3,10 @@ from ada_core.models import RedZone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..deps import current_user_id, get_owned_project
+from ..deps import current_user_id, get_owned_project, require_imagery
 from ..schemas import RedZoneCreate, RedZoneOut
 
-router = APIRouter(tags=["red-zones"])
+router = APIRouter(tags=["red-zones"], dependencies=[Depends(require_imagery)])
 
 
 @router.post("/projects/{project_id}/red-zones", response_model=RedZoneOut)

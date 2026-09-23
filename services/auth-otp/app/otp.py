@@ -130,9 +130,9 @@ class OtpService:
 
     def _generate(self) -> str:
         if self._settings.dev_bypass_allowed:
-            # A fixed, known code so a developer or a staging tester can log in
-            # without an SMS provider. Never reachable in production — see
-            # Settings.dev_bypass_allowed, which ignores the flag there.
+            # A fixed, known code so a developer can log in without an SMS
+            # provider. Local only, opt-in, localhost issuer only — see
+            # Settings.dev_bypass_allowed.
             return self._settings.dev_otp
         digits = self._settings.otp_digits
         # secrets, not random: the code is a credential, and random's Mersenne
