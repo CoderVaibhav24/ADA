@@ -115,7 +115,6 @@ docs
 
 services/ml-worker/scripts
 services/ml-worker/training
-/scripts
 .claude
 
 token.git
