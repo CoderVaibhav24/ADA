@@ -8,7 +8,7 @@ function infraEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   let text: string;
   try {
-    text = readFileSync(resolve(__dirname, "../../infra/compose/.env"), "utf8");
+    text = readFileSync(resolve(import.meta.dirname, "../../infra/compose/.env"), "utf8");
   } catch {
     return out;
   }
@@ -33,7 +33,7 @@ export default defineConfig({
     entries: ["index.html", "design-system.html"],
   },
   resolve: {
-    alias: { "@": resolve(__dirname, "./src") },
+    alias: { "@": resolve(import.meta.dirname, "./src") },
     // Belt-and-braces. react/react-dom are pinned to one version by the root
     // package.json overrides, so only one copy is installed; two copies load two
     // hook dispatchers and every render dies on "Cannot read properties of null
@@ -44,8 +44,8 @@ export default defineConfig({
     ? {
         rollupOptions: {
           input: {
-            main: resolve(__dirname, "index.html"),
-            designSystem: resolve(__dirname, "design-system.html"),
+            main: resolve(import.meta.dirname, "index.html"),
+            designSystem: resolve(import.meta.dirname, "design-system.html"),
           },
         },
       }

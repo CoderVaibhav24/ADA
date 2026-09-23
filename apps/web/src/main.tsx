@@ -35,7 +35,8 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(rootEl).render(
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      {/* v7 behaviour opted in now, so the v6 -> v7 upgrade changes nothing. */}
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </BrowserRouter>
     </QueryClientProvider>
