@@ -1,0 +1,36 @@
+{
+  "name": "ada-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "frontend",
+    "app",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @ada/shared",
+    "dev": "npm run build:shared && npm run dev -w frontend",
+    "build": "npm run build:shared && npm run build -w frontend",
+    "build:app": "npm run build:shared && npm run build -w app",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2"
+  },
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "@types/react": "~19.2.18",
+    "@types/react-dom": "~19.2.7",
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    }
+  }
+}

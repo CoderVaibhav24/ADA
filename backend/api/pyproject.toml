@@ -44,6 +44,8 @@ ignore = ["S101"]  # assert is how pytest works
 # rewriting twenty-seven working endpoint signatures to satisfy a linter is
 # risk without benefit.
 "app/deps.py" = ["B008"]
+"app/security.py" = ["B008"]
 "app/routers/*.py" = ["B008"]
+"app/icms/*.py" = ["B008"]
 "app/api/v1/*.py" = ["B008"]
 "tests/*" = ["S101", "S105", "S106"]  # asserts and fake credentials are the point

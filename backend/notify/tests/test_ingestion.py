@@ -237,7 +237,7 @@ async def test_ingestion_is_under_200ms(http: httpx.AsyncClient, notify_url, alp
         # Known to the enum, not deliverable in v0.1. Refused at the boundary
         # rather than accepted and silently never sent.
         ("channels", ["sms"]),
-        ("channels", ["email", "push"]),
+        ("channels", ["email", "inapp"]),
         ("idempotency_key", "short"),
         ("idempotency_key", "  padded-key-value  "),
     ],

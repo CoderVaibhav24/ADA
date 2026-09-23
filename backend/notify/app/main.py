@@ -26,7 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.v1 import health, notifications, templates
+from app.api.v1 import health, me, notifications, templates
 from app.config import get_settings
 from app.db import dispose_engine, get_engine
 from app.logging_config import configure_logging
@@ -258,6 +258,7 @@ def _error_code(status_code: int) -> str:
 app.include_router(health.router)
 app.include_router(notifications.router)
 app.include_router(templates.router)
+app.include_router(me.router)
 
 
 @app.get("/", include_in_schema=False)

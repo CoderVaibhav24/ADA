@@ -1,0 +1,24 @@
+# Only the frontend image builds from the repository root (infra/docker-compose.yml);
+# without this the context is the whole repo including .venv, .git and data/.
+.git
+.venv
+.ruff_cache
+node_modules
+**/node_modules
+**/dist
+**/.expo
+**/.vite
+**/.turbo
+data
+docs
+backend
+infra
+Makefile
+*.pdf
+
+# app/ is in the npm workspace, so its manifest has to be in the context for
+# `npm ci` to validate the lockfile — none of its source is built here.
+app/*
+!app/package.json
+
+frontend/keycloak-theme

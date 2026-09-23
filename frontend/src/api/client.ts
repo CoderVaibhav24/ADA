@@ -15,12 +15,28 @@ import type { Polygon } from "geojson";
 
 export class ApiError extends Error {
   readonly status: number;
+  /**
+   * The `X-Request-ID` the server put on the response, when there was one.
+   *
+   * These older routes answer FastAPI's `{"detail": ...}`, which carries no
+   * correlation id in the BODY the way the ICMS envelope does — but
+   * RequestIdMiddleware puts one on the header of every response and CORS
+   * exposes it. Reading it here is the difference between "it broke" and a
+   * support call somebody can answer from the log.
+   */
+  readonly requestId: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, requestId: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.requestId = requestId;
   }
+}
+
+/** The correlation id, or null on a response that never reached the server. */
+function requestIdOf(res: Response): string | null {
+  return res.headers.get("X-Request-ID");
 }
 
 function sessionExpired(): void {
@@ -43,7 +59,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (res.status === 401) {
     sessionExpired();
-    throw new ApiError(401, "Session expired");
+    throw new ApiError(401, "Session expired", requestIdOf(res));
   }
   if (!res.ok) {
     let detail = res.statusText;
@@ -54,7 +70,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       }
     } catch {
     }
-    throw new ApiError(res.status, `${res.status}: ${detail}`);
+    throw new ApiError(res.status, `${res.status}: ${detail}`, requestIdOf(res));
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -149,9 +165,11 @@ export async function download(path: string, filename: string): Promise<void> {
   const res = await fetch(path, { headers: await authHeader() });
   if (res.status === 401) {
     sessionExpired();
-    throw new ApiError(401, "Session expired");
+    throw new ApiError(401, "Session expired", requestIdOf(res));
   }
-  if (!res.ok) throw new ApiError(res.status, `${res.status}: ${res.statusText}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, `${res.status}: ${res.statusText}`, requestIdOf(res));
+  }
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -175,7 +193,9 @@ export async function download(path: string, filename: string): Promise<void> {
  */
 export async function objectUrl(path: string): Promise<string> {
   const res = await fetch(path, { headers: await authHeader() });
-  if (!res.ok) throw new ApiError(res.status, `${res.status}: ${res.statusText}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, `${res.status}: ${res.statusText}`, requestIdOf(res));
+  }
   return URL.createObjectURL(await res.blob());
 }
 

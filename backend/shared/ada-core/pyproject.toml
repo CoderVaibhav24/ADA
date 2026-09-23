@@ -9,6 +9,9 @@ requires-python = ">=3.12"
 # wheels into the API image for the sake of three table definitions.
 dependencies = [
   "sqlalchemy>=2.0",
+  # Alembic owns the schema — ada_core/alembic. It is a hard dependency rather
+  # than an extra because run_migrations() imports it on every ada-ml boot.
+  "alembic>=1.13",
   "psycopg2-binary>=2.9",
   "pydantic>=2.9",
   "pydantic-settings>=2.6",
@@ -20,6 +23,22 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["ada_core*"]
+
+# The migration chain is executed at boot, so it is part of the package rather
+# than a directory next to it: ada-ml applies migrations inside a container that
+# has no copy of this repository. Without these globs the scripts are missing
+# from the wheel, and the failure is "Path doesn't exist: .../alembic" at
+# startup rather than at build time.
+#
+# versions/*.py is listed as data rather than discovered as a package on
+# purpose — an __init__.py in a versions directory is a file Alembic then tries
+# to read as a revision.
+[tool.setuptools.package-data]
+ada_core = [
+  "alembic/*.py",
+  "alembic/*.mako",
+  "alembic/versions/*.py",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -37,3 +56,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic writes these. Rewrapping a generated migration by hand makes the next
+# `revision --autogenerate` produce a diff against our own formatting rather
+# than against the schema, which is noise in the one file that has to be read
+# literally.
+"ada_core/alembic/versions/*" = ["E501"]

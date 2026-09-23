@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconKey } from "@/lib/icons";
 
-import { placeholderLabelsEn } from "./labels.en";
+import { usePlaceholderLabels } from "@/i18n/labels";
 import { HOME_PATH } from "./paths";
 
 export interface PlaceholderProps {
@@ -19,7 +19,7 @@ export default function Placeholder({
   icon = "feedback.info",
 }: PlaceholderProps) {
   const location = useLocation();
-  const labels = placeholderLabelsEn;
+  const labels = usePlaceholderLabels();
 
   return (
     <section className="flex min-h-[55vh] flex-col items-center justify-center gap-4 px-4 py-16 text-center">

@@ -63,7 +63,7 @@ Then `npm run icons:build`. Every icon in the app changes.
 **One icon** — edit its entry:
 
 ```ts
-"nav.report": { name: "chart-pie", per: { tabler: "chart-donut" } },
+"nav.report": { name: "chart-line", per: { tabler: "chart-line", "material-symbols": "monitoring" } },
 ```
 
 **Adding a new set** — `npm i -D @iconify-json/<set>`, add it to `ICON_SETS` in

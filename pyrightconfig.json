@@ -1,0 +1,25 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "standard",
+  "include": ["backend", "infra/scripts", "app"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "**/alembic/versions",
+    "data",
+    "frontend",
+    "docs"
+  ],
+  "executionEnvironments": [
+    { "root": "backend/api",    "extraPaths": ["backend/shared/ada-core", "backend/shared/ada-platform-sdk"] },
+    { "root": "backend/auth",   "extraPaths": ["backend/shared/ada-core", "backend/shared/ada-platform-sdk"] },
+    { "root": "backend/ml",     "extraPaths": ["backend/shared/ada-core", "backend/shared/ada-platform-sdk"] },
+    { "root": "backend/notify", "extraPaths": ["backend/shared/ada-core", "backend/shared/ada-platform-sdk"] },
+    { "root": "backend/shared/ada-core" },
+    { "root": "backend/shared/ada-platform-sdk" },
+    { "root": "infra/scripts" }
+  ]
+}

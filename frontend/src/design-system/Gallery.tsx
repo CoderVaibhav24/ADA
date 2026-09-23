@@ -53,9 +53,12 @@ import { AppShell, AppShellNavItem } from "@/components/icms/AppShell";
 import { Footer } from "@/components/icms/Footer";
 import { PriorityChip, StatusChip } from "@/components/icms/StatusChip";
 import { RegisterPagination } from "@/components/icms/RegisterPagination";
-import { paginationLabelsEn } from "@/components/icms/pagination-labels.en";
 import { PRIORITY_VALUES, STATUS_META, STATUS_VALUES, type PriorityValue, type StatusValue } from "@/components/icms/status";
-import { PRIORITY_LABELS_EN, STATUS_LABELS_EN } from "@/components/icms/status-labels.en";
+import {
+  usePaginationLabels,
+  usePriorityLabels,
+  useStatusLabels,
+} from "@/i18n/labels";
 import { EmptyState, ErrorState, InlineSpinner, LoadingState, NoResultsState, TableLoadingRows } from "@/components/icms/states";
 import { Icon, ICON_KEYS, resolveIconId, useIconSet, type IconKey } from "@/lib/icons";
 
@@ -109,6 +112,11 @@ const chartConfig = {
  * that nothing here carries a baked-in value.
  */
 export function Gallery() {
+  // The showcase reads the live bundle, so switching the app to Hindi shows the
+  // Hindi chips here too rather than a second, drifting English dictionary.
+  const statusLabels = useStatusLabels();
+  const priorityLabels = usePriorityLabels();
+  const paginationLabels = usePaginationLabels();
   const activeSet = useIconSet();
   const [page, setPage] = useState(3);
   const [pageSize, setPageSize] = useState(10);
@@ -417,7 +425,7 @@ export function Gallery() {
           <Row label="All statuses">
             {STATUS_VALUES.map((s) => (
               <StatusChip key={s} status={s} uppercase>
-                {STATUS_LABELS_EN[s]}
+                {statusLabels[s]}
               </StatusChip>
             ))}
           </Row>
@@ -425,7 +433,7 @@ export function Gallery() {
           <Row label="Sizes">
             {(["sm", "md", "lg"] as const).map((size) => (
               <StatusChip key={size} status="overdue" size={size}>
-                {STATUS_LABELS_EN.overdue}
+                {statusLabels.overdue}
               </StatusChip>
             ))}
           </Row>
@@ -436,7 +444,7 @@ export function Gallery() {
           >
             {PRIORITY_VALUES.map((p) => (
               <PriorityChip key={p} priority={p}>
-                {PRIORITY_LABELS_EN[p]}
+                {priorityLabels[p]}
               </PriorityChip>
             ))}
           </Row>
@@ -491,7 +499,7 @@ export function Gallery() {
                 total={248}
                 onPageChange={setPage}
                 onPageSizeChange={setPageSize}
-                labels={paginationLabelsEn}
+                labels={paginationLabels}
               />
             </div>
           </Row>
@@ -569,8 +577,6 @@ export function Gallery() {
             <div className="h-[28rem] w-full overflow-hidden rounded-lg border border-line-subtle">
               <AppShell
                 labels={{
-                  openNavigation: "Open navigation",
-                  closeNavigation: "Close navigation",
                   collapseNavigation: "Collapse navigation",
                   expandNavigation: "Expand navigation",
                   navigationLandmark: "Primary",
@@ -590,17 +596,6 @@ export function Gallery() {
                     <AppShellNavItem icon="nav.inspection" label="Inspection" />
                     <AppShellNavItem icon="nav.notice" label="Notice" />
                     <AppShellNavItem icon="nav.report" label="Report" />
-                  </div>
-                }
-                navFooter={
-                  <div className="flex items-center gap-2">
-                    <Avatar className="size-8">
-                      <AvatarFallback>JD</AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm">John Doe</p>
-                      <p className="truncate text-2xs text-status-success-fg">Online</p>
-                    </div>
                   </div>
                 }
                 header={
@@ -627,8 +622,8 @@ export function Gallery() {
                 }
               >
                 <p className="text-sm text-fg-muted">
-                  Page content. Narrow the window: below <code>lg</code> the rail moves
-                  into a sheet behind the menu button.
+                  Page content. Narrow the window: below <code>lg</code> the rail keeps
+                  its 82px icon-only shape instead of disappearing behind a menu.
                 </p>
               </AppShell>
             </div>
@@ -818,12 +813,12 @@ export function Gallery() {
                       <TableCell className="tabular">{area}</TableCell>
                       <TableCell>
                         <PriorityChip priority={prio}>
-                          {PRIORITY_LABELS_EN[prio]}
+                          {priorityLabels[prio]}
                         </PriorityChip>
                       </TableCell>
                       <TableCell>
                         <StatusChip status={status} size="sm" uppercase>
-                          {STATUS_LABELS_EN[status]}
+                          {statusLabels[status]}
                         </StatusChip>
                       </TableCell>
                     </TableRow>

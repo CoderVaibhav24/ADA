@@ -34,6 +34,11 @@ export default defineConfig({
   },
   resolve: {
     alias: { "@": resolve(__dirname, "./src") },
+    // Belt-and-braces. react/react-dom are pinned to one version by the root
+    // package.json overrides, so only one copy is installed; two copies load two
+    // hook dispatchers and every render dies on "Cannot read properties of null
+    // (reading 'useEffect')". Keep this in case a workspace re-pins React.
+    dedupe: ["react", "react-dom"],
   },
   build: showcase
     ? {

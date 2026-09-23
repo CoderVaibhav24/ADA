@@ -117,7 +117,10 @@ export function DataTableColumnHeader({
         align === "end" && "flex-row-reverse",
       )}
     >
-      <span className="min-w-0 truncate">{header}</span>
+      {/* `truncate` sets white-space:nowrap, which makes the header text the
+          column's minimum width. Below `md` that is what pushes a three-column
+          register past a 360px screen, so there it wraps instead. */}
+      <span className="min-w-0 truncate max-md:whitespace-normal">{header}</span>
       <Icon
         name={
           direction === "asc"

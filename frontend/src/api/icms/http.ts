@@ -117,8 +117,13 @@ export async function icmsRequest(
   const search = query ? toSearchParams(query).toString() : "";
   const url = search ? `${path}?${search}` : path;
 
+  // A FormData body writes its own `multipart/form-data; boundary=…`. Naming a
+  // Content-Type here would overwrite it without the boundary, and the upload
+  // would reach the server unparseable.
+  const multipart = typeof FormData !== "undefined" && body instanceof FormData;
+
   const headers: Record<string, string> = { ...(await authHeader()) };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (body !== undefined && !multipart) headers["Content-Type"] = "application/json";
 
   let response: Response;
   try {
@@ -126,7 +131,12 @@ export async function icmsRequest(
       method,
       headers,
       signal,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : multipart
+            ? (body as FormData)
+            : JSON.stringify(body),
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "AbortError") throw cause;

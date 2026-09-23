@@ -30,7 +30,12 @@ from typing import Any
 
 import httpx
 
-from ada_platform.errors import ADAAuthError, ADAConfigError, ADAScopeError
+from ada_platform.errors import (
+    ADAAuthError,
+    ADAConfigError,
+    ADAScopeError,
+    JwksUnavailableError,
+)
 from ada_platform.verify import JWKSCache, Principal, TokenVerifier
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": 'Bearer realm="ada"'}
@@ -45,6 +50,7 @@ class ADAAuth:
         issuer: str | None = None,
         internal_issuer_url: str | None = None,
         jwks_cache_seconds: int = 3600,
+        jwks_hard_ttl_seconds: int = 86_400,
         leeway_seconds: int = 10,
         timeout_seconds: float = 5.0,
         client: httpx.Client | None = None,
@@ -64,6 +70,7 @@ class ADAAuth:
             self.issuer,
             self._client,
             cache_seconds=jwks_cache_seconds,
+            hard_ttl_seconds=jwks_hard_ttl_seconds,
             internal_issuer_url=internal_issuer_url
             or os.environ.get("ADA_INTERNAL_ISSUER_URL"),
         )
@@ -106,6 +113,10 @@ class ADAAuth:
                 )
             try:
                 return self.verify(credentials.credentials)
+            except JwksUnavailableError as exc:
+                # 503, not 401: the token may well be fine and we could not
+                # check it. A 401 would have the client discard a good token.
+                raise HTTPException(status_code=503, detail=exc.detail) from exc
             except ADAAuthError as exc:
                 # The reason is for a log; the caller is told only that the token
                 # is not acceptable. Telling an attacker which of 'unknown key'

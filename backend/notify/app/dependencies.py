@@ -8,6 +8,7 @@ code path by which a caller names the project it is acting as.
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 import structlog
@@ -120,6 +121,55 @@ async def get_project(
     return project
 
 
+user_bearer_scheme = HTTPBearer(
+    scheme_name="User token",
+    bearerFormat="JWT",
+    auto_error=False,
+    description="The signed-in user's own Keycloak access token (the field app's token).",
+)
+
+
+async def get_user_principal(
+    verifier: Annotated[TokenVerifier, Depends(get_verifier)],
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(user_bearer_scheme)
+    ] = None,
+) -> Principal:
+    return await get_principal(verifier, credentials)
+
+
+async def get_user_subject(
+    principal: Annotated[Principal, Depends(get_user_principal)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> uuid.UUID:
+    """The Keycloak sub of an end user calling /v1/me; machine tokens are refused."""
+    # An ID token is RS256 from the same issuer; only access tokens may call in.
+    if principal.claims.get("typ", "Bearer") != "Bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="An access token is required",
+            headers=_BEARER,
+        )
+    if principal.is_service_account:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint takes a user's token, not a service account's",
+        )
+    if principal.azp not in settings.user_clients:
+        logger.info("user_client_refused", azp=principal.azp)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Client '{principal.azp}' may not call user endpoints",
+        )
+    try:
+        return uuid.UUID(principal.subject)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Token subject is not a user id"
+        ) from exc
+
+
+CurrentUserSub = Annotated[uuid.UUID, Depends(get_user_subject)]
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 CurrentProject = Annotated[Project, Depends(get_project)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]

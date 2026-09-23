@@ -145,6 +145,13 @@ export type DataTableColumnMeta<TRow = unknown> = {
   exportValue?: (row: TRow) => string;
   /** Minimum width, so a horizontal scroll is honest rather than a squeeze. */
   minWidth?: string;
+  /**
+   * Which columns survive below `md`. `primary` stays in the table; everything
+   * else moves into the per-row record sheet. Default is `secondary`, so a
+   * register that declares nothing degrades to identity + actions rather than
+   * to a table 1,500px wide on a 360px phone.
+   */
+  priority?: "primary" | "secondary";
 };
 
 export type DataTableLabels = {
@@ -181,6 +188,13 @@ export type DataTableLabels = {
   facetSearchPlaceholder: string;
   facetNoResults: string;
   facetClear: string;
+  /* ---- narrow layout: the columns that did not fit --------------------- */
+  /** Header of the disclosure column below `md`. */
+  detailsColumn: string;
+  /** Accessible name of one row's disclosure button. Names the RECORD, not "more". */
+  openDetails: (id: string) => string;
+  detailsTitle: string;
+  detailsClose: string;
 };
 
 export type DataTableStatus = "pending" | "error" | "success";

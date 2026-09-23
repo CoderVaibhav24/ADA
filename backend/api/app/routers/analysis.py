@@ -5,14 +5,32 @@ from datetime import UTC, datetime
 
 from ada_core.database import get_db
 from ada_core.models import AnalysisJob, ChangePolygon, Raster
-from fastapi import APIRouter, Depends, HTTPException, Response
+from ada_core.validation import BBox
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
+from .. import bbox as bbox_rules
+from ..analysis_schemas import ChangeFeatureCollection
 from ..clients import ml as ml_client
 from ..deps import current_user_id, get_owned_project
 from ..schemas import AnalysisCreate, AnalysisOut, PolygonReview, PolygonReviewOut
 
 router = APIRouter(tags=["analysis"])
+
+# The detection panel stops at 200 rows and the map draws the rest; this is the
+# ceiling on one fetch, not on a run. A client wanting more sends an offset.
+DEFAULT_FEATURE_LIMIT = 1000
+MAX_FEATURE_LIMIT = 5000
+
+
+# A malformed or oversized extent is the caller's mistake, not a scan to attempt.
+def _parse_bbox(value: str | None) -> BBox | None:
+    if value is None:
+        return None
+    try:
+        return bbox_rules.parse(value)
+    except ValueError as exc:
+        raise HTTPException(400, f"bbox: {exc}") from exc
 
 
 def _centroid(geom: dict) -> tuple[float | None, float | None]:
@@ -96,17 +114,45 @@ def get_analysis(
     return _get_owned_job(job_id, db, user_id)
 
 
-@router.get("/analyses/{job_id}/features")
+@router.get("/analyses/{job_id}/features", response_model=ChangeFeatureCollection)
 def get_analysis_features(
     job_id: int,
+    limit: int = Query(DEFAULT_FEATURE_LIMIT, ge=1, le=MAX_FEATURE_LIMIT),
+    offset: int = Query(0, ge=0, le=1_000_000),
+    bbox: str | None = Query(
+        None, description="west,south,east,north in EPSG:4326, no wider than "
+                          f"{bbox_rules.MAX_SPAN_DEGREES} degrees a side."),
     user_id: str = Depends(current_user_id),
     db: Session = Depends(get_db),
 ):
+    """What the Change Detection screen draws its detection list from.
+
+    A run can produce thousands of polygons and this read used to return every
+    one of them — `.all()` with no limit, no offset and no extent, the one place
+    the project's "no unbounded map query" rule was still broken and the only
+    one of them on the server side. It is a window now, and `metadata.total` is
+    how many exist behind it, so a client can page honestly rather than guess
+    whether it already has everything.
+
+    The FeatureCollection shape is unchanged: `metadata` is additive and the
+    portal reads `features` alone today.
+    """
     _get_owned_job(job_id, db, user_id)
-    polys = db.query(ChangePolygon).filter(ChangePolygon.job_id == job_id).all()
+    query = db.query(ChangePolygon).filter(ChangePolygon.job_id == job_id)
+    box = _parse_bbox(bbox)
+    if box is not None:
+        query = query.filter(bbox_rules.intersects(
+            ChangePolygon.geometry, box, dialect=bbox_rules.dialect_of(db), geojson=True))
+
+    total = query.count()
+    polys = query.order_by(ChangePolygon.id).offset(offset).limit(limit).all()
     return {
         "type": "FeatureCollection",
         "features": [_as_feature(p) for p in polys],
+        "metadata": {
+            "count": len(polys), "total": total, "limit": limit, "offset": offset,
+            "bbox": [box.west, box.south, box.east, box.north] if box else None,
+        },
     }
 
 

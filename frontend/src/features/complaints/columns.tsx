@@ -16,24 +16,26 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import type { CaseRow } from "@/api/icms/cases";
+import { formatIstDate } from "@ada/shared/dates";
+import type { CaseRow, CaseStatus } from "@/api/icms/cases";
 import { DataTableRowActions } from "@/components/data-table/DataTable";
 import type { DataTableColumnMeta, RowAction } from "@/components/data-table/types";
-import type { ExportColumn } from "@/components/data-table/export-rows";
 import { PriorityChip, StatusChip } from "@/components/icms/StatusChip";
+import type { PriorityValue } from "@/components/icms/status";
+import type { ComplaintsLabels } from "@/i18n/labels";
 import { CASE_STATUS_META, toCaseStatus, toPriority } from "./caseStatus";
 import { parcelIdForExport, resolveParcelId } from "./parcelId";
-import {
-  CASE_PRIORITY_LABELS_EN,
-  CASE_STATUS_LABELS_EN,
-  PARCEL_KIND_LABELS_EN,
-  complaintsLabelsEn,
-} from "./labels.en";
 
-type Labels = typeof complaintsLabelsEn;
+type Labels = ComplaintsLabels;
 
 export type ComplaintColumnOptions = {
   labels: Labels;
+  /** The API's own status vocabulary, translated. See caseStatus.ts. */
+  statusLabels: Record<CaseStatus, string>;
+  priorityLabels: Record<PriorityValue, string>;
+  /** Keyed by `ParcelIdentity.kindKey`. */
+  parcelKindLabels: Record<string, string>;
+  /** BCP-47 tag, e.g. `en-IN` / `hi-IN-u-nu-latn`. Drives numbers and dates. */
   locale: string;
   onView: (row: CaseRow) => void;
   onAssign: (row: CaseRow) => void;
@@ -41,15 +43,6 @@ export type ComplaintColumnOptions = {
 
 function meta(value: DataTableColumnMeta<CaseRow>): DataTableColumnMeta<CaseRow> {
   return value;
-}
-
-function dateFormatter(locale: string): Intl.DateTimeFormat {
-  return new Intl.DateTimeFormat(locale, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kolkata",
-  });
 }
 
 function isoDate(value: string): string {
@@ -63,12 +56,13 @@ function areaText(row: CaseRow, labels: Labels, locale: string): string {
 
 export function buildComplaintColumns({
   labels,
+  statusLabels,
+  priorityLabels,
+  parcelKindLabels,
   locale,
   onView,
   onAssign,
 }: ComplaintColumnOptions): ColumnDef<CaseRow, unknown>[] {
-  const formatDate = dateFormatter(locale);
-
   return [
     {
       id: "case_ref",
@@ -77,6 +71,9 @@ export function buildComplaintColumns({
         sortKey: "case_ref",
         menuLabel: labels.columns.caseRef,
         alwaysVisible: true,
+        // Identity and state are what a register is scanned for, so they are the
+        // two that stay in the table at 360px; the rest is one tap away.
+        priority: "primary",
         minWidth: "8.5rem",
         exportValue: (row) => row.case_ref,
       }),
@@ -86,7 +83,9 @@ export function buildComplaintColumns({
           onClick={() => {
             onView(row.original);
           }}
-          className="rounded-xs text-start font-medium text-fg-link underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          // Wraps only below `md`, where the reference is competing with a status
+          // chip for 250px; the wide layout keeps it on one line.
+          className="rounded-xs text-start font-medium max-md:break-all text-fg-link underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           {row.original.case_ref}
         </button>
@@ -117,7 +116,7 @@ export function buildComplaintColumns({
                 alternates between a 14-character ULPIN and a village/khasra
                 pair, and reads as inconsistent data. */}
             <span className="text-2xs text-fg-faint">
-              {PARCEL_KIND_LABELS_EN[parcel.kindKey]}
+              {parcelKindLabels[parcel.kindKey]}
             </span>
           </span>
         );
@@ -226,7 +225,7 @@ export function buildComplaintColumns({
         // way back to the API, which validates against ('high','medium','low').
         return (
           <PriorityChip priority={priority} uppercase>
-            {CASE_PRIORITY_LABELS_EN[priority]}
+            {priorityLabels[priority]}
           </PriorityChip>
         );
       },
@@ -238,6 +237,7 @@ export function buildComplaintColumns({
       meta: meta({
         sortKey: "status",
         menuLabel: labels.columns.status,
+        priority: "primary",
         minWidth: "11rem",
         exportValue: (row) => row.status,
       }),
@@ -257,7 +257,7 @@ export function buildComplaintColumns({
           // from the nearest Figma value — see caseStatus.ts.
           <span data-case-status={status}>
             <StatusChip status={CASE_STATUS_META[status].chip} uppercase>
-              {CASE_STATUS_LABELS_EN[status]}
+              {statusLabels[status]}
             </StatusChip>
           </span>
         );
@@ -275,7 +275,7 @@ export function buildComplaintColumns({
       }),
       cell: ({ row }) => (
         <time dateTime={row.original.raised_at} className="text-fg-strong tabular">
-          {formatDate.format(new Date(row.original.raised_at))}
+          {formatIstDate(row.original.raised_at, locale)}
         </time>
       ),
     },
@@ -389,27 +389,3 @@ export function buildComplaintColumns({
 
 /** Columns hidden until the officer asks for them in the column menu. */
 export const COMPLAINT_DEFAULT_HIDDEN = ["zone_cd", "ulpin", "khasra_no", "stage_no"];
-
-/**
- * The export's projection: the VISIBLE columns, in their visible order.
- *
- * Built from the same definitions the grid renders, so a column the officer
- * switched off is absent from the file and one they switched on is in it. The
- * legacy export ignores both and writes the raw API field names.
- */
-export function exportColumnsFor(
-  columns: readonly ColumnDef<CaseRow, unknown>[],
-  hidden: readonly string[],
-): ExportColumn<CaseRow>[] {
-  const hiddenSet = new Set(hidden);
-  return columns
-    .filter((column) => column.id != null && column.id !== "actions" && !hiddenSet.has(column.id))
-    .map((column) => {
-      const columnMeta = column.meta as DataTableColumnMeta<CaseRow> | undefined;
-      return {
-        id: column.id ?? "",
-        header: typeof column.header === "string" ? column.header : (column.id ?? ""),
-        value: columnMeta?.exportValue ?? (() => ""),
-      };
-    });
-}

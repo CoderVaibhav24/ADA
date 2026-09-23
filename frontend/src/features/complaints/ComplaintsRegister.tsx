@@ -23,28 +23,36 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toIstDateKey } from "@ada/shared/dates";
 import type { CaseRow } from "@/api/icms/cases";
 import { CASE_DEFAULT_SORT } from "@/api/icms/cases";
 import { IcmsApiError } from "@/api/icms/http";
 import { DataTable } from "@/components/data-table/DataTable";
-import { exportRegisterCsv, toCsv } from "@/components/data-table/export-rows";
+import {
+  exportColumnsFor,
+  exportRegisterCsv,
+  saveCsv,
+  toCsv,
+} from "@/components/data-table/export-rows";
 import { useRegisterState } from "@/components/data-table/register-state";
 import { useSavedViews } from "@/components/data-table/saved-views";
 import type { BulkAction, FacetDef, RegisterState } from "@/components/data-table/types";
 import { EmptyState, ErrorState, NoResultsState } from "@/components/icms/states";
-import { paginationLabelsEn } from "@/components/icms/pagination-labels.en";
 import { PRIORITY_META, STATUS_META } from "@/components/icms/status";
 import { Button } from "@/components/ui/button";
+import { useFormats } from "@/i18n";
+import {
+  useCaseStatusLabels,
+  useComplaintsGridLabels,
+  useComplaintsLabels,
+  usePaginationLabels,
+  useParcelKindLabels,
+  usePriorityLabels,
+} from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
 import { CASE_STATUS_META, PRIORITY_FACET_VALUES, STATUS_FACET_VALUES } from "./caseStatus";
-import { COMPLAINT_DEFAULT_HIDDEN, buildComplaintColumns, exportColumnsFor } from "./columns";
-import {
-  CASE_PRIORITY_LABELS_EN,
-  CASE_STATUS_LABELS_EN,
-  complaintsGridLabelsEn,
-  complaintsLabelsEn,
-} from "./labels.en";
+import { COMPLAINT_DEFAULT_HIDDEN, buildComplaintColumns } from "./columns";
 import {
   COMPLAINT_FACET_KEYS,
   buildCaseQuery,
@@ -53,12 +61,6 @@ import {
   useComplaintTypes,
   useZones,
 } from "./useCases";
-
-/**
- * TODO(i18n): comes from the language provider once it exists. One constant, so
- * switching to Hindi is one line here rather than a hunt through the columns.
- */
-const LOCALE = "en-IN";
 
 /** `-raised_at`, 25 a page, four columns folded away. Mirrors the API's defaults. */
 const DEFAULT_STATE: RegisterState = {
@@ -70,28 +72,31 @@ const DEFAULT_STATE: RegisterState = {
   hiddenColumns: COMPLAINT_DEFAULT_HIDDEN,
 };
 
-/** Today, as `YYYY-MM-DD`, for the export filename. */
+// The IST calendar day, not the UTC one: between 18:30 and 00:00 IST those are
+// different dates, and the file would be stamped yesterday.
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toIstDateKey(new Date());
 }
 
-function saveCsv(filename: string, body: string): void {
-  const blob = new Blob([`﻿${body}`], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 10_000);
+// `icms_code_value.label_hi` and `icms_zone.name_hi` are nullable, so a row that
+// has not been translated yet falls back to English rather than to an empty option.
+function pickLabel(
+  language: string,
+  english: string,
+  hindi: string | null | undefined,
+): string {
+  return language === "hi-IN" && hindi ? hindi : english;
 }
 
 export default function ComplaintsRegister() {
   const navigate = useNavigate();
-  const labels = complaintsLabelsEn;
+  const labels = useComplaintsLabels();
+  const gridLabels = useComplaintsGridLabels();
+  const paginationLabels = usePaginationLabels();
+  const statusLabels = useCaseStatusLabels();
+  const priorityLabels = usePriorityLabels();
+  const parcelKindLabels = useParcelKindLabels();
+  const { locale, language } = useFormats();
 
   const { state, setState, searchValue, setSearchValue, clearFilters } = useRegisterState({
     defaults: DEFAULT_STATE,
@@ -127,11 +132,14 @@ export default function ComplaintsRegister() {
     () =>
       buildComplaintColumns({
         labels,
-        locale: LOCALE,
+        statusLabels,
+        priorityLabels,
+        parcelKindLabels,
+        locale,
         onView: openCase,
         onAssign: assignCase,
       }),
-    [labels, openCase, assignCase],
+    [labels, statusLabels, priorityLabels, parcelKindLabels, locale, openCase, assignCase],
   );
 
   /* ---- facets ----------------------------------------------------------
@@ -146,9 +154,9 @@ export default function ComplaintsRegister() {
         loading: complaintTypes.isPending,
         options: (complaintTypes.data ?? []).map((value) => ({
           value: value.code,
-          // `label_hi` is already on the row, so the Hindi build needs no
-          // second request — only a different field.
-          label: value.label,
+          // `label_hi` rides along on the same response, so the Hindi build needs
+          // no second request — only a different field.
+          label: pickLabel(language, value.label, value.label_hi),
         })),
       },
       {
@@ -156,7 +164,7 @@ export default function ComplaintsRegister() {
         label: labels.facetPriority,
         options: PRIORITY_FACET_VALUES.map((value) => ({
           value,
-          label: CASE_PRIORITY_LABELS_EN[value],
+          label: priorityLabels[value],
           icon: PRIORITY_META[value].icon,
         })),
       },
@@ -165,7 +173,7 @@ export default function ComplaintsRegister() {
         label: labels.facetStatus,
         options: STATUS_FACET_VALUES.map((value) => ({
           value,
-          label: CASE_STATUS_LABELS_EN[value],
+          label: statusLabels[value],
           icon: STATUS_META[CASE_STATUS_META[value].chip].icon,
         })),
       },
@@ -175,11 +183,20 @@ export default function ComplaintsRegister() {
         loading: zones.isPending,
         options: (zones.data ?? []).map((zone) => ({
           value: zone.zone_cd,
-          label: zone.name,
+          label: pickLabel(language, zone.name, zone.name_hi),
         })),
       },
     ],
-    [labels, complaintTypes.data, complaintTypes.isPending, zones.data, zones.isPending],
+    [
+      labels,
+      language,
+      priorityLabels,
+      statusLabels,
+      complaintTypes.data,
+      complaintTypes.isPending,
+      zones.data,
+      zones.isPending,
+    ],
   );
 
   const savedViews = useSavedViews("complaints", state, setState);
@@ -281,7 +298,7 @@ export default function ComplaintsRegister() {
             }}
           >
             <Icon name={exporting ? "feedback.loading" : "action.export"} spin={exporting} />
-            {exporting ? complaintsGridLabelsEn.exporting : labels.export}
+            {exporting ? gridLabels.exporting : labels.export}
           </Button>
           <Button
             onClick={() => {
@@ -319,8 +336,8 @@ export default function ComplaintsRegister() {
         savedViews={savedViews}
         caption={labels.registerTitle}
         captionAction={labels.recordCount(rows.length, total)}
-        labels={complaintsGridLabelsEn}
-        paginationLabels={paginationLabelsEn}
+        labels={gridLabels}
+        paginationLabels={paginationLabels}
         emptyState={
           <EmptyState
             icon="case.file"

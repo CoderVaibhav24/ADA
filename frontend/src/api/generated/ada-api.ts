@@ -165,6 +165,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/icms/admin/policy/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every permission an endpoint guards on */
+        get: operations["list_permissions_api_icms_admin_policy_permissions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/policy/permissions/{permission_cd}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a non-system permission */
+        delete: operations["delete_permission_api_icms_admin_policy_permissions__permission_cd__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/policy/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The role grants — this table is the whole of RBAC */
+        get: operations["list_role_grants_api_icms_admin_policy_roles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/policy/roles/{role_cd}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace a role's permission grants */
+        put: operations["set_role_grants_api_icms_admin_policy_roles__role_cd__permissions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/policy/transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The case state machine as the database holds it */
+        get: operations["list_transitions_api_icms_admin_policy_transitions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/policy/transitions/{transition_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit a transition's roles, payload requirements or active flag */
+        patch: operations["update_transition_api_icms_admin_policy_transitions__transition_id__patch"];
+        trace?: never;
+    };
     "/api/icms/cases": {
         parameters: {
             query?: never;
@@ -275,6 +377,26 @@ export interface paths {
          *     complaint types has no usable form, and the vocabulary is not sensitive.
          */
         get: operations["list_code_values_api_icms_code_values_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/me/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the signed-in officer may do — a convenience, not a control
+         * @description Their own roles, resolved permissions, zones and actions. Never anyone else's.
+         */
+        get: operations["my_capabilities_api_icms_me_capabilities_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -563,6 +685,23 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActionOut */
+        ActionOut: {
+            /** Action */
+            action: string;
+            /** Assignee Only */
+            assignee_only: boolean;
+            /** Opens Round */
+            opens_round: boolean;
+            /** Requires */
+            requires: string[];
+            /** Source Status */
+            source_status: string | null;
+            /** Stage No */
+            stage_no: number;
+            /** Target Status */
+            target_status: string;
+        };
         /** AnalysisCreate */
         AnalysisCreate: {
             /**
@@ -623,20 +762,32 @@ export interface components {
             /** Tfw */
             tfw?: string | null;
         };
-        /**
-         * CaseAmend
-         * @description `PATCH /api/icms/cases/{case_ref}` — descriptive fields only.
-         *
-         *     What is NOT here is the point. `status`, `stage_no`, `current_round`,
-         *     `zone_id`, `case_ref` and `raised_at` are absent, so `extra="forbid"` refuses
-         *     them by name rather than ignoring them. The legacy equivalent,
-         *     `PUT /icms/complain/updateComplainStatus`, takes a client-supplied status and
-         *     writes it straight to the column with no authentication on the route; a case
-         *     could be moved to any state by anybody who could reach the host.
-         *
-         *     Every field is optional and at least one must be present, so an empty PATCH
-         *     is a 422 rather than a write that touches nothing and reports success.
-         */
+        /** CapabilitiesOut */
+        CapabilitiesOut: {
+            /** Actions */
+            actions: components["schemas"]["ActionOut"][];
+            /**
+             * Advisory
+             * @default true
+             * @constant
+             */
+            advisory: true;
+            /** Permissions */
+            permissions: string[];
+            /** Policy Revision */
+            policy_revision: number;
+            /** Policy Source */
+            policy_source: string;
+            /** Roles */
+            roles: string[];
+            /** Unrestricted */
+            unrestricted: boolean;
+            /** User Id */
+            user_id: string;
+            /** Zone Ids */
+            zone_ids: number[];
+        };
+        /** CaseAmend */
         CaseAmend: {
             /** Complainant Email */
             complainant_email?: string | null;
@@ -683,18 +834,7 @@ export interface components {
             /** Village Lgd Code */
             village_lgd_code?: string | null;
         };
-        /**
-         * CaseAssign
-         * @description `POST /api/icms/cases/{case_ref}/assign` — stage 2.
-         *
-         *     One endpoint for both `assign` and `reassign`: which of the two it is follows
-         *     from the case's current status, and the workflow table decides that. A client
-         *     that had to know which verb to send would be restating the state machine.
-         *
-         *     `reason` is required by the `reassign` transition and not by `assign`
-         *     (workflow.py TRANSITIONS). It is optional here and the workflow refuses its
-         *     absence with a 422 naming the field — one authority, not two.
-         */
+        /** CaseAssign */
         CaseAssign: {
             /** Assignee User Id */
             assignee_user_id: string;
@@ -707,10 +847,7 @@ export interface components {
         CaseAssignmentOut: {
             /** Active */
             active: boolean;
-            /**
-             * Assigned At
-             * Format: date-time
-             */
+            /** Assigned At */
             assigned_at: string;
             /** Assigned By */
             assigned_by: string;
@@ -723,15 +860,7 @@ export interface components {
             /** Released At */
             released_at?: string | null;
         };
-        /**
-         * CaseCreate
-         * @description `POST /api/icms/cases`.
-         *
-         *     `zone_cd` is optional only when a location is given: the zone is then
-         *     resolved by `ST_Contains`, which is the spec's rule and is also the only way
-         *     a field report from a handset can be filed without the surveyor picking a
-         *     zone off a dropdown while standing in the sun.
-         */
+        /** CaseCreate */
         CaseCreate: {
             /** Complainant Email */
             complainant_email?: string | null;
@@ -802,14 +931,7 @@ export interface components {
             /** Zone Cd */
             zone_cd?: string | null;
         };
-        /**
-         * CaseDetail
-         * @description One case, with what stage 2 onwards hangs off it.
-         *
-         *     The assignment, the rounds and the evidence count are here because the
-         *     detail screen renders all three and a client that had to fetch them
-         *     separately would make four calls to draw one page.
-         */
+        /** CaseDetail */
         CaseDetail: {
             /**
              * Allowed Actions
@@ -872,14 +994,7 @@ export interface components {
             owner_name?: string | null;
             /** Owner Phone */
             owner_phone?: string | null;
-            /**
-             * Parcel Id
-             * @description The grid's `Parcel ID` cell.
-             *
-             *     Computed rather than stored, so it cannot disagree with the columns it
-             *     is made of. Not sortable for the same reason — sort by `ulpin` or
-             *     `khasra_no`, both of which are indexed.
-             */
+            /** Parcel Id */
             readonly parcel_id: string | null;
             /** Pin Code */
             pin_code?: string | null;
@@ -891,10 +1006,7 @@ export interface components {
             property_address?: string | null;
             /** Property Type Cd */
             property_type_cd?: string | null;
-            /**
-             * Raised At
-             * Format: date-time
-             */
+            /** Raised At */
             raised_at: string;
             /** Rounds */
             rounds?: components["schemas"]["InspectionRoundOut"][];
@@ -908,10 +1020,7 @@ export interface components {
             status: string;
             /** Ulpin */
             ulpin?: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
+            /** Updated At */
             updated_at: string;
             /** Village Lgd Code */
             village_lgd_code?: string | null;
@@ -920,42 +1029,14 @@ export interface components {
             /** Zone Name */
             zone_name: string;
         };
-        /**
-         * CaseLocation
-         * @description Where the construction is. Optional, because a telephoned complaint has
-         *     an address and no coordinates, and refusing it would lose the complaint.
-         */
+        /** CaseLocation */
         CaseLocation: {
             /** Latitude */
             latitude: number;
             /** Longitude */
             longitude: number;
         };
-        /**
-         * CaseRow
-         * @description One row of the Complaints register.
-         *
-         *     Mapped against the grid's columns, in the grid's order:
-         *
-         *       Complaint ID   -> case_ref
-         *       Parcel ID      -> parcel_id, composed from ulpin when the parcel has one
-         *                         and from khasra_no otherwise. ULPIN rollout in Uttar
-         *                         Pradesh is partial, so the fallback is the normal case
-         *                         rather than the exception. The three raw columns come
-         *                         back beside it, because a client that wants to link to
-         *                         Bhulekh needs the village code and the khasra
-         *                         separately, not a display string it has to take apart.
-         *       Location       -> property_address, with landmark beside it
-         *       Complainant    -> complainant_name
-         *       Complaint Type -> complaint_type_cd, with complaint_type_label resolved
-         *       Area           -> measured_area_sqm, from the latest inspection round.
-         *                         Null until a surveyor has measured, which is correct:
-         *                         an area on an unsurveyed complaint would be a guess.
-         *       Priority       -> priority, one of high | medium | low
-         *       Status         -> status, with stage_no beside it
-         *       Filed          -> raised_at
-         *       Actions        -> rendered by the client from status and role
-         */
+        /** CaseRow */
         CaseRow: {
             /** Assignee User Id */
             assignee_user_id?: string | null;
@@ -977,23 +1058,13 @@ export interface components {
             measured_area_sqm?: number | null;
             /** Other Type */
             other_type?: string | null;
-            /**
-             * Parcel Id
-             * @description The grid's `Parcel ID` cell.
-             *
-             *     Computed rather than stored, so it cannot disagree with the columns it
-             *     is made of. Not sortable for the same reason — sort by `ulpin` or
-             *     `khasra_no`, both of which are indexed.
-             */
+            /** Parcel Id */
             readonly parcel_id: string | null;
             /** Priority */
             priority?: string | null;
             /** Property Address */
             property_address?: string | null;
-            /**
-             * Raised At
-             * Format: date-time
-             */
+            /** Raised At */
             raised_at: string;
             /** Source */
             source: string;
@@ -1029,14 +1100,7 @@ export interface components {
             /** Sort Order */
             sort_order: number;
         };
-        /**
-         * GeoPolygon
-         * @description A GeoJSON Polygon or MultiPolygon in EPSG:4326.
-         *
-         *     Checks what PostGIS would otherwise reject at insert time, plus the two
-         *     things it would happily accept and should not: an unbounded vertex count,
-         *     and a ring that does not close.
-         */
+        /** GeoPolygon */
         GeoPolygon: {
             /** Coordinates */
             coordinates: unknown[];
@@ -1133,6 +1197,19 @@ export interface components {
             sort: string;
             /** Total */
             total: number;
+        };
+        /** PermissionOut */
+        PermissionOut: {
+            /** Action */
+            action: string;
+            /** Is System */
+            is_system: boolean;
+            /** Label */
+            label: string;
+            /** Permission Cd */
+            permission_cd: string;
+            /** Resource */
+            resource: string;
         };
         /**
          * PolygonReview
@@ -1246,6 +1323,65 @@ export interface components {
             /** Project Id */
             project_id: number;
         };
+        /** RoleGrantsOut */
+        RoleGrantsOut: {
+            /** Active */
+            active: boolean;
+            /** Label */
+            label: string;
+            /** Permission Cds */
+            permission_cds: string[];
+            /** Role Cd */
+            role_cd: string;
+        };
+        /** RoleGrantsUpdate */
+        RoleGrantsUpdate: {
+            /**
+             * Permission Cds
+             * @description The complete grant set for this role.
+             */
+            permission_cds: string[];
+        };
+        /** TransitionOut */
+        TransitionOut: {
+            /** Action Cd */
+            action_cd: string;
+            /** Active */
+            active: boolean;
+            /** Assignee Only */
+            assignee_only: boolean;
+            /** Id */
+            id: number;
+            /** Note */
+            note: string | null;
+            /** Opens Round */
+            opens_round: boolean;
+            /** Requires */
+            requires: string[];
+            /** Roles */
+            roles: string[];
+            /** Sort Order */
+            sort_order: number;
+            /** Source Status */
+            source_status: string | null;
+            /** Stage No */
+            stage_no: number;
+            /** Target Status */
+            target_status: string;
+        };
+        /** TransitionUpdate */
+        TransitionUpdate: {
+            /** Active */
+            active?: boolean | null;
+            /** Assignee Only */
+            assignee_only?: boolean | null;
+            /** Note */
+            note?: string | null;
+            /** Requires */
+            requires?: string[] | null;
+            /** Roles */
+            roles?: string[] | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1272,10 +1408,7 @@ export interface components {
             active: boolean;
             /** Assigned By */
             assigned_by?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
+            /** Created At */
             created_at: string;
             /** Id */
             id: number;
@@ -1290,15 +1423,7 @@ export interface components {
             /** Zone Name */
             zone_name: string;
         };
-        /**
-         * ZoneAssignmentRevoked
-         * @description What a revoke answers, whether or not it changed anything.
-         *
-         *     `revoked` is false on a replay: the assignment was already closed, so the
-         *     request is a no-op rather than an error. A mobile client retrying on a bad
-         *     connection gets the same 200 both times, which is the idempotence the field
-         *     app is built on.
-         */
+        /** ZoneAssignmentRevoked */
         ZoneAssignmentRevoked: {
             /** Revoked */
             revoked: boolean;
@@ -1327,17 +1452,11 @@ export interface components {
             /** Zone Cd */
             zone_cd: string;
         };
-        /**
-         * ZoneDetail
-         * @description One zone, with its boundary as GeoJSON in EPSG:4326.
-         */
+        /** ZoneDetail */
         ZoneDetail: {
             /** Active */
             active: boolean;
-            /**
-             * Created At
-             * Format: date-time
-             */
+            /** Created At */
             created_at: string;
             /** Geometry */
             geometry?: {
@@ -1356,10 +1475,7 @@ export interface components {
             name_hi?: string | null;
             /** Parent Cd */
             parent_cd?: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
+            /** Updated At */
             updated_at: string;
             /** Zone Cd */
             zone_cd: string;
@@ -1368,10 +1484,7 @@ export interface components {
         ZoneOut: {
             /** Active */
             active: boolean;
-            /**
-             * Created At
-             * Format: date-time
-             */
+            /** Created At */
             created_at: string;
             /**
              * Has Geometry
@@ -1386,24 +1499,12 @@ export interface components {
             name_hi?: string | null;
             /** Parent Cd */
             parent_cd?: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
+            /** Updated At */
             updated_at: string;
             /** Zone Cd */
             zone_cd: string;
         };
-        /**
-         * ZoneUpdate
-         * @description `PUT /api/icms/zones/{zone_cd}`.
-         *
-         *     Replaces the mutable attributes. `geometry` is the one exception to a strict
-         *     PUT: omitting it leaves the boundary alone, and sending `null` clears it.
-         *     The alternative — omission means null — deletes a surveyed boundary every
-         *     time somebody renames a zone from a form that does not carry the polygon,
-         *     and that is a data loss with no error message attached.
-         */
+        /** ZoneUpdate */
         ZoneUpdate: {
             /**
              * Active
@@ -1695,6 +1796,165 @@ export interface operations {
             };
         };
     };
+    list_permissions_api_icms_admin_policy_permissions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionOut"][];
+                };
+            };
+        };
+    };
+    delete_permission_api_icms_admin_policy_permissions__permission_cd__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                permission_cd: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_role_grants_api_icms_admin_policy_roles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleGrantsOut"][];
+                };
+            };
+        };
+    };
+    set_role_grants_api_icms_admin_policy_roles__role_cd__permissions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_cd: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleGrantsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleGrantsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_transitions_api_icms_admin_policy_transitions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransitionOut"][];
+                };
+            };
+        };
+    };
+    update_transition_api_icms_admin_policy_transitions__transition_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transition_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransitionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransitionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_cases_api_icms_cases_get: {
         parameters: {
             query?: {
@@ -1932,6 +2192,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_capabilities_api_icms_me_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesOut"];
                 };
             };
         };

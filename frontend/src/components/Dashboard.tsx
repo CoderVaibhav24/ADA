@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Icon } from "@/lib/icons";
+import { useConsoleLabels } from "@/i18n/labels";
 import { useStore } from "../state/store";
 import {
   loadProjectData,
@@ -15,6 +17,10 @@ const RASTER_POLL_MS = 3000;
 const ANALYSIS_POLL_MS = 2000;
 
 export default function Dashboard() {
+  const labels = useConsoleLabels();
+  // Below `lg` the 340px layer panel would leave 20px of map at 360px, so it
+  // becomes an off-canvas drawer. See `.layers-toggle` in styles.css.
+  const [layersOpen, setLayersOpen] = useState(false);
   const projectsLoaded = useStore((s) => s.projectsLoaded);
   const hasProjects = useStore((s) => s.projects.length > 0);
   const pid = useStore((s) => s.currentProjectId);
@@ -67,8 +73,28 @@ export default function Dashboard() {
       {projectsLoaded && !hasProjects ? (
         <FirstProjectPrompt />
       ) : (
-        <div className="app-main">
-          <Sidebar />
+        <div className="app-main" data-layers-open={layersOpen}>
+          {/* Sits before the panel in the DOM, so opening the drawer does not
+              reorder the tab sequence: toggle -> panel -> map. */}
+          <button
+            type="button"
+            className="layers-toggle"
+            aria-expanded={layersOpen}
+            aria-controls="console-layers"
+            onClick={() => setLayersOpen((open) => !open)}
+          >
+            <Icon name="map.layers" className="size-4" />
+            <span>{layersOpen ? labels.closeLayers : labels.openLayers}</span>
+          </button>
+          {layersOpen && (
+            <button
+              type="button"
+              className="layers-scrim"
+              aria-label={labels.closeLayers}
+              onClick={() => setLayersOpen(false)}
+            />
+          )}
+          <Sidebar id="console-layers" label={labels.layersPanel} open={layersOpen} />
           <MapView />
         </div>
       )}
@@ -77,22 +103,20 @@ export default function Dashboard() {
 }
 
 function FirstProjectPrompt() {
+  const labels = useConsoleLabels();
   const [open, setOpen] = useState(false);
   return (
     <div className="empty-screen">
       <div className="empty-card">
-        <div className="empty-kicker">No projects yet</div>
-        <h2>Create your first project</h2>
-        <p>
-          A project groups the drone / satellite maps of one survey area, its
-          red zones and every change-detection run between two epochs.
-        </p>
+        <div className="empty-kicker">{labels.firstProjectKicker}</div>
+        <h2>{labels.firstProjectTitle}</h2>
+        <p>{labels.firstProjectBody}</p>
         <button
           type="button"
           className="btn btn-primary"
           onClick={() => setOpen(true)}
         >
-          Create project
+          {labels.firstProjectAction}
         </button>
       </div>
       {open && <NewProjectModal onClose={() => setOpen(false)} />}

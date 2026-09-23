@@ -9,6 +9,7 @@ from app.channels.base import (
     ChannelError,
     Outgoing,
     PermanentError,
+    PushTarget,
     RetryableError,
     SendResult,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "ChannelError",
     "Outgoing",
     "PermanentError",
+    "PushTarget",
     "RetryableError",
     "SendResult",
     "create_channels",

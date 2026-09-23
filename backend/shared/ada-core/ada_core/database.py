@@ -12,16 +12,8 @@ from __future__ import annotations
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-# Endpoints run in FastAPI's worker threadpool (see ada-api routers/rasters.py
-# for why), so requests genuinely overlap rather than serialising on the event
-# loop. Each holds a session for its whole duration — a tile request keeps one
-# open across the GDAL read — and MapLibre opens a dozen tile requests at once.
-# The default pool of 5 + 10 overflow would have them queueing on the connection
-# pool instead of the event loop, which is the same stall wearing a different
-# hat. Sized to cover the threadpool's default width.
-POOL_SIZE = 20
-MAX_OVERFLOW = 20
-POOL_RECYCLE = 1800
+from .config import PoolSettings
+from .datetimes import IST_NAME
 
 SessionLocal = sessionmaker(autoflush=False, expire_on_commit=False)
 
@@ -32,6 +24,29 @@ class Base(DeclarativeBase):
     pass
 
 
+# Split out because create_engine swallows connect_args into a closure, so this dict is the
+# only place the settings that were actually applied can still be read.
+def engine_options(database_url: str, **overrides) -> dict:
+    pool = PoolSettings()
+    options: dict = {"pool_pre_ping": pool.db_pool_pre_ping}
+    # SQLite's SingletonThreadPool raises TypeError on these rather than ignoring them.
+    if not database_url.startswith("sqlite"):
+        options.update(
+            pool_size=pool.db_pool_size,
+            max_overflow=pool.db_max_overflow,
+            pool_timeout=pool.db_pool_timeout,
+            pool_recycle=pool.db_pool_recycle,
+        )
+    options.update(overrides)
+    # Pins the SESSION zone, which is what makes a TIMESTAMPTZ come back as +05:30. Writing
+    # naive local times instead would lose the instant the moment another session read it.
+    if database_url.startswith("postgresql"):
+        connect_args = dict(options.get("connect_args") or {})
+        connect_args.setdefault("options", f"-c timezone={IST_NAME}")
+        options["connect_args"] = connect_args
+    return options
+
+
 def configure_engine(database_url: str, **overrides) -> Engine:
     """Build the engine and bind the session factory to it.
 
@@ -40,23 +55,11 @@ def configure_engine(database_url: str, **overrides) -> Engine:
     """
     global _engine
     if _engine is not None and str(_engine.url) == database_url:
+        SessionLocal.configure(bind=_engine)
         return _engine
     if _engine is not None:
         _engine.dispose()
-    options: dict = {"pool_pre_ping": True}
-    # The pool sizing is a QueuePool setting and PostgreSQL is the only backend
-    # ADA runs on — but SQLite uses SingletonThreadPool, which REJECTS
-    # pool_size and max_overflow with a TypeError rather than ignoring them.
-    # Passing them unconditionally makes `configure_engine("sqlite://")`
-    # impossible, which is the one thing a test wants to do.
-    if not database_url.startswith("sqlite"):
-        options.update(
-            pool_size=POOL_SIZE,
-            max_overflow=MAX_OVERFLOW,
-            pool_recycle=POOL_RECYCLE,
-        )
-    options.update(overrides)
-    _engine = create_engine(database_url, **options)
+    _engine = create_engine(database_url, **engine_options(database_url, **overrides))
     SessionLocal.configure(bind=_engine)
     return _engine
 

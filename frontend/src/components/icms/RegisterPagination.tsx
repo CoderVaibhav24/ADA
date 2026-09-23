@@ -32,7 +32,8 @@ import { buildPageWindow } from "./pagination-window";
  * page is linkable and survives a refresh; owning page state internally would
  * make that impossible.
  *
- * No English: every string arrives through `labels`. See pagination-labels.en.ts.
+ * No English: every string arrives through `labels`. See i18n/labels.ts
+ * `usePaginationLabels`.
  */
 export type RegisterPaginationLabels = {
   summary: (range: { from: number; to: number; total: number }) => ReactNode;

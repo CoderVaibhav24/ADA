@@ -1,5 +1,8 @@
 """Fan-out: one accepted notification becomes one delivery per channel.
 
+Push is the exception: one delivery per active registered device, so each
+device has its own attempt counter, retry schedule and dead-token outcome.
+
 Consumes `notification.created`. For each channel the caller asked for, it finds
 the template, resolves the recipient's address, writes a `deliveries` row, and
 publishes a `delivery.{channel}` message for a channel worker to act on.
@@ -53,7 +56,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import events
 from app.broker import Broker, BrokerError, Message
 from app.config import Settings
-from app.models import Channel, Delivery, DeliveryStatus, Notification, NotificationStatus, Template
+from app.models import (
+    Channel,
+    Delivery,
+    DeliveryStatus,
+    Notification,
+    NotificationStatus,
+    PushDevice,
+    Template,
+)
 from app.recipients import DirectoryUnavailable, RecipientDirectory, RecipientNotFound
 from app.rendering import TemplateError, render_message
 
@@ -62,6 +73,8 @@ logger = structlog.get_logger(__name__)
 # A delivery in one of these has finished. Fan-out running again must not
 # resurrect it, or a completed send becomes a second email.
 _TERMINAL = (DeliveryStatus.SENT, DeliveryStatus.FAILED, DeliveryStatus.DEAD)
+
+_UNIQUE = "uq_deliveries_notification_channel_device"
 
 
 class _Permanent(Exception):
@@ -219,8 +232,7 @@ class FanoutWorker:
                     )
                     continue
 
-                if prepared is not None:
-                    to_publish.append((prepared, channel))
+                to_publish.extend((delivery_id, channel) for delivery_id in prepared)
 
             notification = await session.get(Notification, notification_id)
             if notification is not None and notification.status == NotificationStatus.ACCEPTED:
@@ -279,8 +291,8 @@ class FanoutWorker:
         template_key: str,
         locale: str,
         variables: dict,
-    ) -> uuid.UUID | None:
-        """Write the delivery row. Returns its id if a message should be published."""
+    ) -> list[uuid.UUID]:
+        """Write the delivery rows. Returns the ids that need a message published."""
         template = await _find_template(
             session, project_id=project_id, key=template_key, channel=channel, locale=locale
         )
@@ -298,14 +310,59 @@ class FanoutWorker:
         except TemplateError as exc:
             raise _Permanent(f"template '{template_key}' cannot be rendered: {exc}") from exc
 
+        targets = await self._targets(session, recipient_id=recipient_id, channel=channel)
+
+        publish: list[uuid.UUID] = []
+        for address, device_id in targets:
+            delivery_id = await self._upsert(
+                session,
+                notification_id=notification_id,
+                project_id=project_id,
+                channel=channel,
+                address=address,
+                device_id=device_id,
+                template_id=template.id,
+            )
+            if delivery_id is not None:
+                publish.append(delivery_id)
+        return publish
+
+    async def _targets(
+        self, session: AsyncSession, *, recipient_id: uuid.UUID, channel: str
+    ) -> list[tuple[str, uuid.UUID | None]]:
+        """(address, device_id) pairs for one channel; device_id is set for push only."""
+        if channel == Channel.PUSH.value:
+            devices = (
+                await session.execute(
+                    select(PushDevice.token, PushDevice.id)
+                    .where(PushDevice.user_sub == recipient_id, PushDevice.active.is_(True))
+                    .order_by(PushDevice.created_at)
+                )
+            ).all()
+            if not devices:
+                raise _Permanent(f"user {recipient_id} has no active push devices")
+            return [(token, device_id) for token, device_id in devices]
+
         try:
             profile = await self._directory.resolve(recipient_id)
-            address = profile.address_for(channel)
+            return [(profile.address_for(channel), None)]
         except RecipientNotFound as exc:
             raise _Permanent(str(exc)) from exc
         except DirectoryUnavailable as exc:
             raise _Retryable(str(exc)) from exc
 
+    async def _upsert(
+        self,
+        session: AsyncSession,
+        *,
+        notification_id: uuid.UUID,
+        project_id: uuid.UUID,
+        channel: str,
+        address: str,
+        device_id: uuid.UUID | None,
+        template_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        """Insert or refresh one delivery row; its id if it still needs sending."""
         # ON CONFLICT DO UPDATE rather than DO NOTHING, so the row comes back
         # either way and the status can be inspected. DO NOTHING returns no row
         # on conflict, which is what makes the "crashed before publishing" case
@@ -319,10 +376,11 @@ class FanoutWorker:
                 channel=Channel(channel),
                 status=DeliveryStatus.PENDING,
                 address=address,
-                template_id=template.id,
+                device_id=device_id,
+                template_id=template_id,
             )
             .on_conflict_do_update(
-                constraint="uq_deliveries_notification_channel",
+                constraint=_UNIQUE,
                 # Refresh the address: the account may have been corrected since
                 # the first attempt, and that is usually why it is being retried.
                 set_={"address": address},
@@ -370,7 +428,7 @@ class FanoutWorker:
                 last_error=error[:2000],
             )
             .on_conflict_do_update(
-                constraint="uq_deliveries_notification_channel",
+                constraint=_UNIQUE,
                 set_={"status": DeliveryStatus.FAILED, "last_error": error[:2000]},
                 # Do not overwrite a delivery that already succeeded. Reachable
                 # when a template is deactivated between two runs of fan-out for

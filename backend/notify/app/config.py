@@ -161,6 +161,26 @@ class Settings(BaseSettings):
     admin_client_secret: str = ""
     recipient_cache_seconds: int = 300
 
+    # --- End-user endpoints (/v1/me) ------------------------------------------
+
+    # Comma-separated Keycloak clients whose *user* tokens may call /v1/me.
+    user_client_ids: str = "ada-field"
+
+    # --- Push (FCM HTTP v1 + APNs, direct; no Expo Push Service) --------------
+
+    # native = FCM and/or APNs from the credentials below; absent credentials
+    # disable that platform with a startup warning rather than failing boot.
+    push_provider: Literal["native", "stub", "failing_stub"] = "native"
+    push_timeout_seconds: float = 10.0
+
+    fcm_project_id: str = ""
+    fcm_service_account_file: str = ""
+
+    apns_key_file: str = ""
+    apns_key_id: str = ""
+    apns_team_id: str = ""
+    apns_bundle_id: str = ""
+
     @field_validator("issuer")
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
@@ -182,6 +202,10 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_optional_trailing_slash(cls, value: str | None) -> str | None:
         return value.rstrip("/") if value else None
+
+    @property
+    def user_clients(self) -> frozenset[str]:
+        return frozenset(c.strip() for c in self.user_client_ids.split(",") if c.strip())
 
     @property
     def fetch_base(self) -> str:

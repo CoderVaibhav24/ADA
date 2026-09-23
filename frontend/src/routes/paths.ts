@@ -18,6 +18,20 @@ export const ROUTES = {
   notices: "/notices",
   noticeNew: "/notices/new",
   notice: (id = ":noticeId") => `/notices/${id}`,
+
+  reports: "/reports",
+
+  // One route for the whole policy area; its three screens are tabs on it, kept
+  // linkable by `?tab=`. Three paths would put three rail-matching prefixes
+  // where the product has one section.
+  administration: "/administration",
+
+  // A path UNDER /administration rather than beside it, because officers and
+  // policy are one administrative area — but its own route and its own rail
+  // entry, because the two are gated on different permissions (`user.read` and
+  // `policy.read`) and one entry would hide whichever screen the officer is not
+  // gated for. `activeNavId` resolves the overlap on longest prefix.
+  administrationUsers: "/administration/users",
 } as const;
 
 export const HOME_PATH: string = ROUTES.complaints;

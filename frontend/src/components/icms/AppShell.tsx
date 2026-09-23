@@ -1,52 +1,40 @@
 import { useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Icon, type IconKey } from "@/lib/icons";
 
 /**
- * Header + sidebar + content + footer layout.
+ * Header + rail + content + footer layout.
  *
- * Reconstructed from the shared shell every portal screen in Figma copies by
- * hand: an 82px icon rail (the one genuine component in the file, `Frame 12`,
- * instanced 10x), a 64px top bar with the bell and the account pill, and the
- * page body. Figma's rail expands to a 248px labelled nav on the dashboard, so
- * both widths are real and `collapsed` switches between them.
+ * Reconstructed from Figma node 17:3980, which draws the rail in both states:
+ * an 82px icon-only rail and a 248px labelled one, with the collapse toggle at
+ * the TOP beside the logo.
  *
  * Home: src/routes/ProtectedLayout.tsx, which mounts it around every protected
  * screen. Nothing else in the app renders chrome of its own.
  *
- * Responsive to 360px. Below `lg` the rail is not squeezed — it moves into a
- * Sheet behind a menu button, because an 82px rail plus a table at 360px
- * leaves 278px of grid, which is unusable. The Sheet renders the same `nav`
- * node, so there is no second navigation to keep in sync.
+ * **The rail is present at every width.** Below `lg` it is locked to the 82px
+ * icon-only shape — not hidden behind a hamburger, and not expandable, because
+ * 248px of a 360px screen is not a navigation, it is a takeover. What changes
+ * across the breakpoint is labelled versus icon-only, never present versus
+ * absent, and the labels stay in the accessibility tree at both widths.
  *
  * Slots, not children-with-conventions: header/nav/footer are props so the
  * shell cannot be assembled wrongly, and so it holds no English.
  */
 export type AppShellProps = {
-  /** The icon rail / labelled nav. Same node in both the aside and the Sheet. */
+  /** The rail's entries. One node, rendered once. */
   nav: ReactNode;
-  /** Top bar contents: page title, search, bell, account pill. */
+  /** Top bar contents: page title, notifications, language, account pill. */
   header?: ReactNode;
-  /** Brand block, pinned above the nav. */
+  /** Brand block, pinned above the nav beside the collapse toggle. */
   brand?: ReactNode;
-  /** Pinned below the nav — the account card Figma puts at the rail's foot. */
-  navFooter?: ReactNode;
   footer?: ReactNode;
   children: ReactNode;
+  /** Only honoured at `lg` and above; below it the rail is always collapsed. */
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
-  /**
-   * The Sheet that stands in for the rail below `lg`. Uncontrolled by default;
-   * supply the pair — same idiom as `collapsed`/`onCollapsedChange` — when the
-   * caller has to close it itself. A router-driven nav must: navigating does
-   * not dismiss a Radix Sheet, so at 360px the menu would stay open on top of
-   * the screen it just moved to.
-   */
-  mobileNavOpen?: boolean;
-  onMobileNavOpenChange?: (open: boolean) => void;
   /**
    * Hand the child the whole main area: no gutter, no 1440 max-width, and a
    * `main` that is a min-height-0 flex column so a full-height child can size
@@ -59,8 +47,6 @@ export type AppShellProps = {
   bleed?: boolean;
   /** Accessible names. Required: the shell ships no English. */
   labels: {
-    openNavigation: string;
-    closeNavigation: string;
     collapseNavigation: string;
     expandNavigation: string;
     navigationLandmark: string;
@@ -73,13 +59,10 @@ export function AppShell({
   nav,
   header,
   brand,
-  navFooter,
   footer,
   children,
   collapsed: collapsedProp,
   onCollapsedChange,
-  mobileNavOpen,
-  onMobileNavOpenChange,
   bleed = false,
   labels,
   className,
@@ -87,23 +70,6 @@ export function AppShell({
   const [internal, setInternal] = useState(false);
   const collapsed = collapsedProp ?? internal;
   const setCollapsed = onCollapsedChange ?? setInternal;
-  const [internalMobileOpen, setInternalMobileOpen] = useState(false);
-  const mobileOpen = mobileNavOpen ?? internalMobileOpen;
-  const setMobileOpen = onMobileNavOpenChange ?? setInternalMobileOpen;
-
-  const navBody = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {brand && <div className="shrink-0 px-3 py-4">{brand}</div>}
-      <ScrollArea className="min-h-0 flex-1">
-        <nav aria-label={labels.navigationLandmark} className="px-2 pb-4">
-          {nav}
-        </nav>
-      </ScrollArea>
-      {navFooter && (
-        <div className="shrink-0 border-t border-sidebar-border p-3">{navFooter}</div>
-      )}
-    </div>
-  );
 
   return (
     <div
@@ -123,22 +89,29 @@ export function AppShell({
       </a>
 
       <div className="flex min-h-0 flex-1">
-        {/* Desktop rail. Hidden below lg; the Sheet takes over. */}
         <aside
+          data-slot="app-rail"
           className={cn(
-            "hidden shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex lg:flex-col",
+            "flex w-rail shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
             "transition-[width] duration-slow ease-standard",
-            // Width is a token, not a magic number: 82px and 248px are both
-            // measured off the Figma frames.
-            collapsed ? "w-rail" : "w-sidebar",
+            // 82px and 248px are both measured off the Figma frames. The wide
+            // one is reachable only at `lg`.
+            !collapsed && "lg:w-sidebar",
           )}
         >
-          {navBody}
-          <div className="shrink-0 border-t border-sidebar-border p-2">
+          <div
+            className={cn(
+              "flex shrink-0 flex-col items-center gap-1 px-2 py-3",
+              !collapsed && "lg:flex-row lg:items-center lg:gap-2 lg:px-3",
+            )}
+          >
+            {brand}
+            {/* Top of the rail, beside the logo — where Figma puts it. Hidden
+                below `lg`, where there is no wide state to toggle to. */}
             <Button
               variant="ghost"
               size="icon-sm"
-              className="w-full"
+              className="hidden shrink-0 lg:inline-flex"
               aria-label={collapsed ? labels.expandNavigation : labels.collapseNavigation}
               aria-expanded={!collapsed}
               onClick={() => setCollapsed(!collapsed)}
@@ -146,32 +119,18 @@ export function AppShell({
               <Icon name={collapsed ? "nav.expand" : "nav.collapse"} className="size-4" />
             </Button>
           </div>
+
+          <ScrollArea className="min-h-0 flex-1">
+            <nav aria-label={labels.navigationLandmark} className="px-2 pb-4">
+              {nav}
+            </nav>
+          </ScrollArea>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* min-w-0 so a long page title truncates inside the header instead of
+              pushing the account pill off-screen at 360px. */}
           <header className="sticky top-0 z-30 flex h-header shrink-0 items-center gap-2 border-b border-line-subtle bg-surface-1/95 px-3 backdrop-blur-sm sm:px-4">
-            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="lg:hidden"
-                  aria-label={mobileOpen ? labels.closeNavigation : labels.openNavigation}
-                >
-                  <Icon name="nav.menu" className="size-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent
-                side="left"
-                className="w-[min(18rem,85vw)] bg-sidebar p-0 text-sidebar-foreground"
-              >
-                <SheetTitle className="sr-only">{labels.navigationLandmark}</SheetTitle>
-                {navBody}
-              </SheetContent>
-            </Sheet>
-
-            {/* min-w-0 so a long page title truncates inside the header instead
-                of pushing the account pill off-screen at 360px. */}
             <div className="flex min-w-0 flex-1 items-center gap-3">{header}</div>
           </header>
 
@@ -196,9 +155,12 @@ export function AppShell({
 }
 
 /**
- * A single rail entry. Collapses to icon-only, keeping the label in the
- * accessibility tree (sr-only, not display:none) so the collapsed rail is
- * still navigable by screen reader.
+ * A single rail entry.
+ *
+ * `collapsed` is the DESKTOP state only. Below `lg` the entry is icon-only
+ * whatever it says, because the rail itself is. The label is never
+ * `display:none` — it stays sr-only, so the collapsed rail is still navigable
+ * by screen reader and the icon is not the only name the entry has.
  */
 export function AppShellNavItem({
   icon,
@@ -223,12 +185,14 @@ export function AppShellNavItem({
     "data-active": active,
     "aria-current": active ? ("page" as const) : undefined,
     className: cn(
-      "group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-fast ease-standard",
+      // 44px tall at every width: this is the control a field officer taps.
+      "group relative flex min-h-11 w-full items-center justify-center gap-3 rounded-md px-0 text-sm",
+      "transition-colors duration-fast ease-standard",
       "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       active
         ? "bg-sidebar-accent text-sidebar-primary font-medium"
         : "text-sidebar-foreground",
-      collapsed && "justify-center px-0",
+      !collapsed && "lg:justify-start lg:px-3",
       className,
     ),
   };
@@ -236,14 +200,19 @@ export function AppShellNavItem({
   const inner = (
     <>
       <Icon name={icon} className="size-5 shrink-0" />
-      <span className={cn("min-w-0 flex-1 truncate text-start", collapsed && "sr-only")}>
+      <span
+        className={cn(
+          "sr-only min-w-0 flex-1 truncate text-start",
+          !collapsed && "lg:not-sr-only",
+        )}
+      >
         {label}
       </span>
       {badge != null && (
         <span
           className={cn(
-            "flex items-center justify-center rounded-full bg-destructive text-2xs text-destructive-foreground tabular",
-            collapsed ? "absolute top-1 right-1 size-4" : "min-w-4 px-1",
+            "absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-destructive text-2xs text-destructive-foreground tabular",
+            !collapsed && "lg:static lg:size-auto lg:min-w-4 lg:px-1",
           )}
         >
           {badge}

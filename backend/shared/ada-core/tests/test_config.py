@@ -108,11 +108,14 @@ class TestPrepareRuntime:
         assert os.environ["GDAL_CACHEMAX"] == "9999"
 
 
-def test_database_url_has_no_default():
+def test_database_url_has_no_default(monkeypatch):
     """A service that silently connects to localhost is worse than one that
     refuses to start."""
     from pydantic import ValidationError
 
+    # _env_file=None silences the dotenv files but not the process environment,
+    # and ada-api's conftest exports DATABASE_URL before this suite is collected.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(ValidationError):
         CoreSettings(_env_file=None)  # type: ignore[call-arg]
 

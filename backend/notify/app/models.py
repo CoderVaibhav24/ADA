@@ -1,6 +1,6 @@
 """The v0.1 data model.
 
-Five tables: projects, templates, notifications, deliveries, outbox.
+Six tables: projects, templates, notifications, deliveries, outbox, push_devices.
 user_preferences, inapp_messages and audit_log are deliberately absent — no
 channel needs preferences while email is the only one, and Keycloak's realm
 events carry the audit for v0.1 (build-plan.md, Friday 28 August).
@@ -226,6 +226,9 @@ class Notification(Base):
     # a single-channel request is as valid as a multi-channel one.
     channels: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
 
+    # Set by the recipient through /v1/me/notifications/{id}/read. NULL = unread.
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     status: Mapped[NotificationStatus] = mapped_column(
         _notification_status_enum, nullable=False, server_default=NotificationStatus.ACCEPTED.value
     )
@@ -239,6 +242,7 @@ class Notification(Base):
         UniqueConstraint("project_id", "idempotency_key", name="uq_notifications_idempotency"),
         Index("ix_notifications_project_created", "project_id", "created_at"),
         Index("ix_notifications_recipient", "project_id", "recipient_id"),
+        Index("ix_notifications_inbox", "recipient_id", "created_at", "id"),
         CheckConstraint(
             "jsonb_typeof(channels) = 'array'", name="ck_notifications_channels_array"
         ),
@@ -275,6 +279,10 @@ class Delivery(Base):
     template_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("templates.id", ondelete="SET NULL"), nullable=True
     )
+    # Push only: the device this copy targets. NULL for every other channel.
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("push_devices.id", ondelete="RESTRICT"), nullable=True
+    )
 
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -290,11 +298,51 @@ class Delivery(Base):
 
     __table_args__ = (
         # Fan-out is at-least-once, so it can run twice for the same message.
-        # This is what makes the second run a no-op rather than a duplicate email.
-        UniqueConstraint("notification_id", "channel", name="uq_deliveries_notification_channel"),
+        # This is what makes the second run a no-op rather than a duplicate send.
+        # NULLS NOT DISTINCT so non-push channels (device_id NULL) stay one per channel.
+        UniqueConstraint(
+            "notification_id",
+            "channel",
+            "device_id",
+            name="uq_deliveries_notification_channel_device",
+            postgresql_nulls_not_distinct=True,
+        ),
         Index("ix_deliveries_status_due", "status", "next_attempt_at"),
         Index("ix_deliveries_project_created", "project_id", "created_at"),
         CheckConstraint("attempts >= 0", name="ck_deliveries_attempts_nonnegative"),
+    )
+
+
+class PushDevice(Base):
+    """One app install that can receive push, owned by one Keycloak subject."""
+
+    __tablename__ = "push_devices"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_sub: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    # The native FCM registration token or APNs device token. Globally unique:
+    # a handset passed to another surveyor re-binds to whoever signed in last.
+    token: Mapped[str] = mapped_column(Text, nullable=False)
+    apns_environment: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    app_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    deactivated_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+    __table_args__ = (
+        UniqueConstraint("token", name="uq_push_devices_token"),
+        CheckConstraint("platform IN ('android', 'ios')", name="ck_push_devices_platform"),
+        CheckConstraint(
+            "(platform = 'ios' AND apns_environment IN ('sandbox', 'production'))"
+            " OR (platform = 'android' AND apns_environment IS NULL)",
+            name="ck_push_devices_apns_environment",
+        ),
+        Index("ix_push_devices_user_active", "user_sub", postgresql_where=text("active")),
     )
 
 

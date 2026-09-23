@@ -285,6 +285,7 @@ async def list_deliveries(
             DeliveryResponse(
                 id=row.id,
                 channel=row.channel.value,
+                device_id=row.device_id,
                 status=row.status,
                 attempts=row.attempts,
                 address=_redact_address(row.address),

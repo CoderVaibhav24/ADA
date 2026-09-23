@@ -12,14 +12,14 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models import Channel, DeliveryStatus, NotificationStatus
 
 # Every channel the enum knows about is a valid database value. Only these are
 # accepted at the API boundary in v0.1. Adding SMS is deleting one line here and
 # writing one Channel implementation — no migration, no contract change.
-ENABLED_CHANNELS: frozenset[str] = frozenset({Channel.EMAIL.value})
+ENABLED_CHANNELS: frozenset[str] = frozenset({Channel.EMAIL.value, Channel.PUSH.value})
 
 
 class Recipient(BaseModel):
@@ -274,6 +274,8 @@ class DeliveryResponse(BaseModel):
 
     id: uuid.UUID
     channel: str
+    # Push only: which registered device this copy went to.
+    device_id: uuid.UUID | None = None
     status: DeliveryStatus
     attempts: int
     # Redacted before it leaves the handler. A delivery record is readable by
@@ -292,3 +294,76 @@ class DeliveryList(BaseModel):
     notification_id: uuid.UUID
     status: NotificationStatus
     deliveries: list[DeliveryResponse]
+
+
+# --- End-user endpoints (/v1/me) -------------------------------------------
+
+
+class DeviceRegister(BaseModel):
+    """Register or refresh this install's native push token. Idempotent on token."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "platform": "ios",
+                    "token": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+                    "apns_environment": "sandbox",
+                    "app_version": "1.0.0 (42)",
+                }
+            ]
+        },
+    )
+
+    platform: Literal["android", "ios"]
+    # Native FCM registration token (Android) or hex APNs device token (iOS).
+    token: Annotated[str, Field(min_length=16, max_length=4096, pattern=r"^[A-Za-z0-9:_\-]+$")]
+    # Required for iOS, forbidden for Android: dev builds get sandbox tokens.
+    apns_environment: Literal["sandbox", "production"] | None = None
+    app_version: Annotated[str | None, Field(max_length=64)] = None
+
+    @model_validator(mode="after")
+    def _environment_matches_platform(self) -> DeviceRegister:
+        if self.platform == "ios" and self.apns_environment is None:
+            raise ValueError("apns_environment is required for iOS ('sandbox' or 'production')")
+        if self.platform == "android" and self.apns_environment is not None:
+            raise ValueError("apns_environment applies to iOS only")
+        return self
+
+
+class DeviceUnregister(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: Annotated[str, Field(min_length=16, max_length=4096)]
+
+
+class DeviceResponse(BaseModel):
+    id: uuid.UUID
+    platform: str
+    apns_environment: str | None
+    app_version: str | None
+    active: bool
+    last_seen: datetime
+    created_at: datetime
+
+
+class InboxItem(BaseModel):
+    """One notification addressed to the caller. A routing hint plus display text."""
+
+    id: uuid.UUID
+    project: str
+    type: str
+    case_ref: str | None
+    title: str | None
+    body: str | None
+    read: bool
+    read_at: datetime | None
+    created_at: datetime
+
+
+class InboxPage(BaseModel):
+    items: list[InboxItem]
+    # Opaque; pass back as ?cursor= for the next (older) page. NULL on the last page.
+    next_cursor: str | None
+    unread_count: int

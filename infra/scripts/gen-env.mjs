@@ -49,6 +49,17 @@ const VARS = [
   { name: 'KC_DB_PASSWORD', cls: CONFIG, def: '',
     desc: 'Password for KC_DB_USERNAME. EMPTY means "reuse POSTGRES_PASSWORD". Must be empty whenever KC_DB_USERNAME is empty — a non-empty password against the superuser name is simply a wrong password.' },
 
+  { name: 'DB_POOL_SIZE', cls: CONFIG, def: '20',
+    desc: 'SQLAlchemy connections ada-api and ada-ml each keep open. Sized to cover FastAPI\'s threadpool: a tile request holds a session across a blocking GDAL read, so the library default of 5 queues requests on the pool instead of on the event loop. Read by ada_core.config.PoolSettings; SQLite ignores every DB_POOL_* value.' },
+  { name: 'DB_MAX_OVERFLOW', cls: CONFIG, def: '20',
+    desc: 'Extra connections allowed above DB_POOL_SIZE during a burst, closed again when it passes. DB_POOL_SIZE + DB_MAX_OVERFLOW per service is the real ceiling — keep the total under the server\'s max_connections (100 by default) across ada-api, ada-ml and Keycloak.' },
+  { name: 'DB_POOL_TIMEOUT', cls: CONFIG, def: '30',
+    desc: 'Seconds a request waits for a free connection before failing. Without a ceiling an exhausted pool hangs the request instead of returning an error anyone can see.' },
+  { name: 'DB_POOL_RECYCLE', cls: CONFIG, def: '1800',
+    desc: 'Seconds before a pooled connection is reopened. Must stay BELOW any idle timeout in front of PostgreSQL (PgBouncer, a load balancer, a firewall), or the pool hands out sockets the other end has already closed.' },
+  { name: 'DB_POOL_PRE_PING', cls: CONFIG, def: 'true',
+    desc: 'Tests a pooled connection before handing it out. false turns a connection PostgreSQL closed underneath us into a random OperationalError on an unrelated request.' },
+
   { name: 'REDIS_PASSWORD', cls: SECRET, gen: () => b64url(BYTES.password),
     desc: 'requirepass for redis. Interpolated into ADA_REDIS_URL as redis://:PASSWORD@redis:6379/0 — the single strongest reason the generated alphabet excludes @ : / and %.',
     placeholder: 'generated-by-gen-env.mjs' },
@@ -81,6 +92,9 @@ const VARS = [
   { name: 'ADA_ML_CLIENT_SECRET', cls: SECRET, gen: () => b64url(BYTES.clientSecret),
     desc: 'client_secret for "ada-ml". Used to obtain the token ada-ml presents to ada-notify.',
     placeholder: 'generated-by-gen-env.mjs' },
+  { name: 'ADA_API_CLIENT_SECRET', cls: SECRET, gen: () => b64url(BYTES.clientSecret),
+    desc: 'client_secret for "ada-api" — the confidential client whose service account holds realm-management view-users, query-users, manage-users and view-realm. It is the credential behind every officer created, amended or disabled through /api/icms/admin/users, and it is deliberately NOT the bootstrap admin, which can administer every realm on the server. Empty is safe: ada-api refuses those six endpoints with a 503 saying so, rather than 401ing against Keycloak one request at a time.',
+    placeholder: 'generated-by-gen-env.mjs' },
 
   { name: 'ADA_GOOGLE_CLIENT_ID', cls: EXTERNAL,
     desc: 'Google OAuth client id. The "google" identity provider in realm-ada.json is enabled:false, so this is only needed if you turn it on. Obtain: Google Cloud console -> APIs & Services -> Credentials -> OAuth 2.0 Client ID (Web application).' },
@@ -112,6 +126,7 @@ const VARS = [
   { name: 'OIDC_CLIENT_ID', cls: CONFIG, def: 'ada-web', desc: 'Public SPA client (PKCE S256, holds no secret). Must match a clientId in realm-ada.json.' },
   { name: 'ADA_AUTH_CLIENT_ID', cls: CONFIG, def: 'ada-auth', desc: 'Confidential client whose service account holds realm-management impersonation.' },
   { name: 'ADA_ADMIN_CLIENT_ID', cls: CONFIG, def: 'ada-notify', desc: 'Client ada-worker authenticates as to read recipient email addresses from the admin API.' },
+  { name: 'ADA_API_CLIENT_ID', cls: CONFIG, def: 'ada-api', desc: 'Confidential client ada-api authenticates as to reach the Keycloak Admin API for officer administration. Must match a clientId in realm-ada.json.' },
   { name: 'NOTIFY_CLIENT_ID', cls: CONFIG, def: 'ada-ml', desc: 'Client ada-ml authenticates as when submitting notifications.' },
   { name: 'ADA_REQUIRED_SCOPE', cls: CONFIG, def: 'notify:send', desc: 'Scope ada-notify demands on an inbound token. The client scope name IS the OAuth scope value.' },
 
@@ -248,12 +263,13 @@ function wrapComment(text, width = 74) {
 
 const SECTIONS = [
   ['PostgreSQL', ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_KEYCLOAK_DB', 'POSTGRES_NOTIFY_DB', 'KC_DB_USERNAME', 'KC_DB_PASSWORD']],
+  ['PostgreSQL connection pool (ada-api, ada-ml)', ['DB_POOL_SIZE', 'DB_MAX_OVERFLOW', 'DB_POOL_TIMEOUT', 'DB_POOL_RECYCLE', 'DB_POOL_PRE_PING']],
   ['Redis', ['REDIS_PASSWORD', 'REDIS_HOST_PORT', 'ADA_REDIS_URL']],
   ['Keycloak server', ['KC_BOOTSTRAP_ADMIN_USERNAME', 'KC_BOOTSTRAP_ADMIN_PASSWORD', 'KC_HTTP_PORT', 'KC_HTTP_HOST_PORT', 'KC_MANAGEMENT_PORT', 'KC_HOSTNAME', 'KC_HTTP_RELATIVE_PATH', 'KC_HOSTNAME_STRICT', 'ADA_REALM', 'KC_CONTAINER', 'KC_ADMIN_URL']],
-  ['Keycloak realm import — confidential client secrets', ['ADA_NOTIFY_CLIENT_SECRET', 'ADA_AUTH_CLIENT_SECRET', 'ADA_ML_CLIENT_SECRET']],
+  ['Keycloak realm import — confidential client secrets', ['ADA_NOTIFY_CLIENT_SECRET', 'ADA_AUTH_CLIENT_SECRET', 'ADA_ML_CLIENT_SECRET', 'ADA_API_CLIENT_SECRET']],
   ['Keycloak realm import — external identity providers (disabled by default)', ['ADA_GOOGLE_CLIENT_ID', 'ADA_GOOGLE_CLIENT_SECRET', 'ADA_GOOGLE_HOSTED_DOMAIN', 'ADA_GITHUB_CLIENT_ID', 'ADA_GITHUB_CLIENT_SECRET']],
   ['Keycloak realm mail', ['KC_SMTP_HOST', 'KC_SMTP_PORT', 'KC_SMTP_FROM', 'KC_SMTP_FROM_DISPLAY_NAME', 'KC_SMTP_USERNAME', 'KC_SMTP_PASSWORD', 'KC_SMTP_STARTTLS', 'KC_SMTP_SSL']],
-  ['Shared identity configuration', ['ADA_ISSUER', 'ADA_INTERNAL_ISSUER_URL', 'OIDC_CLIENT_ID', 'ADA_AUTH_CLIENT_ID', 'ADA_ADMIN_CLIENT_ID', 'NOTIFY_CLIENT_ID', 'ADA_REQUIRED_SCOPE']],
+  ['Shared identity configuration', ['ADA_ISSUER', 'ADA_INTERNAL_ISSUER_URL', 'OIDC_CLIENT_ID', 'ADA_AUTH_CLIENT_ID', 'ADA_ADMIN_CLIENT_ID', 'ADA_API_CLIENT_ID', 'NOTIFY_CLIENT_ID', 'ADA_REQUIRED_SCOPE']],
   ['ada-auth — one-time codes', ['ADA_OTP_HMAC_KEY', 'ADA_SMS_PROVIDER', 'ADA_TWOFACTOR_API_KEY', 'ADA_TWOFACTOR_TEMPLATE', 'ADA_EMAIL_OTP_PROVIDER', 'ADA_AUTH_SMTP_HOST', 'ADA_AUTH_SMTP_PORT', 'ADA_AUTH_SMTP_USERNAME', 'ADA_AUTH_SMTP_PASSWORD', 'ADA_AUTH_SMTP_STARTTLS', 'ADA_AUTH_SMTP_SSL', 'ADA_AUTH_EMAIL_FROM', 'ADA_AUTH_EMAIL_FROM_NAME', 'ADA_OTP_PHONE_ATTRIBUTE', 'ADA_OTP_REVEAL_UNKNOWN_PHONE', 'ADA_OTP_REVEAL_UNKNOWN_EMAIL', 'ADA_DEV_OTP', 'ADA_ALLOW_OTP_DEV_BYPASS']],
   ['ada-notify / ada-worker — delivery', ['ADA_EMAIL_PROVIDER', 'ADA_SMTP_HOST', 'ADA_SMTP_PORT', 'ADA_SMTP_USERNAME', 'ADA_SMTP_PASSWORD', 'ADA_SMTP_STARTTLS', 'ADA_SMTP_SSL', 'ADA_EMAIL_FROM', 'ADA_EMAIL_FROM_NAME', 'NOTIFY_ENABLED', 'NOTIFY_URL']],
   ['Service-to-service', ['ML_SERVICE_TOKEN', 'ML_SERVICE_URL']],

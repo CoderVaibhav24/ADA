@@ -1,11 +1,11 @@
 import { Link, useLocation } from "react-router-dom";
 
-import { notFoundLabelsEn } from "./labels.en";
+import { useNotFoundLabels } from "@/i18n/labels";
 import { HOME_PATH } from "./paths";
 
 export default function NotFound() {
   const location = useLocation();
-  const labels = notFoundLabelsEn;
+  const labels = useNotFoundLabels();
 
   return (
     <div className="empty-screen">

@@ -4,12 +4,23 @@ import * as React from "react"
 import { cn } from "cn"
 import { Slider as SliderPrimitive } from "radix-ui"
 
+/**
+ * `aria-label` / `aria-labelledby` are intercepted rather than spread.
+ *
+ * Radix puts `role="slider"` on the THUMB, not on the Root, and names it from
+ * the thumb's own `aria-label` — falling back to `undefined` when there is a
+ * single thumb (`@radix-ui/react-slider` getLabel). Spreading onto the Root
+ * puts the name on a plain <span>, and `<Label htmlFor>` cannot reach a span
+ * either, so a one-thumb slider ends up with no accessible name at all.
+ */
 function Slider({
   className,
   defaultValue,
   value,
   min = 0,
   max = 100,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
   ...props
 }: React.ComponentProps<typeof SliderPrimitive.Root>) {
   const _values = React.useMemo(
@@ -52,6 +63,8 @@ function Slider({
         <SliderPrimitive.Thumb
           data-slot="slider-thumb"
           key={index}
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledBy}
           className="block size-4 shrink-0 rounded-full border border-primary bg-primary-foreground shadow-sm ring-ring/50 transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
         />
       ))}

@@ -40,15 +40,33 @@ def repo_root() -> Path:
 ROOT_DIR = repo_root()
 
 
-class CoreSettings(BaseSettings):
-    # Two candidates, in load order: the compose project's env file is the
-    # real one (infra/.env, beside the compose file that reads it), and a root
-    # .env is still honoured for a checkout that predates the move. Later
-    # entries win, so infra/.env overrides.
-    model_config = SettingsConfigDict(
-        env_file=(ROOT_DIR / ".env", ROOT_DIR / "infra" / ".env"),
-        extra="ignore",
-    )
+# Two candidates, in load order: the compose project's env file is the real one
+# (infra/.env, beside the compose file that reads it), and a root .env is still
+# honoured for a checkout that predates the move. Later entries win.
+ENV_FILES = (ROOT_DIR / ".env", ROOT_DIR / "infra" / ".env")
+
+
+class PoolSettings(BaseSettings):
+    """Connection-pool tuning, split out only so ada_core.database can read it
+    without a DATABASE_URL. CoreSettings inherits every field."""
+
+    model_config = SettingsConfigDict(env_file=ENV_FILES, extra="ignore")
+
+    # Sized to cover FastAPI's threadpool: a tile request holds a session across a
+    # blocking GDAL read and MapLibre opens a dozen at once, so SQLAlchemy's default
+    # 5 + 10 would queue requests on the pool instead of on the event loop.
+    db_pool_size: int = 20
+    db_max_overflow: int = 20
+    # Seconds a request waits for a free connection, so an exhausted pool fails rather than hangs.
+    db_pool_timeout: float = 30.0
+    # Under PgBouncer's idle timeout and most firewalls' idle cut, which is the point of it.
+    db_pool_recycle: int = 1800
+    # Off turns a connection PostgreSQL closed underneath us into a random OperationalError.
+    db_pool_pre_ping: bool = True
+
+
+class CoreSettings(PoolSettings):
+    model_config = SettingsConfigDict(env_file=ENV_FILES, extra="ignore")
 
     # Database. No default: a service that silently connects to localhost is
     # worse than one that refuses to start.

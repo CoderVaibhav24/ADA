@@ -10,9 +10,20 @@ import AnalysisPanel from "./AnalysisPanel";
 import RedZonePanel from "./RedZonePanel";
 import { IconCaret, IconGrip, IconUpload } from "./Icons";
 
-export default function Sidebar() {
+// `open` only matters below `lg`, where the panel is an off-canvas drawer. The
+// closed drawer is `visibility: hidden` in CSS, so its controls leave the tab
+// order rather than sitting focusable off-screen.
+export default function Sidebar({
+  id,
+  label,
+  open = true,
+}: {
+  id?: string;
+  label?: string;
+  open?: boolean;
+}) {
   return (
-    <aside className="sidebar">
+    <aside id={id} aria-label={label} className="sidebar" data-open={open}>
       <MapsSection />
       <AnalysisPanel />
       <RedZonePanel />

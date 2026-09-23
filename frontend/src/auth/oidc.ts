@@ -147,12 +147,30 @@ function renewOnce(): Promise<string | null> {
   return renewing;
 }
 
-export async function login(returnTo?: string): Promise<void> {
+/**
+ * A Keycloak application-initiated action to run once the password step passes.
+ *
+ * CONFIGURE_TOTP is the only one the sign-in screen offers: it is how an
+ * officer enrols or replaces an authenticator, and the QR code only ever
+ * renders on Keycloak's own page.
+ */
+export type LoginAction = "CONFIGURE_TOTP";
+
+export interface LoginOptions {
+  action?: LoginAction;
+}
+
+// kc_action rides on the authorize request; it is omitted rather than sent
+// empty, because Keycloak rejects a blank kc_action instead of ignoring it.
+export async function login(returnTo?: string, options?: LoginOptions): Promise<void> {
   const m = await auth();
   const target = safeReturnTo(
     returnTo ?? window.location.pathname + window.location.search,
   );
-  await m.signinRedirect({ state: { returnTo: target } });
+  await m.signinRedirect({
+    state: { returnTo: target },
+    ...(options?.action ? { extraQueryParams: { kc_action: options.action } } : {}),
+  });
 }
 
 export async function completeLogin(): Promise<string> {
@@ -187,11 +205,19 @@ export async function logout(): Promise<LogoutOutcome> {
   }
 }
 
+// Claim order must match profileName() in ProtectedLayout.tsx, or the rail and the
+// top bar name the same officer differently. Email is last: it is an address, not a person.
 export function displayName(user: User | null): string {
   const profile = user?.profile;
+  const given = profile?.given_name as string | undefined;
+  const family = profile?.family_name as string | undefined;
+  const full = [given, family].filter(Boolean).join(" ").trim();
+  const email = profile?.email as string | undefined;
   return (
-    (profile?.email as string | undefined) ??
-    (profile?.preferred_username as string | undefined) ??
+    (profile?.name as string | undefined) ||
+    full ||
+    (profile?.preferred_username as string | undefined) ||
+    email?.split("@")[0] ||
     "authenticated operator"
   );
 }

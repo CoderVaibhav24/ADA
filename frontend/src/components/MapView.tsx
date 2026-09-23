@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import maplibregl from "maplibre-gl";
 import type {
   ExpressionSpecification,
@@ -12,7 +12,7 @@ import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import type { FeatureCollection, Polygon } from "geojson";
 import { api } from "../api/client";
 import { accessToken, cachedAccessToken } from "../auth/oidc";
-import type { ChangeFeatureProps, TileInfo } from "../api/types";
+import type { ChangeFeatureProps, Id, TileInfo } from "../api/types";
 import { sid, useStore } from "../state/store";
 import { createRedZone } from "../state/actions";
 import HoverPopup from "./HoverPopup";
@@ -107,8 +107,15 @@ const FILL_COLOR_EXPR = [
   ["match", ["get", "status"], "illegal", COLOR_ILLEGAL, COLOR_CHANGE],
 ] as unknown as ExpressionSpecification;
 
+// The ring on the detection the officer has open. First case wins, so it
+// outranks every status colour — a selected polygon must be findable on a map
+// covered in red ones. Inert unless setFeatureState has been called.
+const COLOR_SELECTED = "#ffffff";
+
 const LINE_COLOR_EXPR = [
   "case",
+  ["boolean", ["feature-state", "selected"], false],
+  COLOR_SELECTED,
   ["==", ["get", "review_status"], "rejected"],
   COLOR_REJECTED,
   [
@@ -123,6 +130,8 @@ const LINE_COLOR_EXPR = [
 /** Confirmed violations get a heavier outline — they are the official record. */
 const LINE_WIDTH_EXPR = [
   "case",
+  ["boolean", ["feature-state", "selected"], false],
+  4,
   ["==", ["get", "review_status"], "rejected"],
   0.8,
   ["==", ["get", "review_status"], "confirmed"],
@@ -130,7 +139,47 @@ const LINE_WIDTH_EXPR = [
   ["match", ["get", "status"], "illegal", 2.4, 1.4],
 ] as unknown as ExpressionSpecification;
 
-export default function MapView() {
+/** The few map commands a toolbar outside this component needs to issue. */
+export type MapViewHandle = {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitBounds: (bounds: [number, number, number, number]) => void;
+};
+
+export type MapSelection = {
+  jobId: string;
+  featureId: Id;
+  props: ChangeFeatureProps;
+};
+
+/**
+ * Every prop is optional and every default reproduces the behaviour this
+ * component had when Dashboard was its only caller. The Change Detection screen
+ * draws its own legend, its own empty state and its own layer tree, so it turns
+ * the built-in ones off rather than standing up a second map.
+ */
+export type MapViewProps = {
+  ref?: Ref<MapViewHandle>;
+  /** The detection under the pointer, or null when the click missed one. */
+  onSelect?: (selection: MapSelection | null) => void;
+  /** Which detection to ring. Owned outside, so a list and the map agree. */
+  selection?: { jobId: string; featureId: Id } | null;
+  onZoomChange?: (zoom: number) => void;
+  showLegend?: boolean;
+  showEmptyHint?: boolean;
+  /** The OpenStreetMap base layer, as one entry in a layer tree. */
+  basemapVisible?: boolean;
+};
+
+export default function MapView({
+  ref,
+  onSelect,
+  selection = null,
+  onZoomChange,
+  showLegend = true,
+  showEmptyHint = true,
+  basemapVisible = true,
+}: MapViewProps = {}) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MlMap | null>(null);
@@ -153,6 +202,40 @@ export default function MapView() {
   const features = useStore((s) => s.features);
   const drawActive = useStore((s) => s.drawActive);
   const fitRequest = useStore((s) => s.fitRequest);
+
+  // The init effect below runs once and must not be re-created when a caller
+  // passes a new inline callback, so the callbacks are reached through refs.
+  // Assigned in effects rather than during render: a ref written during render
+  // is a rendering side effect, and these two effects are declared BEFORE the
+  // init effect so they have already run by the time the map exists.
+  const onSelectRef = useRef<MapViewProps["onSelect"]>(undefined);
+  const onZoomChangeRef = useRef<MapViewProps["onZoomChange"]>(undefined);
+  const selectedRef = useRef<{ source: string; id: string | number } | null>(null);
+
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+
+  useEffect(() => {
+    onZoomChangeRef.current = onZoomChange;
+  }, [onZoomChange]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomIn: () => mapRef.current?.zoomIn(),
+      zoomOut: () => mapRef.current?.zoomOut(),
+      fitBounds: ([w, s, e, n]) =>
+        mapRef.current?.fitBounds(
+          [
+            [w, s],
+            [e, n],
+          ],
+          { padding: 56, duration: 700, maxZoom: 20 },
+        ),
+    }),
+    [],
+  );
 
   // Keep the token MapLibre attaches to tile requests current. Sixty seconds
   // against a short-lived access token: a stale one costs a 401 on a tile,
@@ -281,7 +364,38 @@ export default function MapView() {
         }
       });
 
+      onZoomChangeRef.current?.(map.getZoom());
       setMapReady(true);
+    });
+
+    map.on("zoom", () => onZoomChangeRef.current?.(map.getZoom()));
+
+    // Click: adopt the change polygon under the pointer as the selection. A
+    // click that hits none of them reports null rather than nothing, because
+    // "clicked away" is how the detail panel gets closed.
+    map.on("click", (e) => {
+      if (drawActiveRef.current) return;
+      const report = onSelectRef.current;
+      if (!report) return;
+      const layerIds = map
+        .getStyle()
+        .layers.map((l) => l.id)
+        .filter((lid) => lid.startsWith("poly-fill-"));
+      const hit =
+        layerIds.length === 0
+          ? undefined
+          : map.queryRenderedFeatures(e.point, { layers: layerIds })[0];
+      // No id means no review, no preview and no highlight — see
+      // features/changeDetection/model.ts, which drops the same features.
+      if (!hit || hit.id === undefined) {
+        report(null);
+        return;
+      }
+      report({
+        jobId: hit.layer.id.replace("poly-fill-", ""),
+        featureId: hit.id,
+        props: hit.properties as unknown as ChangeFeatureProps,
+      });
     });
 
     // Hover: track change polygons under the cursor.
@@ -574,6 +688,41 @@ export default function MapView() {
     }
   }, [mapReady, redZones, zoneVisible]);
 
+  // ---------------------------------------------------------- base map
+  // The OpenStreetMap layer is a LAYER, not scenery: the OneMap UP model puts
+  // it at the foot of the tree with its own toggle. Dashboard never passes the
+  // prop, so it stays visible there.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !map.getLayer("basemap-osm")) return;
+    map.setLayoutProperty(
+      "basemap-osm",
+      "visibility",
+      basemapVisible ? "visible" : "none",
+    );
+  }, [mapReady, basemapVisible]);
+
+  // --------------------------------------------------------- selection ring
+  // `features` is a dependency because the selection can be set before its
+  // source exists — choosing a detection from the list while the collection is
+  // still arriving — and feature-state on a missing source is silently dropped.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const previous = selectedRef.current;
+    if (previous && map.getSource(previous.source)) {
+      map.removeFeatureState({ source: previous.source, id: previous.id });
+    }
+    selectedRef.current = null;
+
+    if (!selection) return;
+    const source = `poly-src-${selection.jobId}`;
+    if (!map.getSource(source)) return;
+    map.setFeatureState({ source, id: selection.featureId }, { selected: true });
+    selectedRef.current = { source, id: selection.featureId };
+  }, [mapReady, selection, features]);
+
   // -------------------------------------------------------------- fitBounds
   useEffect(() => {
     const map = mapRef.current;
@@ -593,7 +742,7 @@ export default function MapView() {
   return (
     <div className="map-wrap" ref={wrapRef}>
       <div className="map-canvas" ref={containerRef} />
-      {mapReady && noRasters && (
+      {mapReady && noRasters && showEmptyHint && (
         <div className="map-hint-card">
           <div className="empty-kicker">No imagery yet</div>
           <p>
@@ -603,7 +752,7 @@ export default function MapView() {
           </p>
         </div>
       )}
-      <Legend />
+      {showLegend && <Legend />}
       {hover && (
         <HoverPopup
           hover={hover}

@@ -33,6 +33,7 @@ from ada_platform.errors import (
     ADAError,
     ADAScopeError,
     ADAUnavailable,
+    JwksUnavailableError,
 )
 from ada_platform.notify import ADANotify, SendOutcome
 from ada_platform.verify import Principal, TokenVerifier
@@ -47,6 +48,7 @@ __all__ = [
     "ADANotify",
     "ADAScopeError",
     "ADAUnavailable",
+    "JwksUnavailableError",
     "Principal",
     "SendOutcome",
     "TokenVerifier",

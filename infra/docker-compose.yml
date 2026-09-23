@@ -68,6 +68,9 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set KC_BOOTSTRAP_ADMIN_PASSWORD in .env}
       KC_HTTP_PORT: "${KC_HTTP_PORT:-8090}"
       KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:5173/idp}
+      # Admin console on the published port. Without it KC_HOSTNAME sends the console to
+      # 5173 too, so the console is unreachable whenever the frontend is not running.
+      KC_HOSTNAME_ADMIN: ${KC_HOSTNAME_ADMIN:-http://localhost:${KC_HTTP_HOST_PORT:-8090}/idp}
       KC_HTTP_RELATIVE_PATH: ${KC_HTTP_RELATIVE_PATH:-/idp}
       KC_PROXY_HEADERS: xforwarded
       KC_HOSTNAME_STRICT: "${KC_HOSTNAME_STRICT:-false}"
@@ -205,6 +208,8 @@ services:
       ADA_ENV: ${ADA_ENV:-local}
       ADA_LOG_LEVEL: ${ADA_LOG_LEVEL:-INFO}
       ADA_REQUIRED_SCOPE: ${ADA_REQUIRED_SCOPE:-notify:send}
+      # Clients whose end-user tokens may call /v1/me (device registration, inbox).
+      ADA_USER_CLIENT_IDS: ${ADA_USER_CLIENT_IDS:-ada-field}
     ports:
       - "127.0.0.1:${ADA_NOTIFY_PORT:-8001}:8001"
     healthcheck:
@@ -248,6 +253,18 @@ services:
       ADA_EMAIL_FROM_NAME: ${ADA_EMAIL_FROM_NAME:-ADA}
       ADA_ADMIN_CLIENT_ID: ${ADA_ADMIN_CLIENT_ID:-ada-notify}
       ADA_ADMIN_CLIENT_SECRET: ${ADA_NOTIFY_CLIENT_SECRET:?set ADA_NOTIFY_CLIENT_SECRET in .env}
+      # Direct push (FCM HTTP v1 + APNs). Unset or missing files disable that
+      # platform with a startup warning; the worker still starts.
+      ADA_PUSH_PROVIDER: ${ADA_PUSH_PROVIDER:-native}
+      ADA_FCM_PROJECT_ID: ${ADA_FCM_PROJECT_ID:-}
+      ADA_FCM_SERVICE_ACCOUNT_FILE: ${ADA_FCM_SERVICE_ACCOUNT_FILE:-/run/ada-secrets/fcm-service-account.json}
+      ADA_APNS_KEY_FILE: ${ADA_APNS_KEY_FILE:-/run/ada-secrets/apns-key.p8}
+      ADA_APNS_KEY_ID: ${ADA_APNS_KEY_ID:-}
+      ADA_APNS_TEAM_ID: ${ADA_APNS_TEAM_ID:-}
+      ADA_APNS_BUNDLE_ID: ${ADA_APNS_BUNDLE_ID:-com.adaicms.field}
+    volumes:
+      # infra/secrets/ is gitignored; credentials never enter the image or the repo.
+      - ./secrets:/run/ada-secrets:ro
     command: ["python", "-m", "app.worker"]
     networks: [ada]
 
@@ -264,6 +281,12 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      # POOL_SIZE + MAX_OVERFLOW across ada-api, ada-ml and Keycloak must stay under max_connections.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-true}
       DATA_DIR: ${ADA_DATA_PATH:-/app/data}
       ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -320,11 +343,21 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      # POOL_SIZE + MAX_OVERFLOW across ada-api, ada-ml and Keycloak must stay under max_connections.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-true}
       DATA_DIR: ${ADA_DATA_PATH:-/app/data}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OIDC_ISSUER: ${ADA_ISSUER:?set ADA_ISSUER in .env}
       OIDC_INTERNAL_ISSUER_URL: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-ada-web}
+      # ada-api's own confidential client, for officer administration against the
+      # Keycloak Admin API. Empty disables those six endpoints with a clear 503.
+      OIDC_ADMIN_CLIENT_ID: ${ADA_API_CLIENT_ID:-ada-api}
+      OIDC_ADMIN_CLIENT_SECRET: ${ADA_API_CLIENT_SECRET:-}
       ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ada-ml:8100}
       ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
       WEBSITE_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
@@ -336,7 +369,9 @@ services:
 
   frontend:
     build:
-      context: ../frontend
+      # Root context, not ../frontend: @ada/shared only resolves from the workspace root.
+      context: ..
+      dockerfile: frontend/Dockerfile
     image: ada/frontend:0.1.0
     container_name: ada-frontend
     restart: unless-stopped
@@ -345,6 +380,23 @@ services:
         condition: service_started
     ports:
       - "${FRONTEND_PORT:-5173}:80"
+    networks: [ada]
+
+  # Self-hosted OTA updates for the field app (app/README.md §Shipping a change).
+  # Opt-in: `docker compose --profile ota up -d ada-ota`. Releases are written to
+  # data/ota-updates by app/scripts/publish-update.mjs, already signed. This
+  # service holds no signing key, so a compromised host cannot sign new code.
+  ada-ota:
+    profiles: [ota]
+    build:
+      context: ./ota
+    image: ada/ota:0.1.0
+    container_name: ada-ota
+    restart: unless-stopped
+    volumes:
+      - ../data/ota-updates:/updates:ro
+    ports:
+      - "${ADA_OTA_BIND:-127.0.0.1}:${ADA_OTA_PORT:-8020}:8020"
     networks: [ada]
 
 volumes:

@@ -13,6 +13,12 @@ call to Keycloak on the request path. The practical consequence is worth stating
 plainly: while Keycloak is down, nobody can sign in and everybody already signed
 in keeps working.
 
+It is a floor, not an opt-in: JWTMiddleware refuses anything outside the four
+paths in app/security.py PUBLIC_PATHS before it reaches a router, so an endpoint
+added without its `Depends(...)` answers 401 rather than serving anonymously.
+The per-endpoint role, permission and workflow checks are unchanged and still
+decide what a verified caller may do.
+
 This replaced SuperTokens, which verified a session cookie against a SuperTokens
 core. The user identifier therefore changed shape — from a SuperTokens user id
 to a Keycloak subject — and `projects.user_id` rows written before the swap name
@@ -30,22 +36,68 @@ nobody wants to be reading a stack trace.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
+from ada_core.database import SessionLocal, get_engine
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# .config FIRST — it builds the settings and binds the engine, and the routers
-# below open sessions. `isort: skip` is what stops an import sorter reordering
-# a line whose position is the behaviour.
-from .config import settings  # isort: skip
-
-from .routers import analysis, projects, rasters, redzones, tiles
+from .config import settings
+from .errors import install_error_handlers
+from .icms import policy
+from .routers import (
+    analysis,
+    app_screens,
+    icms,
+    icms_admin,
+    icms_cases,
+    icms_dashboard,
+    icms_inspections,
+    icms_notices,
+    icms_users,
+    projects,
+    rasters,
+    redzones,
+    tiles,
+)
+from .security import JWTMiddleware
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 log = logging.getLogger("ada.api")
 
+
+# A worker that starts serving before it has read the policy answers from the
+# code seed, which is the wrong answer the moment an officer has edited a grant.
+def _load_policy() -> None:
+    try:
+        with SessionLocal() as db:
+            policy.reload(db)
+    except Exception:
+        log.warning("ICMS policy tables unreadable; serving the code seed", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Load the policy once, then keep it current for the life of the worker."""
+    watcher: policy.PolicyWatcher | None = None
+    if settings.icms_policy_watch:
+        await asyncio.to_thread(_load_policy)
+        watcher = policy.PolicyWatcher(
+            get_engine(), poll_seconds=settings.icms_policy_poll_seconds
+        )
+        watcher.start()
+    try:
+        yield
+    finally:
+        if watcher is not None:
+            await watcher.stop()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="ADA Change Detection API",
     version="0.1.0",
     summary="Projects, imagery and change analyses for the ADA officer console.",
@@ -55,15 +107,29 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
+# add_middleware PREPENDS, so these three read inside-out: the last one added is
+# the outermost. The resulting order is RequestId -> CORS -> JWT -> router, and
+# both of the outer two are outside the floor for a reason:
+#
+#   * RequestId sets the contextvar the refusal envelope's `request_id` comes
+#     from. Outside the floor, a 401 carries an id somebody can find in a log;
+#     inside it, that field is empty on exactly the responses people ask about.
+#   * CORS answers the browser's preflight itself — an OPTIONS carrying no
+#     Authorization header, which the floor would otherwise refuse — and puts
+#     Access-Control-Allow-Origin on the 401, without which the SPA sees an
+#     opaque network error rather than "refresh your token".
+app.add_middleware(JWTMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.website_origin],
-    # Still true with bearer tokens rather than cookies: the frontend sends the
-    # Authorization header, and a preflight has to be told the header is allowed.
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+install_error_handlers(app)
 
 API = "/api"
 app.include_router(projects.router, prefix=API)
@@ -71,6 +137,14 @@ app.include_router(rasters.router, prefix=API)
 app.include_router(redzones.router, prefix=API)
 app.include_router(analysis.router, prefix=API)
 app.include_router(tiles.router, prefix=API)
+app.include_router(icms.router, prefix=API)
+app.include_router(icms_cases.router, prefix=API)
+app.include_router(icms_inspections.router, prefix=API)
+app.include_router(icms_notices.router, prefix=API)
+app.include_router(icms_dashboard.router, prefix=API)
+app.include_router(icms_admin.router, prefix=API)
+app.include_router(icms_users.router, prefix=API)
+app.include_router(app_screens.router, prefix=API)
 
 
 @app.get("/api/health")

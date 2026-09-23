@@ -20,10 +20,14 @@
  * position, `aria-sort` on the sorted header, and a roving tabindex so the
  * whole table is reachable with the arrow keys instead of 250 tab stops.
  *
- * **It scrolls horizontally rather than reflowing.** A government register is
- * read by comparing rows down a column; turning each row into a card at 360px
- * destroys the one affordance that makes it readable. The columns keep their
- * minimum widths and the container scrolls.
+ * **It reflows by column PRIORITY, not by turning rows into cards.** A
+ * government register is read by comparing rows down a column, and a card list
+ * destroys that. At `md` and above the columns keep their minimum widths and
+ * the container scrolls sideways. Below `md` the grid keeps only the columns
+ * whose `meta.priority` is `primary` — identity and state — and moves the rest
+ * into a per-row record sheet. It is still a table, still one row per record,
+ * still comparable down the column that matters, and it fits 360px without a
+ * horizontal scrollbar.
  */
 
 import {
@@ -49,6 +53,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -58,6 +69,7 @@ import { ErrorState, TableLoadingRows } from "@/components/icms/states";
 import { RegisterPagination } from "@/components/icms/RegisterPagination";
 import { IcmsApiError } from "@/api/icms/http";
 import { Icon } from "@/lib/icons";
+import { useIsNarrow } from "@/lib/useMediaQuery";
 import {
   DataTableColumnHeader,
   DataTableExportButton,
@@ -71,6 +83,7 @@ import { directionOf } from "./sort";
 import type { DataTableColumnMeta, DataTableProps, RowAction } from "./types";
 
 const SELECT_COLUMN_ID = "__select";
+const DETAILS_COLUMN_ID = "__details";
 
 /** Row heights, in px, used only when windowing is on and rows must be uniform. */
 const ROW_HEIGHT = { compact: 48, standard: 60 } as const;
@@ -120,6 +133,14 @@ export function DataTable<TRow>({
   const searchId = useId();
   const tableRef = useRef<HTMLTableElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const narrow = useIsNarrow();
+
+  /* ---- narrow layout --------------------------------------------------
+     Below `md` the table keeps its `primary` columns and the rest of the
+     record moves into a sheet, one row at a time. Held by row id rather than
+     by row object so a background refetch cannot leave the sheet showing a
+     row that is no longer on the page. */
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   /* ---- selection ------------------------------------------------------
      Kept locally and NOT in the URL: a selection is something the officer is
@@ -131,6 +152,7 @@ export function DataTable<TRow>({
   const visibleKey = `${state.page}|${state.size}|${state.sort}|${state.q}|${JSON.stringify(state.filters)}`;
   useEffect(() => {
     setSelected(new Set());
+    setDetailId(null);
   }, [visibleKey]);
 
   /* ---- columns --------------------------------------------------------- */
@@ -145,16 +167,63 @@ export function DataTable<TRow>({
     [],
   );
 
-  const allColumns = useMemo(
-    () => (enableSelection ? [selectionColumn, ...columns] : columns),
-    [columns, enableSelection, selectionColumn],
+  // 44px target, and its accessible name carries the record id: twenty-five
+  // buttons all called "Details" are twenty-five identical stops in a rotor.
+  const detailsColumn = useMemo<ColumnDef<TRow, unknown>>(
+    () => ({
+      id: DETAILS_COLUMN_ID,
+      header: () => <span className="sr-only">{labels.detailsColumn}</span>,
+      enableHiding: false,
+      meta: {
+        alwaysVisible: true,
+        align: "end",
+        priority: "primary",
+        menuLabel: labels.detailsColumn,
+      },
+      cell: ({ row }) => {
+        const id = getRowId(row.original);
+        return (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label={labels.openDetails(id)}
+            onClick={() => {
+              setDetailId(id);
+            }}
+          >
+            <Icon name="action.more" className="size-4" />
+          </Button>
+        );
+      },
+    }),
+    [getRowId, labels],
   );
+
+  // Selection is a desktop affordance. Below `md` the 82px rail has already
+  // taken a quarter of a 360px screen, and a tick column would cost another 40
+  // of what is left; the record sheet is the mobile answer to "act on this row".
+  const allColumns = useMemo(() => {
+    const withSelection = enableSelection && !narrow;
+    const base = withSelection ? [selectionColumn, ...columns] : [...columns];
+    return narrow ? [...base, detailsColumn] : base;
+  }, [columns, detailsColumn, enableSelection, narrow, selectionColumn]);
+
+  /** Columns the BREAKPOINT hides, as opposed to the ones the officer hid. */
+  const narrowHiddenIds = useMemo(() => {
+    if (!narrow) return [] as string[];
+    return columns
+      .filter((column) => metaOf(column)?.priority !== "primary")
+      .map((column) => column.id)
+      .filter((id): id is string => id != null);
+  }, [columns, narrow]);
 
   const columnVisibility = useMemo<VisibilityState>(() => {
     const visibility: VisibilityState = {};
     for (const id of state.hiddenColumns) visibility[id] = false;
+    for (const id of narrowHiddenIds) visibility[id] = false;
     return visibility;
-  }, [state.hiddenColumns]);
+  }, [narrowHiddenIds, state.hiddenColumns]);
 
   const table = useReactTable<TRow>({
     data: rows as TRow[],
@@ -179,7 +248,10 @@ export function DataTable<TRow>({
      Off below the threshold. Windowing a 25-row page costs more than it saves
      and breaks browser find-in-page, which officers genuinely use. It earns its
      keep only at the large page sizes (100, 200) the size control offers. */
-  const windowing = virtualize !== false && bodyRows.length >= virtualize.thresholdRows;
+  // Off in the narrow layout: wrapped Devanagari cells are not a uniform height,
+  // and a virtualiser told otherwise leaves gaps mid-scroll.
+  const windowing =
+    !narrow && virtualize !== false && bodyRows.length >= virtualize.thresholdRows;
   const rowHeight = virtualize === false ? ROW_HEIGHT[density] : virtualize.rowHeight;
 
   const virtualizer = useVirtualizer({
@@ -202,6 +274,26 @@ export function DataTable<TRow>({
   const renderedRows: { row: Row<TRow>; index: number }[] = windowing
     ? virtualRows.map((item) => ({ row: bodyRows[item.index], index: item.index }))
     : bodyRows.map((row, index) => ({ row, index }));
+
+  /* ---- the record sheet -------------------------------------------------
+     Everything the narrow layout could not show, for ONE row. It lists every
+     column, including the ones the officer hid on desktop: the column chooser
+     is a control about what fits across a table, not about what belongs to a
+     record, and a "full record" that silently drops four fields is a bug
+     report waiting to happen. */
+  const detailRow =
+    detailId === null
+      ? null
+      : (bodyRows.find((row) => getRowId(row.original) === detailId) ?? null);
+
+  const detailCells = detailRow
+    ? detailRow
+        .getAllCells()
+        .filter(
+          (cell) =>
+            cell.column.id !== SELECT_COLUMN_ID && cell.column.id !== DETAILS_COLUMN_ID,
+        )
+    : [];
 
   /* ---- selection helpers ------------------------------------------------ */
   const toggleRow = useCallback((id: string) => {
@@ -414,7 +506,9 @@ export function DataTable<TRow>({
                 labels={labels}
               />
             )}
-            {enableColumnVisibility && (
+            {/* The chooser is meaningless below `md`: the breakpoint, not the
+                officer, decides which columns are on screen there. */}
+            {enableColumnVisibility && !narrow && (
               <DataTableViewOptions
                 columns={table
                   .getAllLeafColumns()
@@ -442,7 +536,7 @@ export function DataTable<TRow>({
           </div>
         </div>
 
-        {enableSelection && bulkActions.length > 0 && (
+        {enableSelection && !narrow && bulkActions.length > 0 && (
           <DataTableSelectionBar
             count={selected.size}
             rows={selectedRows}
@@ -522,9 +616,17 @@ export function DataTable<TRow>({
                               ? "descending"
                               : "none"
                       }
-                      style={meta?.minWidth ? { minWidth: meta.minWidth } : undefined}
+                      style={
+                        !narrow && meta?.minWidth ? { minWidth: meta.minWidth } : undefined
+                      }
                       className={cn(
-                        "h-11 border-b border-line px-3 text-2xs font-medium tracking-wider text-fg-muted uppercase",
+                        // px-2 below `md`: three columns on a 360px phone minus an
+                        // 82px rail cannot spare 8px of gutter each.
+                        "h-11 border-b border-line text-2xs font-medium tracking-wider text-fg-muted uppercase",
+                        narrow ? "px-2" : "px-3",
+                        // The disclosure column is a 44px target, nothing else;
+                        // its leading gutter is 44px the two data columns need.
+                        narrow && header.column.id === DETAILS_COLUMN_ID && "ps-0 pe-1",
                         "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                         meta?.align === "end" && "text-end",
                       )}
@@ -614,10 +716,16 @@ export function DataTable<TRow>({
                               setActive({ row: index, col: columnIndex });
                             }}
                             aria-colindex={columnIndex + 1}
-                            style={meta?.minWidth ? { minWidth: meta.minWidth } : undefined}
+                            style={
+                              !narrow && meta?.minWidth
+                                ? { minWidth: meta.minWidth }
+                                : undefined
+                            }
                             className={cn(
                               density === "compact" ? "py-2" : "py-3",
-                              "px-3 align-middle whitespace-normal",
+                              narrow ? "px-2" : "px-3",
+                              narrow && cell.column.id === DETAILS_COLUMN_ID && "ps-0 pe-1",
+                              "align-middle whitespace-normal",
                               "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                               meta?.align === "end" && "text-end",
                               meta?.numeric && "tabular",
@@ -668,6 +776,45 @@ export function DataTable<TRow>({
             />
           </div>
         </div>
+
+        {/* Radix moves focus into the sheet and returns it to the trigger on
+            close, so the disclosure does not cost the officer their place in
+            the grid. The open/close animation is covered by the global
+            prefers-reduced-motion rule in styles/icms-theme.css. */}
+        <Sheet
+          open={detailRow !== null}
+          onOpenChange={(open) => {
+            if (!open) setDetailId(null);
+          }}
+        >
+          <SheetContent
+            side="bottom"
+            className="max-h-[85dvh] overflow-y-auto rounded-t-xl p-0"
+          >
+            <SheetHeader className="px-4 pt-4 pb-2">
+              <SheetTitle className="font-mono text-base break-all">{detailId}</SheetTitle>
+              <SheetDescription>{labels.detailsTitle}</SheetDescription>
+            </SheetHeader>
+            <dl className="grid grid-cols-1 gap-x-6 px-4 pb-8 sm:grid-cols-2">
+              {detailCells.map((cell) => {
+                const cellMeta = metaOf(cell.column.columnDef);
+                return (
+                  <div
+                    key={cell.id}
+                    className="flex min-w-0 flex-col gap-1 border-b border-line-subtle py-2.5 last:border-0"
+                  >
+                    <dt className="text-2xs font-medium tracking-wider text-fg-muted uppercase">
+                      {cellMeta?.menuLabel ?? cell.column.id}
+                    </dt>
+                    <dd className="min-w-0 text-sm text-fg-base">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </SheetContent>
+        </Sheet>
       </div>
     </TooltipProvider>
   );

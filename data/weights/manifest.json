@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-09-04T06:14:21.459589+00:00",
+  "note": "Vendored model weights. The app loads these from disk; no network access is required at runtime.",
+  "models": [
+    {
+      "key": "building_seg",
+      "source": "geobase/building-footprint-segmentation",
+      "requested_revision": "main",
+      "resolved_commit": "a291ab4910577f7bd7917fb2b133f9df125e80b0",
+      "local_path": "data/weights/building-footprint-segmentation",
+      "bytes": 29930570,
+      "license": "none declared upstream",
+      "role": "Per-epoch building footprint segmentation (ONNX U-Net, CPU)"
+    },
+    {
+      "key": "changestar",
+      "source": "geobase/changestar-building-segmentation-vitb",
+      "requested_revision": "main",
+      "resolved_commit": "8a6d7676d2fc9ea787b8786f2f05a65989c2606c",
+      "local_path": "data/weights/changestar-building-segmentation-vitb",
+      "bytes": 791399754,
+      "license": "none declared upstream (training data xBD: CC BY-NC-SA 4.0)",
+      "role": "Per-epoch building footprints (ChangeStar ViT-B, 1024 px, GPU). Default: raised BEFORE/AFTER agreement on the Agra pair from IoU 0.112 to 0.554, which is what makes the BEFORE epoch usable"
+    },
+    {
+      "key": "landcover",
+      "source": "IgorNer/segformer-b5-loveda",
+      "requested_revision": "main",
+      "resolved_commit": "6139163b1cf8e953a27ca4960950d6d4c067d72c",
+      "local_path": "data/weights/segformer-b5-loveda",
+      "bytes": 338549312,
+      "license": "NON-COMMERCIAL (NVIDIA SegFormer \u00a73.3 + LoveDA CC BY-NC-SA 4.0)",
+      "role": "Land cover / vegetation without a colour rule (SegFormer-B5, LoveDA 7-class, GPU)"
+    },
+    {
+      "key": "sam2",
+      "source": "facebook/sam2.1-hiera-large",
+      "requested_revision": "main",
+      "resolved_commit": "665f8e2ad61cf5f53d65644ff27c8ee525124610",
+      "local_path": "data/weights/sam2.1-hiera-large",
+      "bytes": 897932301,
+      "license": "Apache-2.0",
+      "role": "Full-structure refinement of confirmed detections (GPU). hiera-large, not -small: this decides the reported OUTLINE. For SAM 3 set SAM_BACKEND=sam3 \u2014 facebook/sam3 is GATED, so request access on the model page and log in first"
+    },
+    {
+      "key": "resnet18",
+      "source": "torchvision/resnet18 (IMAGENET1K_V1)",
+      "requested_revision": "v1",
+      "resolved_commit": "v1",
+      "local_path": "data/weights/resnet18/resnet18-f37072fd.pth",
+      "bytes": 46830571,
+      "license": "BSD-3-Clause",
+      "role": "Backbone for the alternate DCVA change-detection path (MODEL_MODE=cd)",
+      "sha256": "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec"
+    }
+  ]
+}

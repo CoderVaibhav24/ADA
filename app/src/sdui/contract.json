@@ -1,0 +1,236 @@
+{
+  "contractVersion": 1,
+  "schemaVersions": [1],
+  "runtime": "1.0",
+  "limits": {
+    "maxBytes": 65536,
+    "maxDepth": 12,
+    "maxNodes": 300,
+    "maxBindings": 12,
+    "maxListItems": 50,
+    "maxQueryKeys": 20,
+    "maxTextLength": 500
+  },
+  "dataPathPrefixes": ["/api/icms/"],
+  "callApiDenyPrefixes": ["/api/icms/admin/"],
+  "openUrlHosts": [],
+  "scopeRoots": ["params", "today", "data", "item", "index"],
+  "formatters": ["date", "datetime", "age", "number", "label"],
+  "actions": ["navigate", "refresh", "open_url", "call_api"],
+  "routes": {
+    "home": { "params": [] },
+    "complaints": { "params": [] },
+    "profile": { "params": [] },
+    "notifications": { "params": [] },
+    "complaint_detail": { "params": ["caseRef"] }
+  },
+  "enums": {
+    "align": ["auto", "left", "right", "center"],
+    "buttonSize": ["sm", "md", "lg"],
+    "buttonVariant": ["primary", "secondary", "ghost", "destructive"],
+    "chipAppearance": ["soft", "solid", "outline"],
+    "chipSize": ["sm", "md"],
+    "color": [
+      "surface0", "surface1", "surface2", "surface3", "surfaceMuted",
+      "ink0", "ink1", "ink2", "ink3", "inkOnMuted", "line1", "line2",
+      "brand", "brandPressed", "brandTint", "focus",
+      "statusNew", "statusScheduled", "statusProgress", "statusDone", "statusOverdue",
+      "priorityHigh", "priorityMedium", "priorityLow",
+      "gpsLocked", "gpsWeak", "gpsNone", "syncPending", "syncFailed", "syncClear"
+    ],
+    "icon": [
+      "add", "alert", "area", "arrowLeft", "arrowRight", "back", "bell", "calendar",
+      "camera", "check", "chevronDown", "chevronUp", "clock", "close", "complaints",
+      "crosshair", "document", "edit", "forward", "gallery", "gps", "home", "info",
+      "inspections", "location", "logout", "map", "measure", "navigate", "offline",
+      "phone", "photo", "profile", "remove", "reports", "search", "success", "sync",
+      "upload", "user", "verified", "view", "warning"
+    ],
+    "iconSize": ["sm", "md", "lg", "xl"],
+    "notificationKind": [
+      "assignment", "schedule", "reminder", "overdue", "approved", "resurvey", "sync"
+    ],
+    "priority": ["high", "medium", "low"],
+    "space": [0, 1, 2, 3, 4, 5, 6, 8],
+    "stateTone": ["empty", "error", "offline"],
+    "textVariant": ["title", "heading", "subheading", "label", "body", "caption", "mono"]
+  },
+  "components": {
+    "screen_header": {
+      "since": "1.0",
+      "children": true,
+      "action": "none",
+      "props": {
+        "title": { "kind": "text", "required": true },
+        "subtitle": { "kind": "text" }
+      }
+    },
+    "icon_button": {
+      "since": "1.0",
+      "children": false,
+      "action": "required",
+      "props": {
+        "icon": { "kind": "enum", "enum": "icon", "required": true },
+        "label": { "kind": "text", "required": true },
+        "badge": { "kind": "value" }
+      }
+    },
+    "stat_strip": { "since": "1.0", "children": true, "action": "none", "props": {} },
+    "stat_card": {
+      "since": "1.0",
+      "children": false,
+      "action": "optional",
+      "props": {
+        "label": { "kind": "text", "required": true },
+        "value": { "kind": "value", "required": true },
+        "icon": { "kind": "enum", "enum": "icon" },
+        "tone": { "kind": "enum", "enum": "color" }
+      }
+    },
+    "section": {
+      "since": "1.0",
+      "children": true,
+      "action": "none",
+      "props": { "title": { "kind": "text", "required": true } }
+    },
+    "card": {
+      "since": "1.0",
+      "children": true,
+      "action": "none",
+      "props": { "title": { "kind": "text" } }
+    },
+    "stack": {
+      "since": "1.0",
+      "children": true,
+      "action": "none",
+      "props": { "gap": { "kind": "enum", "enum": "space" } }
+    },
+    "row": {
+      "since": "1.0",
+      "children": true,
+      "action": "none",
+      "props": { "gap": { "kind": "enum", "enum": "space" } }
+    },
+    "list": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "requiresData": true,
+      "slots": { "item": true, "empty": false },
+      "props": {
+        "limit": { "kind": "integer", "min": 1, "max": 50 },
+        "divided": { "kind": "boolean" }
+      }
+    },
+    "list_row": {
+      "since": "1.0",
+      "children": false,
+      "action": "optional",
+      "props": {
+        "label": { "kind": "text", "required": true },
+        "value": { "kind": "text" },
+        "monospace": { "kind": "boolean" }
+      }
+    },
+    "notification_row": {
+      "since": "1.0",
+      "children": false,
+      "action": "optional",
+      "props": {
+        "kind": { "kind": "enum", "enum": "notificationKind", "required": true },
+        "body": { "kind": "text", "required": true },
+        "caseRef": { "kind": "text" },
+        "timeLabel": { "kind": "text", "required": true },
+        "unread": { "kind": "boolean" }
+      }
+    },
+    "text": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": {
+        "text": { "kind": "text", "required": true },
+        "variant": { "kind": "enum", "enum": "textVariant" },
+        "color": { "kind": "enum", "enum": "color" },
+        "align": { "kind": "enum", "enum": "align" },
+        "lines": { "kind": "integer", "min": 1, "max": 10 }
+      }
+    },
+    "button": {
+      "since": "1.0",
+      "children": false,
+      "action": "required",
+      "props": {
+        "label": { "kind": "text", "required": true },
+        "variant": { "kind": "enum", "enum": "buttonVariant" },
+        "size": { "kind": "enum", "enum": "buttonSize" },
+        "icon": { "kind": "enum", "enum": "icon" },
+        "fullWidth": { "kind": "boolean" }
+      }
+    },
+    "chip": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": {
+        "label": { "kind": "text", "required": true },
+        "tone": { "kind": "enum", "enum": "color" },
+        "appearance": { "kind": "enum", "enum": "chipAppearance" },
+        "size": { "kind": "enum", "enum": "chipSize" },
+        "dot": { "kind": "boolean" }
+      }
+    },
+    "priority_chip": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": { "priority": { "kind": "enum", "enum": "priority", "required": true } }
+    },
+    "icon": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": {
+        "name": { "kind": "enum", "enum": "icon", "required": true },
+        "size": { "kind": "enum", "enum": "iconSize" },
+        "color": { "kind": "enum", "enum": "color" },
+        "label": { "kind": "text" }
+      }
+    },
+    "in_progress": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": {
+        "title": { "kind": "text", "required": true },
+        "compact": { "kind": "boolean" }
+      }
+    },
+    "state_message": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": {
+        "tone": { "kind": "enum", "enum": "stateTone", "required": true },
+        "title": { "kind": "text", "required": true },
+        "message": { "kind": "text" }
+      }
+    },
+    "progress_bar": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": {
+        "value": { "kind": "value", "required": true },
+        "label": { "kind": "text" }
+      }
+    },
+    "spacer": {
+      "since": "1.0",
+      "children": false,
+      "action": "none",
+      "props": { "size": { "kind": "enum", "enum": "space" } }
+    },
+    "divider": { "since": "1.0", "children": false, "action": "none", "props": {} }
+  }
+}

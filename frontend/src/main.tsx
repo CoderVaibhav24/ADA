@@ -3,6 +3,8 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import ErrorBoundary from "./routes/ErrorBoundary";
+// Side-effect import: initialises i18next and sets <html lang> before first paint.
+import "./i18n";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles/icms-theme.css";
 import "./styles.css";

@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 import DesignSystemPage from "./DesignSystemPage";
 import { initTheme } from "@/lib/theme";
+// The showcase renders real primitives, so it needs the same i18next singleton.
+import "@/i18n";
 import "@/styles/icms-theme.css";
 
 initTheme();

@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
 import ada_core.database as database
-from ada_core.migrate import _STATEMENTS, run_migrations
+from ada_core.migrate import _STATEMENTS, CODE_VALUE_INSERT, CodeValueSeed, run_migrations
 
 
 def test_every_statement_is_idempotent():
@@ -17,7 +17,15 @@ def test_every_statement_is_idempotent():
     for statement in _STATEMENTS:
         head = statement.split()[0].upper()
         if head == "ALTER":
-            assert "IF NOT EXISTS" in statement, statement
+            if "ADD COLUMN" in statement.upper():
+                assert "IF NOT EXISTS" in statement, statement
+            else:
+                # SET NOT NULL, DROP NOT NULL and DROP DEFAULT are repeatable by
+                # nature: applying one to a column already in that state is a
+                # no-op, and PostgreSQL offers no IF NOT EXISTS form to write.
+                assert any(k in statement.upper() for k in
+                           ("SET NOT NULL", "DROP NOT NULL", "DROP DEFAULT",
+                            "SET DEFAULT")), statement
         elif head == "CREATE":
             assert "IF NOT EXISTS" in statement, statement
         elif head == "UPDATE":
@@ -73,3 +81,31 @@ def test_run_migrations_without_an_engine_is_a_clear_error(monkeypatch):
             run_migrations()
     finally:
         database._engine = previous
+
+
+def test_the_baselines_four_field_seed_rows_still_load():
+    """0001 is frozen and states its seventeen rows as
+    (domain, code, label, sort_order). The loader writes six columns now, so the
+    fifth and sixth have to default rather than shift the fourth."""
+    row = CodeValueSeed(*("delivery_mode", "affixation", "Affixation at site", 3))
+
+    assert (row.label, row.sort_order) == ("Affixation at site", 3)
+    assert (row.label_hi, row.parent_code) == (None, None)
+
+
+def test_a_seed_row_carries_a_parent_and_a_hindi_label():
+    """What the act and section domains need: a section hangs off its act, and
+    the label exists in both languages."""
+    row = CodeValueSeed("section", "sec_27", "Section 27", 3, "धारा 27", "up_upda_1973")
+
+    assert row.parent_code == "up_upda_1973"
+    assert set(row._asdict()) == {
+        "domain", "code", "label", "sort_order", "label_hi", "parent_code"}
+
+
+def test_the_seed_insert_is_bound_and_skips_what_is_already_there():
+    """Every value is a bind parameter, and a row that exists is left alone —
+    the seed runs against databases that have been hand-corrected."""
+    for name in ("domain", "code", "label", "label_hi", "parent_code", "sort_order"):
+        assert f":{name}" in CODE_VALUE_INSERT
+    assert "ON CONFLICT (domain, code) DO NOTHING" in CODE_VALUE_INSERT

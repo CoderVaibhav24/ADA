@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .datetimes import now_ist
 
 # JSONB on PostgreSQL, which is the only backend ADA runs on, and plain JSON on
 # SQLite, which is the only backend the test suite can create a schema on
@@ -17,10 +18,6 @@ from .database import Base
 Json = JSONB().with_variant(JSON(), "sqlite")
 
 
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
 class Project(Base):
     __tablename__ = "projects"
 
@@ -28,7 +25,7 @@ class Project(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_ist)
 
     rasters: Mapped[list["Raster"]] = relationship(
         back_populates="project", cascade="all, delete-orphan")
@@ -60,7 +57,7 @@ class Raster(Base):
     progress: Mapped[float] = mapped_column(Float, default=0.0)   # 0.0 - 1.0
     stage: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_ist)
 
     project: Mapped[Project] = relationship(back_populates="rasters")
 
@@ -75,7 +72,7 @@ class RedZone(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(200), default="Red zone")
     geometry: Mapped[dict] = mapped_column(Json)  # GeoJSON geometry, EPSG:4326
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_ist)
 
     project: Mapped[Project] = relationship(back_populates="red_zones")
 
@@ -98,7 +95,7 @@ class AnalysisJob(Base):
     params: Mapped[dict | None] = mapped_column(Json, nullable=True)
     mask_cog_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     stats: Mapped[dict | None] = mapped_column(Json, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_ist)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     project: Mapped[Project] = relationship(back_populates="jobs")

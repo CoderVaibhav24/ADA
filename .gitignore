@@ -119,3 +119,4 @@ backend/scripts
 .claude
 
 token.git
+# Turborepo local task cache and daemon logs.

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -44,15 +44,31 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import events, retry
 from app.broker import Broker, BrokerError, Message
 from app.channels import Channel as ChannelAdapter
-from app.channels import Outgoing, PermanentError, RetryableError
+from app.channels import Outgoing, PermanentError, PushTarget, RetryableError
 from app.config import Settings
-from app.models import Delivery, DeliveryStatus, Notification, NotificationStatus, Template
+from app.models import (
+    Delivery,
+    DeliveryStatus,
+    Notification,
+    NotificationStatus,
+    PushDevice,
+    Template,
+)
 from app.recipients import RecipientDirectory
 from app.rendering import TemplateError, render_message
 
 logger = structlog.get_logger(__name__)
 
 _TERMINAL = (DeliveryStatus.SENT, DeliveryStatus.FAILED, DeliveryStatus.DEAD)
+
+
+def push_data(*, notification_id: uuid.UUID, template_key: str, payload: dict) -> dict[str, str]:
+    """The push routing hint (push-and-permissions.md §5): type and case_ref, no detail."""
+    data = {"type": template_key, "notification_id": str(notification_id)}
+    case_ref = payload.get("case_ref")
+    if isinstance(case_ref, (str, int)) and str(case_ref):
+        data["case_ref"] = str(case_ref)[:64]
+    return data
 
 
 class DeliveryWorker:
@@ -207,6 +223,7 @@ class DeliveryWorker:
             # expired ORM attribute touched later would trigger a lazy refresh —
             # synchronous IO in an async task, i.e. MissingGreenlet.
             address = delivery.address
+            device_id = delivery.device_id
             channel = delivery.channel.value
             notification_id = delivery.notification_id
             recipient_id = notification.recipient_id
@@ -235,6 +252,20 @@ class DeliveryWorker:
                 )
                 return True
 
+            target: PushTarget | None = None
+            if device_id is not None:
+                device = await session.get(PushDevice, device_id)
+                if device is None or not device.active:
+                    await self._finish_permanent(
+                        session,
+                        delivery_id=delivery_id,
+                        error="push device was unregistered before this delivery was sent",
+                    )
+                    return True
+                target = PushTarget(
+                    platform=device.platform, apns_environment=device.apns_environment
+                )
+
             try:
                 rendered = render_message(subject=subject, body=body, payload=variables)
             except TemplateError as exc:
@@ -251,6 +282,14 @@ class DeliveryWorker:
                         body=rendered.body,
                         notification_id=notification_id,
                         delivery_id=delivery_id,
+                        push=target,
+                        data=push_data(
+                            notification_id=notification_id,
+                            template_key=template_key,
+                            payload=variables,
+                        )
+                        if target is not None
+                        else {},
                     )
                 )
             except PermanentError as exc:
@@ -260,6 +299,8 @@ class DeliveryWorker:
                     # re-reads Keycloak rather than repeating the same mistake
                     # out of cache.
                     self._directory.forget(recipient_id)
+                    if device_id is not None:
+                        await self._deactivate_device(session, device_id, reason=str(exc))
                 await self._finish_permanent(session, delivery_id=delivery_id, error=str(exc))
                 return True
             except RetryableError as exc:
@@ -271,6 +312,7 @@ class DeliveryWorker:
                     recipient_id=recipient_id,
                     attempts=attempts,
                     error=str(exc),
+                    retry_after=exc.retry_after,
                 )
             except Exception as exc:
                 # An adapter that raised something unclassified is more likely
@@ -301,6 +343,18 @@ class DeliveryWorker:
             return True
 
     # --- outcomes -----------------------------------------------------------
+
+    # A provider said this token is dead; stop fanning out to it.
+    async def _deactivate_device(
+        self, session: AsyncSession, device_id: uuid.UUID, *, reason: str
+    ) -> None:
+        device = await session.get(PushDevice, device_id)
+        if device is None or not device.active:
+            return
+        device.active = False
+        device.deactivated_reason = reason[:500]
+        await session.commit()
+        logger.warning("push_device_deactivated", device_id=str(device_id), reason=reason[:200])
 
     async def _finish_sent(
         self, session: AsyncSession, *, delivery_id: uuid.UUID, provider_message_id: str | None
@@ -344,6 +398,7 @@ class DeliveryWorker:
         recipient_id: uuid.UUID,
         attempts: int,
         error: str,
+        retry_after: float | None = None,
     ) -> bool:
         if retry.is_exhausted(attempts, self._settings):
             delivery = await session.get(Delivery, delivery_id)
@@ -371,6 +426,9 @@ class DeliveryWorker:
             return True
 
         due = retry.next_attempt_at(attempts, self._settings)
+        if retry_after:
+            # The provider's Retry-After is a floor; the ladder may still be later.
+            due = max(due, datetime.now(UTC) + timedelta(seconds=retry_after))
 
         delivery = await session.get(Delivery, delivery_id)
         if delivery is not None:

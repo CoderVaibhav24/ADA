@@ -14,17 +14,33 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LanguageSwitcher } from "@/i18n/LanguageSwitcher";
+import { useNavLabels, useShellLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 
-import { currentUser, displayName, logout } from "../auth/oidc";
-import { useRoles } from "../auth/roles";
+import { useCapabilityGate } from "@/features/policy/usePolicy";
+
+import { currentUser, logout } from "../auth/oidc";
 import ErrorBoundary from "./ErrorBoundary";
-import { navLabelsEn, shellLabelsEn } from "./labels.en";
-import { PRIMARY_NAV, activeNavId, isBleedPath, navForRoles } from "./nav";
+import {
+  PRIMARY_NAV,
+  activeNavId,
+  isBleedPath,
+  isNavLink,
+  navForPermissions,
+} from "./nav";
 import { HOME_PATH, LOGIN_PATH } from "./paths";
 
 const COLLAPSED_KEY = "icms.nav.collapsed";
 
+/**
+ * No notifications endpoint exists yet. The bell and its badge are built; the
+ * badge stays hidden until a real count can be read, rather than shipping the
+ * invented `3` the Figma frame draws.
+ */
+const UNREAD_NOTIFICATIONS = 0;
+
+// localStorage throws outright in a private window, so the preference is optional.
 function readCollapsed(): boolean {
   try {
     return window.localStorage.getItem(COLLAPSED_KEY) === "1";
@@ -33,10 +49,39 @@ function readCollapsed(): boolean {
   }
 }
 
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  return (words[0] ?? "?").slice(0, 2).toUpperCase();
+/**
+ * The person, not the mailbox.
+ *
+ * `auth/oidc.ts` `displayName` prefers `email`, which renders as a truncated
+ * `officer@pcsmcpl…` in a 200px pill. This reads the name claims first and only
+ * falls back to the local-part of an address when the token carries nothing else.
+ */
+function profileName(user: User | null): string {
+  const profile = user?.profile as Record<string, unknown> | undefined;
+  const claim = (key: string): string => {
+    const value = profile?.[key];
+    return typeof value === "string" ? value.trim() : "";
+  };
+
+  const full = claim("name");
+  if (full) return full;
+
+  const given = claim("given_name");
+  const family = claim("family_name");
+  if (given || family) return [given, family].filter(Boolean).join(" ");
+
+  const preferred = claim("preferred_username");
+  if (preferred && !preferred.includes("@")) return preferred;
+
+  const address = claim("email") || preferred;
+  return address ? (address.split("@")[0] ?? "") : "";
+}
+
+// One letter, from the same name the pill shows. Returns "" rather than "?" when the
+// profile has not loaded — a placeholder glyph reads as the officer's actual initial.
+function avatarInitial(name: string): string {
+  const first = name.trim().replace(/^[^\p{L}\p{N}]+/u, "").charAt(0);
+  return first ? first.toLocaleUpperCase() : "";
 }
 
 export default function ProtectedLayout() {
@@ -46,8 +91,12 @@ export default function ProtectedLayout() {
   const [user, setUser] = useState<User | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsed);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { roles } = useRoles();
+  // Permissions, not realm roles: the roles holding `policy.read` are editable
+  // from the Administration screen, so a rail keyed to `super-admin` would be
+  // wrong the first time somebody used it.
+  const { permissions } = useCapabilityGate();
+  const shellLabels = useShellLabels();
+  const navLabels = useNavLabels();
 
   useEffect(() => {
     void currentUser().then(setUser);
@@ -61,7 +110,10 @@ export default function ProtectedLayout() {
     }
   }, []);
 
+  // Guarded: the rail's Logout is a plain button, and a double tap would
+  // otherwise start two sign-outs and race the redirect.
   const handleSignOut = useCallback(async () => {
+    if (signingOut) return;
     setSigningOut(true);
     try {
       const outcome = await logout();
@@ -71,160 +123,143 @@ export default function ProtectedLayout() {
     } finally {
       setSigningOut(false);
     }
-  }, [navigate]);
+  }, [navigate, signingOut]);
 
   const go = useCallback(
     (path: string) => {
       void navigate(path);
-      setMobileNavOpen(false);
     },
     [navigate],
   );
 
   const active = activeNavId(location.pathname);
   const bleed = isBleedPath(location.pathname);
-  const name = displayName(user);
+  const name = profileName(user);
 
   const brand = (
     <button
       type="button"
       onClick={() => go(HOME_PATH)}
-      aria-label={shellLabelsEn.brandHome}
-      className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-start transition-colors duration-fast ease-standard hover:bg-sidebar-accent"
+      aria-label={shellLabels.brandHome}
+      className={`flex min-w-0 flex-col items-center gap-1 rounded-md px-1 py-1 transition-colors duration-fast ease-standard hover:bg-sidebar-accent ${
+        collapsed ? "" : "lg:w-full lg:flex-row lg:gap-2 lg:text-start"
+      }`}
     >
       <img
         src="/logo-mcpl.svg"
-        alt={shellLabelsEn.brandLogoAlt}
+        alt={shellLabels.brandLogoAlt}
         className="size-8 shrink-0"
       />
-      {!collapsed && (
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-display text-lg leading-none font-bold tracking-wide">
-            {shellLabelsEn.brandName}
-          </span>
-          <span className="block truncate text-2xs text-sidebar-foreground/70">
-            {shellLabelsEn.brandTagline}
-          </span>
+      {/* The short mark under the logo on the narrow rail, as Figma draws it. */}
+      <span
+        className={`block max-w-full truncate font-display text-2xs font-bold tracking-wide ${
+          collapsed ? "" : "lg:hidden"
+        }`}
+      >
+        {shellLabels.brandName}
+      </span>
+      <span className={`hidden min-w-0 flex-1 ${collapsed ? "" : "lg:block"}`}>
+        <span className="block truncate font-display text-lg leading-none font-bold tracking-wide">
+          {shellLabels.brandName}
         </span>
-      )}
+        <span className="block truncate text-2xs text-sidebar-foreground/70">
+          {shellLabels.brandTagline}
+        </span>
+      </span>
     </button>
   );
 
   const nav = (
     <ul className="flex flex-col gap-1">
-      {navForRoles(PRIMARY_NAV, roles).map((item) => (
-        <li key={item.id}>
+      {navForPermissions(PRIMARY_NAV, permissions).map((item) => (
+        <li
+          key={item.id}
+          className={
+            item.separatorBefore ? "mt-2 border-t border-sidebar-border pt-2" : undefined
+          }
+        >
           <AppShellNavItem
             icon={item.icon}
-            label={navLabelsEn[item.id]}
-            active={active === item.id}
+            label={navLabels[item.id]}
+            active={isNavLink(item) && active === item.id}
             collapsed={collapsed}
-            onClick={() => go(item.path)}
+            onClick={() => {
+              if (isNavLink(item)) go(item.path);
+              else void handleSignOut();
+            }}
           />
         </li>
       ))}
     </ul>
   );
 
-  const navFooter = (
-    <div
-      className={
-        collapsed ? "flex flex-col items-center gap-2" : "flex items-center gap-2"
-      }
-    >
-      <Avatar className="size-8 shrink-0">
-        <AvatarFallback className="text-2xs">{initials(name)}</AvatarFallback>
-      </Avatar>
-      {!collapsed && (
-        <span className="min-w-0 flex-1">
-          <span className="block text-2xs text-sidebar-foreground/70">
-            {shellLabelsEn.signedInAs}
-          </span>
-          <span className="block truncate text-xs font-medium" title={name}>
-            {name}
-          </span>
-        </span>
-      )}
+  const header = (
+    <div className="ms-auto flex shrink-0 items-center gap-1 sm:gap-2">
       <Button
         variant="ghost"
         size="icon-sm"
-        disabled={signingOut}
-        aria-label={shellLabelsEn.signOut}
-        title={shellLabelsEn.signOut}
-        onClick={() => void handleSignOut()}
+        className="relative"
+        aria-label={shellLabels.notificationsLabel(UNREAD_NOTIFICATIONS)}
       >
-        <Icon name="nav.logout" className="size-4" />
+        <Icon name="nav.notifications" className="size-5" />
+        {UNREAD_NOTIFICATIONS > 0 && (
+          <span
+            aria-hidden
+            className="absolute top-0.5 right-0.5 flex min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-2xs text-destructive-foreground tabular"
+          >
+            {UNREAD_NOTIFICATIONS}
+          </span>
+        )}
       </Button>
+
+      <LanguageSwitcher />
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-w-[12rem] gap-2"
+            aria-label={shellLabels.accountMenu}
+          >
+            <Avatar className="size-6 shrink-0">
+              <AvatarFallback className="text-2xs">{avatarInitial(name)}</AvatarFallback>
+            </Avatar>
+            <span className="hidden min-w-0 truncate sm:inline">{name}</span>
+            <Icon name="form.chevronDown" className="size-4 shrink-0" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuLabel className="flex flex-col gap-0.5">
+            <span className="text-2xs font-normal text-fg-muted">
+              {shellLabels.signedInAs}
+            </span>
+            <span className="truncate">{name}</span>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled={signingOut} onSelect={() => void handleSignOut()}>
+            <Icon name="nav.logout" className="size-4" />
+            {signingOut ? shellLabels.signingOut : shellLabels.signOut}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
-  );
-
-  const header = (
-    <>
-      <div className="flex min-w-0 items-center gap-2 lg:hidden">
-        <img
-          src="/logo-mcpl.svg"
-          alt={shellLabelsEn.brandLogoAlt}
-          className="size-6 shrink-0"
-        />
-        <span className="truncate font-display text-base font-bold tracking-wide">
-          {shellLabelsEn.brandName}
-        </span>
-      </div>
-
-      <div className="ms-auto flex shrink-0 items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="max-w-[12rem] gap-2"
-              aria-label={shellLabelsEn.accountMenu}
-            >
-              <Avatar className="size-6 shrink-0">
-                <AvatarFallback className="text-2xs">{initials(name)}</AvatarFallback>
-              </Avatar>
-              <span className="hidden min-w-0 truncate sm:inline">{name}</span>
-              <Icon name="form.chevronDown" className="size-4 shrink-0" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-60">
-            <DropdownMenuLabel className="flex flex-col gap-0.5">
-              <span className="text-2xs font-normal text-fg-muted">
-                {shellLabelsEn.signedInAs}
-              </span>
-              <span className="truncate">{name}</span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={signingOut}
-              onSelect={() => void handleSignOut()}
-            >
-              <Icon name="nav.logout" className="size-4" />
-              {signingOut ? shellLabelsEn.signingOut : shellLabelsEn.signOut}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </>
   );
 
   return (
     <AppShell
       brand={brand}
       nav={nav}
-      navFooter={navFooter}
       header={header}
       bleed={bleed}
       collapsed={collapsed}
       onCollapsedChange={handleCollapsedChange}
-      mobileNavOpen={mobileNavOpen}
-      onMobileNavOpenChange={setMobileNavOpen}
-      labels={shellLabelsEn}
+      labels={shellLabels}
       footer={
         bleed ? undefined : (
           <Footer
-            copyright={shellLabelsEn.copyright(new Date().getFullYear())}
-            support={shellLabelsEn.operatedBy}
+            copyright={shellLabels.copyright(new Date().getFullYear())}
+            support={shellLabels.operatedBy}
           />
         )
       }

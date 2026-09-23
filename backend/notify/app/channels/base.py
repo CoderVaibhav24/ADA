@@ -33,7 +33,7 @@ same five attempts to learn the same thing.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 
@@ -42,7 +42,15 @@ class ChannelError(Exception):
 
 
 class RetryableError(ChannelError):
-    """The send failed and might succeed later. Goes on the retry ladder."""
+    """The send failed and might succeed later. Goes on the retry ladder.
+
+    retry_after is the provider's own Retry-After, in seconds; the worker waits
+    at least that long even when the ladder would come back sooner.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class PermanentError(ChannelError):
@@ -59,6 +67,14 @@ class PermanentError(ChannelError):
 
 
 @dataclass(frozen=True)
+class PushTarget:
+    """Which push service a device token belongs to, read from its device row."""
+
+    platform: str  # 'android' | 'ios'
+    apns_environment: str | None = None  # 'sandbox' | 'production', iOS only
+
+
+@dataclass(frozen=True)
 class Outgoing:
     """One rendered message, ready to hand to a provider."""
 
@@ -70,6 +86,9 @@ class Outgoing:
     # which message you mean, this is the answer.
     notification_id: uuid.UUID | None = None
     delivery_id: uuid.UUID | None = None
+    # Push only. data is the routing hint (case_ref, type) — never case detail.
+    push: PushTarget | None = None
+    data: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

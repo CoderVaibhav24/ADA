@@ -19,14 +19,16 @@ import {
  * card, because a chip sits on its own background.
  *
  * No English in here. The label is `children`, supplied by the caller from the
- * i18n layer — see status.ts `i18nKey` and status-labels.en.ts for the seed.
+ * i18n layer — see status.ts `i18nKey` and i18n/labels.ts `useStatusLabels`.
  */
 const chip = cva(
-  "inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border font-medium " +
-    "whitespace-nowrap transition-colors duration-fast ease-standard " +
-    // min-w-0 + normal word-break: a Devanagari status label is longer than its
-    // English counterpart and must be allowed to size the chip, never be clipped.
-    "max-w-full [overflow-wrap:anywhere]",
+  "inline-flex w-fit shrink-0 items-center gap-1.5 max-md:gap-1 rounded-full border font-medium " +
+    "transition-colors duration-fast ease-standard " +
+    // NOT whitespace-nowrap: `पुनः सर्वेक्षण अपेक्षित` is half again as wide as
+    // "Resurvey Requested", and a chip that cannot wrap overflows its cell at
+    // 360px instead of growing a second line. `break-words`, not `anywhere`:
+    // `anywhere` lets the column collapse to one Devanagari cluster per line.
+    "max-w-full break-words",
   {
     variants: {
       tone: {
@@ -44,11 +46,14 @@ const chip = cva(
       },
       size: {
         sm: "px-2 py-0.5 text-2xs gap-1",
-        md: "px-2.5 py-1 text-xs",
+        // Tighter below `md`: the chip is the widest thing in a 360px register.
+        md: "px-2.5 py-1 text-xs max-md:px-2 max-md:text-2xs",
         lg: "px-3 py-1.5 text-sm",
       },
       uppercase: {
-        true: "uppercase tracking-wider",
+        // Letter-spacing is a Figma desktop flourish; on a phone it is 10px of
+        // width, and Devanagari has no case for the uppercase to act on.
+        true: "uppercase tracking-wider max-md:tracking-normal",
         false: "",
       },
     },

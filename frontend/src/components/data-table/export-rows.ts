@@ -21,12 +21,45 @@
  *      crash.
  */
 
+import type { ColumnDef } from "@tanstack/react-table";
+import type { DataTableColumnMeta } from "./types";
+
 export type ExportColumn<TRow> = {
   id: string;
   /** Already translated. This is the header row the officer reads. */
   header: string;
   value: (row: TRow) => string;
 };
+
+/**
+ * The export's projection: the VISIBLE columns, in their visible order.
+ *
+ * Built from the same definitions the grid renders, so a column the officer
+ * switched off is absent from the file and one they switched on is in it. The
+ * legacy export ignores both and writes the raw API field names.
+ *
+ * One generic function, hoisted from the three near-identical copies that were
+ * in `features/{complaints,inspections,notices}/columns.tsx`. Each carried a
+ * comment saying it belonged here and that moving it meant editing registers
+ * the change was not allowed to touch; Reports exports all three and would
+ * otherwise have been a fourth copy.
+ */
+export function exportColumnsFor<TRow>(
+  columns: readonly ColumnDef<TRow, unknown>[],
+  hidden: readonly string[],
+): ExportColumn<TRow>[] {
+  const hiddenSet = new Set(hidden);
+  return columns
+    .filter((column) => column.id != null && column.id !== "actions" && !hiddenSet.has(column.id))
+    .map((column) => {
+      const columnMeta = column.meta as DataTableColumnMeta<TRow> | undefined;
+      return {
+        id: column.id ?? "",
+        header: typeof column.header === "string" ? column.header : (column.id ?? ""),
+        value: columnMeta?.exportValue ?? (() => ""),
+      };
+    });
+}
 
 export type ExportPageFetcher<TRow> = (
   page: number,
@@ -66,8 +99,8 @@ export function toCsv<TRow>(
   return lines.join("\r\n");
 }
 
-/** Hand a blob to the browser's save dialog. */
-function save(filename: string, body: string): void {
+/** Hand a CSV body to the browser's save dialog, BOM and all. */
+export function saveCsv(filename: string, body: string): void {
   // The BOM is not optional. Excel opens a UTF-8 CSV as the system code page
   // unless one is present, and every Devanagari name in the file becomes
   // mojibake — which on a bilingual register is most of the file.
@@ -139,7 +172,7 @@ export async function exportRegisterCsv<TRow>({
 
     const truncated = collected.length > maxRows;
     const rows = truncated ? collected.slice(0, maxRows) : collected;
-    save(filename, toCsv(rows, columns));
+    saveCsv(filename, toCsv(rows, columns));
     return { rows: rows.length, total, truncated };
   } finally {
     signal?.removeEventListener("abort", abort);

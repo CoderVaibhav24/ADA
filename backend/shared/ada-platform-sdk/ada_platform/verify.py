@@ -30,6 +30,7 @@ can make an application hammer Keycloak by sending tokens with random kids.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -38,7 +39,9 @@ import httpx
 import jwt
 from jwt.algorithms import RSAAlgorithm
 
-from ada_platform.errors import ADAAuthError
+from ada_platform.errors import ADAAuthError, JwksUnavailableError
+
+log = logging.getLogger("ada_platform.verify")
 
 ALLOWED_ALGORITHMS = ("RS256",)
 
@@ -81,21 +84,28 @@ class JWKSCache:
         client: httpx.Client,
         *,
         cache_seconds: int = 3600,
+        hard_ttl_seconds: int = 86_400,
         min_refresh_seconds: int = 60,
         internal_issuer_url: str | None = None,
     ) -> None:
         self._issuer = issuer.rstrip("/")
         self._internal = (internal_issuer_url or "").rstrip("/") or None
         self._client = client
+        # Soft: refresh past this age. Hard: stop serving at this age even if
+        # every refresh since has failed, so keys the realm abandoned a week ago
+        # do not keep verifying tokens.
         self._cache_seconds = cache_seconds
+        self._hard_ttl_seconds = max(hard_ttl_seconds, cache_seconds)
         self._min_refresh_seconds = min_refresh_seconds
 
         self._keys: dict[str, object] = {}
         self._jwks_uri: str | None = None
         self._fetched_at = 0.0
         self._last_refresh_attempt = 0.0
+        self._failed_at = float("-inf")
         # A web server serves requests on many threads. Without this, a rotation
-        # under load has every thread fetching the JWKS at once.
+        # under load has every thread fetching the JWKS at once. Held across the
+        # staleness re-check too, so only one thread ever refreshes.
         self._lock = threading.Lock()
 
     def _fetchable(self, advertised: str) -> str:
@@ -144,11 +154,35 @@ class JWKSCache:
         self._keys = keys
         self._fetched_at = time.monotonic()
 
+    # Keycloak being briefly unreachable must not 401 every request: a signature
+    # check needs the keys we already hold, not a live Keycloak.
+    def _refresh(self) -> None:
+        age = time.monotonic() - self._fetched_at
+        servable = bool(self._keys) and age < self._hard_ttl_seconds
+        # A refresh that failed a moment ago will fail again, and retrying per
+        # request turns a Keycloak blip into a request-rate attack on it.
+        if servable and (time.monotonic() - self._failed_at) < self._min_refresh_seconds:
+            return
+        try:
+            self._fetch()
+        except ADAAuthError:
+            # A realm calling itself something else is a misconfiguration, not
+            # an outage, and stale keys would not fix it.
+            raise
+        except Exception as exc:
+            self._failed_at = time.monotonic()
+            if servable:
+                log.warning(
+                    "JWKS refresh failed; serving keys cached %ds ago: %r", int(age), exc
+                )
+                return
+            raise JwksUnavailableError(self._issuer, exc) from exc
+
     def key_for(self, kid: str) -> object:
         with self._lock:
             expired = (time.monotonic() - self._fetched_at) > self._cache_seconds
             if not self._keys or expired:
-                self._fetch()
+                self._refresh()
 
             if kid in self._keys:
                 return self._keys[kid]
@@ -159,7 +193,7 @@ class JWKSCache:
             if (time.monotonic() - self._last_refresh_attempt) < self._min_refresh_seconds:
                 raise ADAAuthError("unknown_kid_rate_limited")
             self._last_refresh_attempt = time.monotonic()
-            self._fetch()
+            self._refresh()
 
             if kid not in self._keys:
                 raise ADAAuthError("unknown_kid")

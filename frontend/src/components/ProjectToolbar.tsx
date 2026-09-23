@@ -22,7 +22,7 @@ import { useState } from "react";
 import { useStore, sid } from "../state/store";
 import { deleteProject, selectProject } from "../state/actions";
 import { download, downloadUrl } from "../api/client";
-import { consoleLabelsEn } from "../routes/labels.en";
+import { useConsoleLabels } from "@/i18n/labels";
 import { IconDownload, IconPlus, IconTrash } from "./Icons";
 import NewProjectModal from "./NewProjectModal";
 
@@ -31,7 +31,7 @@ export default function ProjectToolbar() {
   const currentProjectId = useStore((s) => s.currentProjectId);
   const [showNewProject, setShowNewProject] = useState(false);
 
-  const labels = consoleLabelsEn;
+  const labels = useConsoleLabels();
   const current = projects.find((p) => sid(p.id) === currentProjectId);
 
   async function handleDeleteProject() {

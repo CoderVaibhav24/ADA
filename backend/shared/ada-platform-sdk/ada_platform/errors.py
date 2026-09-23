@@ -55,5 +55,24 @@ class ADAScopeError(ADAError):
         self.detail = f"Token lacks the required scope '{required}'"
 
 
+class JwksUnavailableError(ADAError):
+    """The realm's signing keys could not be obtained and none were cached. 503.
+
+    Deliberately not an ADAAuthError: 401 says the token is bad and sends the
+    client off to fetch another, which will fail the same way. 503 says this
+    process could not check it, which is the truth and is retryable.
+    """
+
+    status_code = 503
+
+    def __init__(self, issuer: str, cause: BaseException) -> None:
+        self.issuer = issuer
+        self.cause = cause
+        # repr(), because a bare httpx timeout stringifies to "" and an empty
+        # log line is the one thing worse than no log line.
+        super().__init__(f"no signing keys for {issuer!r}: {cause!r}")
+        self.detail = "Authentication is temporarily unavailable."
+
+
 class ADAUnavailable(ADAError):
     """ADA could not be reached. Only raised by explicitly synchronous calls."""

@@ -7,6 +7,11 @@ Keycloak access token verified locally against the realm's JWKS — no call to
 Keycloak per request, so a Keycloak outage stops new logins and leaves every
 signed-in officer working.
 
+The verification itself moved to app/security.py, where JWTMiddleware enforces
+it as a floor on every path. `require_user` is re-exported from there rather
+than rebuilt here: the middleware and the dependency have to be the same
+callable, or the two could refuse different requests.
+
 `current_user_id` still returns a plain string, and `get_owned_project` is
 untouched, so every router that depended on them did not have to change. The
 string it returns is now the Keycloak subject (a UUID) rather than a SuperTokens
@@ -17,21 +22,15 @@ before the swap.
 from __future__ import annotations
 
 from ada_core.models import Project
-from ada_platform import ADAAuth, Principal
+from ada_platform import Principal
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .config import settings
+# Re-exported, not redefined. The same callable is what JWTMiddleware enforces
+# as the floor, and a second one here could answer differently from the first.
+from .security import auth, require_user  # noqa: F401
 
-# One verifier for the process. It owns the JWKS cache, so constructing it per
-# request would refetch the realm's keys on every call — which is the coupling
-# local verification exists to remove.
-auth = ADAAuth(
-    issuer=settings.oidc_issuer,
-    internal_issuer_url=settings.oidc_internal_issuer_url,
-)
-
-require_user = auth.require_user
+__all__ = ["auth", "current_user_id", "get_owned_project", "require_user"]
 
 
 async def current_user_id(user: Principal = Depends(require_user)) -> str:

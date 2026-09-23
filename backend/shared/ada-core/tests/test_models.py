@@ -9,7 +9,14 @@ from ada_core import models
 
 
 def test_every_expected_table_is_mapped():
-    assert set(models.Base.metadata.tables) == {
+    """The platform's own tables. ICMS and the field app's `app_*` tables share
+    the metadata (models_icms.py, models_app.py) and are excluded here; the
+    ICMS ones are asserted in test_icms_schema.py."""
+    platform = {
+        name for name in models.Base.metadata.tables
+        if not name.startswith(("icms_", "app_"))
+    }
+    assert platform == {
         "projects",
         "rasters",
         "red_zones",
@@ -123,15 +130,15 @@ def test_timestamp_columns_carry_a_timezone(table, column):
     assert models.Base.metadata.tables[table].c[column].type.timezone is True
 
 
-def test_row_defaults_are_written_as_aware_utc():
+def test_row_defaults_are_written_as_aware_ist():
     """The column type alone does not guarantee this — a default of
     datetime.now() would be naive and PostgreSQL would then interpret it in the
     server's zone. Asserted on the default function rather than on a round
     trip, because SQLite has no timestamptz and drops the offset on read.
     """
-    stamped = models.utcnow()
+    stamped = models.now_ist()
     assert stamped.tzinfo is not None
-    assert stamped.utcoffset().total_seconds() == 0
+    assert stamped.utcoffset().total_seconds() == 5.5 * 3600
 
 
 def test_project_removal_takes_its_children_with_it(engine, db, project):
