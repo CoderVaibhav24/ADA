@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..errors import ApiError
 from . import workflow as wf
-from .cases import current_assignee
+from .cases import current_assignee, move_case
 from .collection import PageResult, Sortable, paginate, row_dict, search_clause
 from .geo import as_geojson_column, parse_geojson, point_value
 from .inspection_schemas import (
@@ -451,6 +451,7 @@ class _Round:
     case_ref: str
     case_status: str
     zone_id: int
+    current_round: int
 
 
 # The user id a plain field surveyor is narrowed to, or None for everyone else.
@@ -470,7 +471,7 @@ def _locate(
             Inspection.id, Inspection.inspection_ref, Inspection.round_no,
             Inspection.status, Inspection.surveyor_user_id,
             Case.id.label("case_id"), Case.case_ref,
-            Case.status.label("case_status"), Case.zone_id,
+            Case.status.label("case_status"), Case.zone_id, Case.current_round,
         )
         .join(Case, Case.id == Inspection.case_id)
         .where(Inspection.inspection_ref == inspection_ref)
@@ -485,8 +486,28 @@ def _locate(
         inspection_id=row.id, inspection_ref=row.inspection_ref, round_no=row.round_no,
         inspection_status=row.status, surveyor_user_id=row.surveyor_user_id,
         case_id=row.case_id, case_ref=row.case_ref, case_status=row.case_status,
-        zone_id=row.zone_id,
+        zone_id=row.zone_id, current_round=row.current_round,
     )
+
+
+# Reads through a superseded round stay open; writes land on the current round only.
+def _refuse_unless_current(row: _Round) -> None:
+    if row.round_no != row.current_round:
+        raise ApiError(
+            409,
+            "invalid_transition",
+            f"{row.inspection_ref} is round {row.round_no} and the case is on round "
+            f"{row.current_round}; read the case again and write to its current round",
+        )
+
+
+def _round_lock(inspection_id: int) -> Select:
+    return select(Inspection.id).with_for_update().where(Inspection.id == inspection_id)
+
+
+# Serialises the photo count and the insert per round (a no-op on SQLite).
+def _lock_round(db: Session, inspection_id: int) -> None:
+    db.execute(_round_lock(inspection_id))
 
 
 def _locate_case(db: Session, case_ref: str, scope: ZoneScope):
@@ -602,7 +623,7 @@ def open_round(
 
     try:
         inspection_ref, _, _ = _open_round_rows(
-            db, case_id=row.id, from_status=row.status,
+            db, case_id=row.id, from_status=row.status, from_round=row.current_round,
             surveyor=body.surveyor_user_id, transition=transition,
             actor=actor, roles=roles, scheduled_for=body.scheduled_for,
         )
@@ -620,6 +641,7 @@ def _open_round_rows(
     *,
     case_id: int,
     from_status: str,
+    from_round: int,
     surveyor: str,
     transition: wf.Transition,
     actor: str,
@@ -635,6 +657,15 @@ def _open_round_rows(
         ).scalar_one()
     ) + 1
 
+    # Compare-and-set before anything is minted: a second opener racing this one
+    # finds the case already moved and gets 409 rather than a duplicate round.
+    move_case(db, case_id, from_status, {
+        "status": str(transition.target),
+        "stage_no": transition.stage_no,
+        "current_round": next_round,
+        "updated_at": _now(),
+    }, round_no=from_round)
+
     inspection_ref = allocate(db, Series.INSPECTION)
     inspection_id = db.execute(
         insert(Inspection)
@@ -649,16 +680,6 @@ def _open_round_rows(
         .returning(Inspection.id)
     ).scalar_one()
 
-    db.execute(
-        update(Case)
-        .where(Case.id == case_id)
-        .values(
-            status=str(transition.target),
-            stage_no=transition.stage_no,
-            current_round=next_round,
-            updated_at=_now(),
-        )
-    )
     _event(
         db, case_id=case_id, inspection_id=inspection_id,
         action=str(wf.Action.OPEN_ROUND), actor=actor, roles=roles,
@@ -730,9 +751,11 @@ def check_in(
     if replayed is not None:
         return replayed
 
+    _refuse_unless_current(row)
     _refuse_poor_accuracy(body.accuracy_m)
 
     try:
+        move_case(db, row.case_id, row.case_status, round_no=row.round_no)
         check_in_id = db.execute(
             insert(CheckIn)
             .values(
@@ -917,13 +940,19 @@ def add_evidence(
     if replayed is not None:
         return replayed
 
+    _refuse_unless_current(row)
     _refuse_untagged_photo(meta)
+    # Early, so a full round is refused before the file is written to disk.
     _refuse_a_full_round(db, meta, row.inspection_id)
     flagged = _is_flagged(meta.latitude, meta.longitude, meta.accuracy_m)
 
     result, storage_path = _store(db, row.case_ref, meta.kind, upload)
 
     try:
+        move_case(db, row.case_id, row.case_status, round_no=row.round_no)
+        # Authoritative: the count and the insert under the round's row lock.
+        _lock_round(db, row.inspection_id)
+        _refuse_a_full_round(db, meta, row.inspection_id)
         evidence_id = db.execute(
             insert(Evidence)
             .values(
@@ -993,8 +1022,14 @@ def record_findings(
         is_assignee=row.surveyor_user_id == actor,
         payload={"findings": body.findings},
     )
+    _refuse_unless_current(row)
 
     try:
+        move_case(db, row.case_id, row.case_status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": _now(),
+        }, round_no=row.round_no)
         db.execute(
             delete(InspectionFinding)
             .where(InspectionFinding.inspection_id == row.inspection_id)
@@ -1025,11 +1060,6 @@ def record_findings(
         db.execute(
             update(Inspection).where(Inspection.id == row.inspection_id)
             .values(**body.observations(), **_in_progress(row))
-        )
-        db.execute(
-            update(Case).where(Case.id == row.case_id)
-            .values(status=str(transition.target), stage_no=transition.stage_no,
-                    updated_at=_now())
         )
         _event(
             db, case_id=row.case_id, inspection_id=row.inspection_id,
@@ -1087,19 +1117,21 @@ def submit(
         row.case_status, wf.Action.SUBMIT, roles,
         is_assignee=is_assignee, payload=payload,
     )
-    # After the replay branch above and before any state change: a round already
-    # submitted is answered with itself whatever the count rule says today.
-    _refuse_too_few_photos(db, row.inspection_id)
+    _refuse_unless_current(row)
 
     try:
+        move_case(db, row.case_id, row.case_status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": _now(),
+        }, round_no=row.round_no)
+        # After the replay branch above and before any state change: a round already
+        # submitted is answered with itself whatever the count rule says today.
+        _lock_round(db, row.inspection_id)
+        _refuse_too_few_photos(db, row.inspection_id)
         db.execute(
             update(Inspection).where(Inspection.id == row.inspection_id)
             .values(status=SUBMITTED, submitted_at=_now(), updated_at=_now())
-        )
-        db.execute(
-            update(Case).where(Case.id == row.case_id)
-            .values(status=str(transition.target), stage_no=transition.stage_no,
-                    updated_at=_now())
         )
         _event(
             db, case_id=row.case_id, inspection_id=row.inspection_id,
@@ -1108,6 +1140,14 @@ def submit(
             round_no=row.round_no, payload=payload,
         )
         db.commit()
+    except ApiError as refused:
+        db.rollback()
+        # A retry that lost the race to its own first attempt is still a replay.
+        if refused.code == "invalid_transition":
+            again = _locate(db, inspection_ref, scope)
+            if again is not None and again.inspection_status == SUBMITTED:
+                return {"replayed": True}
+        raise
     except Exception:
         db.rollback()
         raise
@@ -1131,16 +1171,17 @@ def verify(
 
     action, round_status = _VERIFY_ACTIONS[body.decision]
     transition = wf.check(row.case_status, action, roles, payload={"reason": body.reason})
+    _refuse_unless_current(row)
 
     try:
+        move_case(db, row.case_id, row.case_status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": _now(),
+        }, round_no=row.round_no)
         db.execute(
             update(Inspection).where(Inspection.id == row.inspection_id)
             .values(status=round_status, updated_at=_now())
-        )
-        db.execute(
-            update(Case).where(Case.id == row.case_id)
-            .values(status=str(transition.target), stage_no=transition.stage_no,
-                    updated_at=_now())
         )
         _event(
             db, case_id=row.case_id, inspection_id=row.inspection_id,
@@ -1210,6 +1251,11 @@ def request_resurvey(
     )
 
     try:
+        move_case(db, row.id, row.status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": _now(),
+        }, round_no=row.current_round)
         request_id = db.execute(
             insert(ResurveyRequest)
             .values(
@@ -1221,11 +1267,6 @@ def request_resurvey(
             )
             .returning(ResurveyRequest.id)
         ).scalar_one()
-        db.execute(
-            update(Case).where(Case.id == row.id)
-            .values(status=str(transition.target), stage_no=transition.stage_no,
-                    updated_at=_now())
-        )
         _event(
             db, case_id=row.id, action=str(wf.Action.REQUEST_RESURVEY),
             actor=actor, roles=roles,
@@ -1270,8 +1311,9 @@ def decide_resurvey(
     row = db.execute(
         scope.apply(
             select(
-                ResurveyRequest.id, ResurveyRequest.decision,
+                ResurveyRequest.id, ResurveyRequest.decision, ResurveyRequest.from_round,
                 Case.id.label("case_id"), Case.case_ref, Case.status, Case.zone_id,
+                Case.current_round,
             )
             .join(Case, Case.id == ResurveyRequest.case_id)
             .where(ResurveyRequest.id == request_id),
@@ -1311,9 +1353,13 @@ def decide_resurvey(
 
     if refusing:
         try:
-            db.execute(
-                update(ResurveyRequest).where(ResurveyRequest.id == request_id)
-                .values(decision=REFUSED, **decided)
+            _decide_pending(db, request_id, {"decision": REFUSED, **decided})
+            move_case(db, row.case_id, row.status, round_no=row.current_round)
+            _event(
+                db, case_id=row.case_id, action=RESURVEY_REFUSED, actor=actor,
+                roles=roles, from_status=row.status, to_status=row.status,
+                round_no=row.from_round, note=body.note,
+                payload={"resurvey_request_id": request_id, "decision": REFUSED},
             )
             db.commit()
         except Exception:
@@ -1324,18 +1370,45 @@ def decide_resurvey(
     _refuse_unless_in_zone(db, row.zone_id, body.surveyor_user_id)
 
     try:
+        _decide_pending(db, request_id, {"decision": APPROVED, **decided})
         _, next_round, _ = _open_round_rows(
             db, case_id=row.case_id, from_status=row.status,
+            from_round=row.current_round,
             surveyor=body.surveyor_user_id, transition=transition,
             actor=actor, roles=roles, note=body.note,
             payload={"resurvey_request_id": request_id},
         )
         db.execute(
             update(ResurveyRequest).where(ResurveyRequest.id == request_id)
-            .values(decision=APPROVED, resulting_round=next_round, **decided)
+            .values(resulting_round=next_round)
         )
         db.commit()
+    except IntegrityError:
+        # icms_inspection_round_uq: a concurrent opener minted this round first.
+        db.rollback()
+        raise ApiError(
+            409, "invalid_transition",
+            "another round was opened on this case at the same moment; read it again",
+        ) from None
     except Exception:
         db.rollback()
         raise
     return True
+
+
+# Not a workflow action: a refusal moves no case, but Rule 1 still wants its row.
+RESURVEY_REFUSED = "refuse_resurvey"
+
+
+# Compare-and-set on the decision: two deciders racing get one decision and one 409.
+def _decide_pending(db: Session, request_id: int, values: dict) -> None:
+    decided = db.execute(
+        update(ResurveyRequest)
+        .where(ResurveyRequest.id == request_id, ResurveyRequest.decision == PENDING)
+        .values(**values)
+    )
+    if decided.rowcount != 1:
+        raise ApiError(
+            409, "resurvey_already_decided",
+            "this re-survey request was decided by someone else a moment ago",
+        )

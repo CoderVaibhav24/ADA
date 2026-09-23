@@ -27,8 +27,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ada_core.database import SessionLocal
-from ada_core.models import AnalysisJob, Raster, RedZone
+from ada_core.models import AnalysisJob, ChangePolygon, Raster, RedZone
+from ada_core.models_icms import Case as IcmsCase
 from ada_core.storage import MissingImageryError, require_file
+from sqlalchemy import or_, select
 
 from . import notifier, preprocess, vectorize
 from .config import settings
@@ -86,6 +88,10 @@ def submit_ingest(raster_id: int) -> None:
     _submit(_run_ingest_safe, raster_id)
 
 
+# An allow-list, so `done` and `failed` (and any status added later) are never re-run.
+_IN_FLIGHT = ("queued", "running", "processing")
+
+
 def requeue_stale() -> None:
     """Re-submit work that was in flight when the process last stopped.
 
@@ -107,7 +113,7 @@ def requeue_stale() -> None:
         with SessionLocal() as db:
             pending = (db.query(Raster).filter(Raster.status == "processing").count()
                        + db.query(AnalysisJob)
-                       .filter(AnalysisJob.status.in_(("queued", "running"))).count())
+                       .filter(AnalysisJob.status.in_(_IN_FLIGHT)).count())
         if pending:
             log.warning("REQUEUE_STALE_ON_STARTUP is off — leaving %d "
                         "interrupted item(s) alone. Re-run them from the UI.",
@@ -118,7 +124,7 @@ def requeue_stale() -> None:
         stale_rasters = [r.id for r in db.query(Raster)
                          .filter(Raster.status == "processing").all()]
         stale_jobs = [j.id for j in db.query(AnalysisJob)
-                      .filter(AnalysisJob.status.in_(("queued", "running"))).all()]
+                      .filter(AnalysisJob.status.in_(_IN_FLIGHT)).all()]
     for raster_id in stale_rasters:
         log.warning("requeueing ingest for raster %s (interrupted by restart)",
                     raster_id)
@@ -235,7 +241,7 @@ def _run_analysis_safe(job_id: int) -> None:
     raise, so a notification that fails leaves a finished analysis finished.
     """
     try:
-        _run_analysis(job_id)
+        finished = _run_analysis(job_id)
     except MissingImageryError as exc:
         # Expected whenever a row outlives its file — the imagery was written
         # by another deployment, or deleted. One line, not a stack trace.
@@ -249,14 +255,21 @@ def _run_analysis_safe(job_id: int) -> None:
                 finished_at=datetime.now(UTC))
         notifier.analysis_failed(job_id)
     else:
-        notifier.analysis_finished(job_id)
+        if finished:
+            notifier.analysis_finished(job_id)
 
 
-def _run_analysis(job_id: int) -> None:
+def _run_analysis(job_id: int) -> bool:
+    """True when this run wrote the result; False when there was nothing to do."""
     with SessionLocal() as db:
         job = db.get(AnalysisJob, job_id)
         if job is None:
-            return
+            return False
+        if job.status == "done":
+            # A re-submit of a finished job would replace polygons officers have
+            # reviewed or raised cases against. Finished is final.
+            log.info("analysis job %s is already done; not re-running it", job_id)
+            return False
         r1 = db.get(Raster, job.raster_t1_id)
         r2 = db.get(Raster, job.raster_t2_id)
         if r1 is None or r2 is None:
@@ -391,14 +404,6 @@ def _run_analysis(job_id: int) -> None:
         pair.resolution_m, zones, instances, instance_ids,
     )
 
-    from ada_core.models import ChangePolygon  # local import to avoid cycles
-    with SessionLocal() as db:
-        db.query(ChangePolygon).filter(ChangePolygon.job_id == job_id).delete()
-        for f in features:
-            db.add(ChangePolygon(job_id=job_id, geometry=f["geometry"],
-                                 properties=f["properties"]))
-        db.commit()
-
     illegal = sum(1 for f in features if f["properties"]["status"] == "illegal")
     by_type: dict[str, int] = {}
     for f in features:
@@ -421,6 +426,37 @@ def _run_analysis(job_id: int) -> None:
         "false_color_corrected": {"t1": pair.cir_corrected[0],
                                   "t2": pair.cir_corrected[1]},
     }
-    _update(job_id, status="done", progress=1.0, stage="Complete",
-            mask_cog_path=str(mask_path), stats=stats,
-            finished_at=datetime.now(UTC))
+    return _persist_result(job_id, features, {
+        "status": "done", "progress": 1.0, "stage": "Complete",
+        "mask_cog_path": str(mask_path), "stats": stats,
+        "finished_at": datetime.now(UTC),
+    })
+
+
+# A polygon an officer has adjudicated, or a case was raised from, outlives any re-run.
+def _replaceable(job_id: int):
+    referenced = select(IcmsCase.detection_id).where(IcmsCase.detection_id.is_not(None))
+    return (
+        ChangePolygon.job_id == job_id,
+        or_(ChangePolygon.review_status == "pending", ChangePolygon.review_status.is_(None)),
+        ChangePolygon.id.not_in(referenced),
+    )
+
+
+def _persist_result(job_id: int, features: list[dict], finished: dict) -> bool:
+    """The polygons and `status='done'` in one commit; False if the job was already done."""
+    with SessionLocal() as db:
+        # Compare-and-set first: a job another run finished meanwhile is left alone.
+        moved = (db.query(AnalysisJob)
+                 .filter(AnalysisJob.id == job_id, AnalysisJob.status != "done")
+                 .update(finished, synchronize_session=False))
+        if moved != 1:
+            db.rollback()
+            log.warning("analysis job %s finished elsewhere; discarding this run", job_id)
+            return False
+        db.query(ChangePolygon).filter(*_replaceable(job_id)).delete(
+            synchronize_session=False)
+        db.add_all(ChangePolygon(job_id=job_id, geometry=f["geometry"],
+                                 properties=f["properties"]) for f in features)
+        db.commit()
+    return True

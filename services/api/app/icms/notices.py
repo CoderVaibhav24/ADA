@@ -37,14 +37,14 @@ from ada_core.models_icms import (
     Notice,
     Zone,
 )
-from sqlalchemy import Select, and_, insert, literal, select, update
+from sqlalchemy import Select, and_, insert, literal, select
 from sqlalchemy import case as sql_case
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..errors import ApiError
 from . import workflow as wf
-from .cases import _event
+from .cases import _event, move_case
 from .collection import PageResult, Sortable, paginate, row_dict, search_clause
 from .geo import as_geojson_column, parse_geojson
 from .notice_schemas import (
@@ -494,10 +494,60 @@ def issue(
     )
     latitude, longitude = _latlon(row._mapping["_location"])
 
-    notice_ref = allocate(db, Series.NOTICE)
     issued_at = _now()
     authority = body.issuing_authority or DEFAULT_ISSUING_AUTHORITY
+    artefact_path: str | None = None
 
+    # One transaction from the case move to the commit (Rules 1 and 2): the move,
+    # the reference, the notice row and the event land together or not at all.
+    try:
+        # Compare-and-set first, so a second issuer racing this one gets 409 before
+        # a reference is minted or a document drawn.
+        move_case(db, row.case_id, row.status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": issued_at,
+        })
+        notice_ref = allocate(db, Series.NOTICE)
+        artefact_path, notice_id, digest = _issue_rows(
+            db, row, body, notice_ref,
+            actor=actor, issued_on=issued_on, issued_at=issued_at, authority=authority,
+            compliance_due=compliance_due, compliance_days=compliance_days,
+            act_label=act_label, sections=sections, overrides=overrides,
+            round_row=round_row, grounds=grounds, latitude=latitude, longitude=longitude,
+        )
+        _event(
+            db, case_id=row.case_id, action=str(wf.Action.ISSUE_NOTICE), actor=actor,
+            roles=roles, from_status=row.status, to_status=str(transition.target),
+            payload={
+                "notice_id": notice_id,
+                "notice_ref": notice_ref,
+                "act_cd": body.act_cd,
+                "section_cds": list(body.section_cds),
+                "compliance_due": compliance_due.isoformat(),
+                "artefact_sha256": digest,
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        # The row is gone and so is the number; the file would otherwise be an
+        # orphan nothing points at.
+        stored = _resolve_stored(artefact_path)
+        if stored is not None:
+            stored.unlink(missing_ok=True)
+        raise
+
+    return notice_detail(db, notice_ref, scope, roles=roles, user_id=actor)
+
+
+# No commit of its own: `issue` owns the transaction these writes belong to.
+def _issue_rows(
+    db: Session, row, body: NoticeCreate, notice_ref: str, *, actor: str,
+    issued_on: date, issued_at: datetime, authority: str, compliance_due: date,
+    compliance_days: int, act_label: str, sections, overrides, round_row, grounds,
+    latitude, longitude,
+) -> tuple[str, int, str]:
     document = build_body(NoticeFacts(
         notice_ref=notice_ref,
         case_ref=row.case_ref,
@@ -535,7 +585,6 @@ def issue(
     ))
 
     artefact_path, digest = _store_artefact(notice_ref, render(document))
-
     try:
         notice_id = db.execute(
             insert(Notice)
@@ -558,42 +607,9 @@ def issue(
             )
             .returning(Notice.id)
         ).scalar_one()
-
-        moved = db.execute(
-            update(Case)
-            .where(Case.id == row.case_id, Case.status == row.status)
-            .values(
-                status=str(transition.target),
-                stage_no=transition.stage_no,
-                updated_at=issued_at,
-            )
-        )
-        if moved.rowcount != 1:
-            raise ApiError(
-                409, "invalid_transition",
-                f"the case is no longer {row.status}; read it again before issuing",
-            )
-
-        _event(
-            db, case_id=row.case_id, action=str(wf.Action.ISSUE_NOTICE), actor=actor,
-            roles=roles, from_status=row.status, to_status=str(transition.target),
-            payload={
-                "notice_id": notice_id,
-                "notice_ref": notice_ref,
-                "act_cd": body.act_cd,
-                "section_cds": list(body.section_cds),
-                "compliance_due": compliance_due.isoformat(),
-                "artefact_sha256": digest,
-            },
-        )
-        db.commit()
     except Exception:
-        db.rollback()
-        # The row is gone and so is the number; the file would otherwise be an
-        # orphan nothing points at.
         stored = _resolve_stored(artefact_path)
         if stored is not None:
             stored.unlink(missing_ok=True)
         raise
-
-    return notice_detail(db, notice_ref, scope, roles=roles, user_id=actor)
+    return artefact_path, notice_id, digest

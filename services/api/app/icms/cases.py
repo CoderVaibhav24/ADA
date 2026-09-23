@@ -42,6 +42,7 @@ __all__ = [
     "confirm_case",
     "current_assignee",
     "hand_over_case",
+    "move_case",
     "raise_case",
     "register",
 ]
@@ -441,6 +442,30 @@ def raise_case(
     return {"case_ref": case_ref, "case_id": case_id, "replayed": False}
 
 
+# Compare-and-set: the row moves only if it is still where the caller read it.
+def move_case(
+    db: Session, case_id: int, from_status: str, values: dict | None = None,
+    *, round_no: int | None = None,
+) -> None:
+    """UPDATE ... WHERE status = :from [AND current_round = :round]; 409 on a lost race.
+
+    With no values it is a no-op write that still takes the row lock, which is
+    how a self-transition (check-in, evidence, amend) proves the case has not moved.
+    """
+    statement = update(Case).where(Case.id == case_id, Case.status == str(from_status))
+    if round_no is not None:
+        statement = statement.where(Case.current_round == round_no)
+    moved = db.execute(statement.values(**(values or {"status": str(from_status)})))
+    if moved.rowcount != 1:
+        raise ApiError(
+            409,
+            "invalid_transition",
+            f"the case is no longer {from_status}"
+            + ("" if round_no is None else f" on round {round_no}")
+            + "; read it again before moving it",
+        )
+
+
 def _case_for_update(db: Session, case_ref: str, scope: ZoneScope) -> tuple[int, str] | None:
     row = db.execute(
         scope.apply(
@@ -462,11 +487,7 @@ def amend_case(
 
     changes = body.changes()
     try:
-        db.execute(
-            update(Case)
-            .where(Case.id == case_id)
-            .values(**changes, updated_at=_now())
-        )
+        move_case(db, case_id, status, {**changes, "updated_at": _now()})
         _event(
             db, case_id=case_id, action=str(wf.Action.AMEND), actor=actor, roles=roles,
             from_status=status, to_status=status,
@@ -543,6 +564,12 @@ def assign_case(
     _refuse_unless_surveyor(admin, body.assignee_user_id)
 
     try:
+        # First, so the lost race refuses before the assignment rows are touched.
+        move_case(db, row.id, row.status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": _now(),
+        })
         db.execute(
             update(CaseAssignment)
             .where(
@@ -560,15 +587,6 @@ def assign_case(
                 assignment_type="survey",
                 note=body.note,
                 active=True,
-            )
-        )
-        db.execute(
-            update(Case)
-            .where(Case.id == row.id)
-            .values(
-                status=str(transition.target),
-                stage_no=transition.stage_no,
-                updated_at=_now(),
             )
         )
         _event(
@@ -597,21 +615,11 @@ def _advance(
     transition = wf.check(status, action, roles)
 
     try:
-        moved = db.execute(
-            update(Case)
-            .where(Case.id == case_id, Case.status == status)
-            .values(
-                status=str(transition.target),
-                stage_no=transition.stage_no,
-                updated_at=_now(),
-            )
-        )
-        if moved.rowcount != 1:
-            raise ApiError(
-                409,
-                "invalid_transition",
-                f"the case is no longer {status}; read it again before moving it",
-            )
+        move_case(db, case_id, status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "updated_at": _now(),
+        })
         _event(
             db, case_id=case_id, action=str(action), actor=actor, roles=roles,
             from_status=status, to_status=str(transition.target), note=note,
