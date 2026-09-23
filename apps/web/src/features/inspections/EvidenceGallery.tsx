@@ -151,7 +151,7 @@ function EvidenceTile({
 
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge variant="secondary">{kindLabels[evidence.kind] ?? evidence.kind}</Badge>
-        {evidence.round_no !== null && (
+        {evidence.round_no != null && (
           <Badge variant="outline" className="tabular">
             {labels.round(evidence.round_no)}
           </Badge>
@@ -184,7 +184,7 @@ function EvidenceTile({
           <dt className="sr-only">{labels.uploadedBy("")}</dt>
           <dd className="truncate">{labels.uploadedBy(evidence.uploaded_by)}</dd>
         </div>
-        {evidence.capture_source !== null && (
+        {evidence.capture_source != null && (
           <div className="min-w-0">
             <dt className="sr-only">{labels.kindLabel}</dt>
             <dd className="truncate">
@@ -192,7 +192,7 @@ function EvidenceTile({
             </dd>
           </div>
         )}
-        {evidence.sha256 !== null && (
+        {evidence.sha256 != null && (
           <div className="min-w-0">
             <dt className="sr-only">{labels.checksum}</dt>
             <dd className="truncate">

@@ -86,13 +86,13 @@ import { useInspectionGate } from "./useInspections";
  * shape and never populated. The id is what an officer has to work with, and a
  * blank cell where a name belongs reads as a failed load.
  */
-function personOf(name: string | null, userId: string): string {
+function personOf(name: string | null | undefined, userId: string): string {
   return name ?? userId;
 }
 
 /** Six decimal places is about a tenth of a metre; more is false precision. */
-function coordinate(value: number): string {
-  return value.toFixed(6);
+function coordinate(value: number | null | undefined): string {
+  return value == null ? "—" : value.toFixed(6);
 }
 
 function CheckInRow({
@@ -109,7 +109,7 @@ function CheckInRow({
   // `inside_zone` is three-valued: in, out, and "there was no boundary to test
   // against". The third is not a failure and must not read as one.
   const zone =
-    checkIn.inside_zone === null
+    checkIn.inside_zone == null
       ? labels.checkIns.zoneUnknown
       : checkIn.inside_zone
         ? labels.checkIns.insideZone
@@ -177,8 +177,8 @@ function SummaryStrip({
   const register = useInspectionsLabels();
   const caseStatusLabels = useCaseStatusLabels();
 
-  const date = (value: string | null) =>
-    value === null ? (
+  const date = (value: string | null | undefined) =>
+    value == null ? (
       <Absent>{register.notRecorded}</Absent>
     ) : (
       <time dateTime={value} className="tabular">
@@ -216,7 +216,7 @@ function SummaryStrip({
         </Field>
 
         <Field label={labels.summary.scheduled}>
-          {detail.scheduled_for === null ? (
+          {detail.scheduled_for == null ? (
             <Absent>{register.notScheduled}</Absent>
           ) : (
             date(detail.scheduled_for)
@@ -404,7 +404,7 @@ export default function InspectionDetail() {
             aside={
               <>
                 <span className="text-2xs text-fg-faint tabular">
-                  {labels.findings.count(detail.findings.length)}
+                  {labels.findings.count((detail.findings ?? []).length)}
                 </span>
                 {mayRecordFindings && (
                   <Button size="sm" variant="outline" asChild>
@@ -417,7 +417,7 @@ export default function InspectionDetail() {
               </>
             }
           >
-            {detail.findings.length === 0 ? (
+            {(detail.findings ?? []).length === 0 ? (
               <EmptyState
                 size="compact"
                 icon="inspection.findings"
@@ -426,7 +426,7 @@ export default function InspectionDetail() {
               />
             ) : (
               <ol className="flex flex-col gap-2">
-                {detail.findings.map((finding) => (
+                {(detail.findings ?? []).map((finding) => (
                   <li
                     key={finding.seq}
                     className="flex min-w-0 gap-3 rounded-md border border-line-subtle bg-surface-2 p-3"
@@ -447,11 +447,11 @@ export default function InspectionDetail() {
 
             <div className="flex flex-col gap-2 border-t border-line-subtle pt-3">
               <h3 className="text-2xs font-semibold text-fg-muted">{labels.sections.title}</h3>
-              {detail.sections.length === 0 ? (
+              {(detail.sections ?? []).length === 0 ? (
                 <p className="text-sm text-fg-faint">{labels.sections.none}</p>
               ) : (
                 <ul className="flex flex-wrap gap-2">
-                  {detail.sections.map((section) => (
+                  {(detail.sections ?? []).map((section) => (
                     <li key={`${section.act_cd}/${section.section_cd}`}>
                       <Badge variant="secondary">
                         {labels.sections.item(section.act_cd, section.section_cd)}
@@ -496,7 +496,7 @@ export default function InspectionDetail() {
               point and an accuracy, and a basemap that cannot be told where the
               parcel boundary is would be decoration over a coordinate. */}
           <DetailPanel title={labels.summary.location}>
-            {detail.location === null ? (
+            {detail.location == null ? (
               <p className="text-sm text-fg-faint">{labels.summary.noLocation}</p>
             ) : (
               <div className="flex flex-col gap-2">
@@ -509,7 +509,7 @@ export default function InspectionDetail() {
                     )}
                   </Mono>
                 </p>
-                {detail.location_accuracy_m !== null && (
+                {detail.location_accuracy_m != null && (
                   <Badge variant="outline" className="w-fit tabular">
                     {labels.summary.accuracy(detail.location_accuracy_m)}
                   </Badge>
@@ -522,11 +522,11 @@ export default function InspectionDetail() {
             title={labels.checkIns.title}
             aside={
               <span className="text-2xs text-fg-faint tabular">
-                {labels.checkIns.count(detail.check_ins.length)}
+                {labels.checkIns.count((detail.check_ins ?? []).length)}
               </span>
             }
           >
-            {detail.check_ins.length === 0 ? (
+            {(detail.check_ins ?? []).length === 0 ? (
               <EmptyState
                 size="compact"
                 icon="inspection.checkIn"
@@ -535,7 +535,7 @@ export default function InspectionDetail() {
               />
             ) : (
               <ul className="flex flex-col gap-2">
-                {detail.check_ins.map((checkIn) => (
+                {(detail.check_ins ?? []).map((checkIn) => (
                   <CheckInRow
                     key={checkIn.id}
                     checkIn={checkIn}
@@ -548,7 +548,7 @@ export default function InspectionDetail() {
           </DetailPanel>
 
           <DetailPanel title={labels.occupant.title}>
-            {detail.occupant_name === null && detail.occupant_phone === null ? (
+            {detail.occupant_name == null && detail.occupant_phone == null ? (
               <p className="text-sm text-fg-faint">{labels.occupant.none}</p>
             ) : (
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
@@ -556,7 +556,7 @@ export default function InspectionDetail() {
                   {detail.occupant_name ?? <Absent>{register.notRecorded}</Absent>}
                 </Field>
                 <Field label={labels.occupant.phone}>
-                  {detail.occupant_phone === null ? (
+                  {detail.occupant_phone == null ? (
                     <Absent>{register.notRecorded}</Absent>
                   ) : phone === null ? (
                     <Mono>{detail.occupant_phone}</Mono>
@@ -574,9 +574,9 @@ export default function InspectionDetail() {
           </DetailPanel>
 
           <DetailPanel title={labels.measurement.title}>
-            {detail.measured_area_sqm === null &&
-            detail.area_type_cd === null &&
-            detail.notice_required === null ? (
+            {detail.measured_area_sqm == null &&
+            detail.area_type_cd == null &&
+            detail.notice_required == null ? (
               <p className="text-sm text-fg-faint">{labels.measurement.none}</p>
             ) : (
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
@@ -584,7 +584,7 @@ export default function InspectionDetail() {
                   {detail.area_type_cd ?? <Absent>{register.notRecorded}</Absent>}
                 </Field>
                 <Field label={labels.measurement.area}>
-                  {detail.measured_area_sqm === null ? (
+                  {detail.measured_area_sqm == null ? (
                     <Absent>{register.notRecorded}</Absent>
                   ) : (
                     // Lakh/crore grouping on `hi-IN`, thousands on `en-IN`:
@@ -595,7 +595,7 @@ export default function InspectionDetail() {
                   )}
                 </Field>
                 <Field label={labels.measurement.noticeRequired}>
-                  {detail.notice_required === null ? (
+                  {detail.notice_required == null ? (
                     <Absent>{labels.measurement.undecided}</Absent>
                   ) : detail.notice_required ? (
                     labels.measurement.yes
@@ -603,7 +603,7 @@ export default function InspectionDetail() {
                     labels.measurement.no
                   )}
                 </Field>
-                {detail.notice_act_cd !== null && (
+                {detail.notice_act_cd != null && (
                   <Field label={labels.measurement.noticeAct}>{detail.notice_act_cd}</Field>
                 )}
               </dl>

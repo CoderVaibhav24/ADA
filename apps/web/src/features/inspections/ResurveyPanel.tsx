@@ -182,7 +182,7 @@ function RequestRow({
         </Badge>
         {/* The decision in words. The badge's tone repeats it, never carries it. */}
         <span className="text-2xs font-medium text-fg-base">{decisionLabel}</span>
-        {request.resulting_round !== null && (
+        {request.resulting_round != null && (
           <span className="text-2xs text-fg-muted tabular">
             {labels.resurvey.resultingRound(request.resulting_round)}
           </span>
@@ -195,13 +195,13 @@ function RequestRow({
         {labels.resurvey.requestedBy(request.requested_by, formatDateTime(request.requested_at))}
       </p>
 
-      {request.decided_by !== null && request.decided_at !== null && (
+      {request.decided_by != null && request.decided_at != null && (
         <p className="text-2xs text-fg-muted">
           {labels.resurvey.decidedBy(request.decided_by, formatDateTime(request.decided_at))}
         </p>
       )}
 
-      {request.decision_note !== null && (
+      {request.decision_note != null && (
         <p className="text-2xs text-fg-muted text-pretty">{request.decision_note}</p>
       )}
     </li>

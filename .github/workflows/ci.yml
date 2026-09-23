@@ -1,0 +1,65 @@
+name: CI — TypeScript
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The generated @ada/api-types must match what the FastAPI source publishes today.
+  api-types:
+    name: API types drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # Only the two services whose specs are dumped; ada-ml's torch stays out.
+      - name: Install Python (ada-api, ada-notify)
+        run: uv sync --frozen --no-dev --python 3.12 --package ada-api --package ada-notify
+
+      - run: npm ci
+
+      - name: Regenerate and diff
+        run: npm run api:types:check
+
+      - name: No untracked generated files
+        run: |
+          untracked="$(git status --porcelain --untracked-files=all -- libs/ts/api-types)"
+          if [ -n "$untracked" ]; then
+            echo "$untracked"
+            echo "::error::npm run api:types produced files that are not committed."
+            exit 1
+          fi
+
+  js:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

@@ -4,37 +4,25 @@ import {
   type UseInfiniteQueryResult,
 } from '@tanstack/react-query';
 
+import type { components } from '@ada/api-types/notify-api';
+
 import { NOTIFY_PATHS, NOTIFY_PROJECT, pushEnv } from '@/services/push/constants';
 import { notifyRequest } from '@/services/push/registration';
 
 import { authenticatedRequest } from './client';
 import { queryClient } from './query-client';
 
+type NotifySchemas = components['schemas'];
+
 /*
  * The surveyor's inbox in ada-notify: `GET /v1/me/notifications` and the read
- * receipt. ada-notify is not in the generated ada-api schema, so the two shapes
- * below are `InboxItem` and `InboxPage` in `services/notify/app/schemas.py`.
+ * receipt. Types are generated from ada-notify's OpenAPI document.
  *
  * An item is a routing hint plus display text. Nothing in it is case data: a tap
  * opens the case, and the case screen reads the case from ada-api.
  */
-export type InboxItem = {
-  readonly id: string;
-  readonly project: string;
-  readonly type: string;
-  readonly case_ref: string | null;
-  readonly title: string | null;
-  readonly body: string | null;
-  readonly read: boolean;
-  readonly read_at: string | null;
-  readonly created_at: string;
-};
-
-export type InboxPage = {
-  readonly items: InboxItem[];
-  readonly next_cursor: string | null;
-  readonly unread_count: number;
-};
+export type InboxItem = NotifySchemas['InboxItem'];
+export type InboxPage = NotifySchemas['InboxPage'];
 
 export const INBOX_PAGE_SIZE = 20;
 

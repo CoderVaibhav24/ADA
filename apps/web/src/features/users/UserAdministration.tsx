@@ -420,7 +420,7 @@ function OfficerRow({
     <TableRow>
       <TableCell className="font-medium text-fg-strong">
         <span className="flex flex-wrap items-center gap-2">
-          {row.first_name === null && row.last_name === null ? (
+          {row.first_name == null && row.last_name == null ? (
             <span className="text-fg-muted">{labels.register.noName}</span>
           ) : (
             name
@@ -432,7 +432,7 @@ function OfficerRow({
         <Code>{row.username}</Code>
       </TableCell>
       <TableCell className="text-fg-muted">
-        {row.email === null ? (
+        {row.email == null ? (
           <span className="text-fg-faint">{labels.register.noEmail}</span>
         ) : (
           <span className="flex flex-col gap-0.5">
@@ -451,7 +451,7 @@ function OfficerRow({
         <SignInState enabled={row.enabled} labels={labels} />
       </TableCell>
       <TableCell className="text-fg-muted tabular">
-        {row.created_at === null ? labels.register.noDate : dateTime(row.created_at)}
+        {row.created_at == null ? labels.register.noDate : dateTime(row.created_at)}
       </TableCell>
       <TableCell className="text-end">
         <Button

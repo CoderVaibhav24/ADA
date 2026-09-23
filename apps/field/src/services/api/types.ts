@@ -1,4 +1,4 @@
-import type { components } from './generated/ada-api';
+import type { components } from '@ada/api-types/ada-api';
 
 /*
  * Names for the generated schemas, so callers write `Capabilities` instead of

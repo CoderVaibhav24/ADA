@@ -1,7 +1,7 @@
 /**
  * `/api/icms/me/capabilities` and `/api/icms/admin/policy/*` — the policy surface.
  *
- * Every type here is the generated one, from `src/api/generated/ada-api.ts`.
+ * Every type here is the generated one, from `@ada/api-types/ada-api`.
  * Nothing restates a field the server already publishes, so a rename in
  * `icms_admin.py` is a build error here rather than an empty cell.
  *
@@ -22,7 +22,7 @@
  *     expected to say so rather than let it look instant.
  */
 
-import type { components } from "@/api/generated/ada-api";
+import type { components } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 
 export type Capabilities = components["schemas"]["CapabilitiesOut"];

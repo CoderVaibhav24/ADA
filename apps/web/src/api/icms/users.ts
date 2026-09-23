@@ -41,119 +41,30 @@
  *     amount of client code can invent one.
  */
 
+import type { components, operations } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 
-/* -------------------------------------------------------------------------
-   TEMPORARY LOCAL TYPES — transcribed from `app/icms/user_schemas.py`.
+/* ---- types: generated from ada-api's OpenAPI document (@ada/api-types) ---- */
 
-   `cases.ts` and `policy.ts` import their types from
-   `@/api/generated/ada-api`, so a renamed server field is a build error rather
-   than an empty cell. These cannot yet: `npm run api:types` was last run before
-   this router landed and the generated document does not describe it. Rerun
-
-       npm run api:types
-
-   and replace this block with the generated aliases —
-
-       export type UserRow = components["schemas"]["UserRow"];
-       export type UserDetail = components["schemas"]["UserDetail"];
-       export type UserPage = components["schemas"]["Page_UserRow_"];
-       export type UserCreateBody = components["schemas"]["UserCreate"];
-       export type UserUpdate = components["schemas"]["UserUpdate"];
-       export type UserRolesUpdate = components["schemas"]["UserRolesUpdate"];
-       export type PasswordReset = components["schemas"]["PasswordReset"];
-       export type PasswordResetOut = components["schemas"]["PasswordResetOut"];
-       export type UserListQuery = NonNullable<
-         operations["list_users_api_icms_admin_users_get"]["parameters"]["query"]
-       >;
-
-   — and delete nothing else. Everything below is written against these names.
-   ------------------------------------------------------------------------- */
+type Schemas = components["schemas"];
 
 /** One row of the officer register. No roles: see the note at the top. */
-export type UserRow = {
-  /** The Keycloak subject — the same value every ICMS audit column stores. */
-  id: string;
-  username: string;
-  first_name: string | null;
-  last_name: string | null;
-  email: string | null;
-  /** False is how an officer leaves. There is no delete. */
-  enabled: boolean;
-  email_verified: boolean;
-  /** IST, from Keycloak's epoch-millisecond `createdTimestamp`. */
-  created_at: string | null;
-};
-
-/** The row plus what costs a second Keycloak call: the officer's ICMS roles. */
-export type UserDetail = UserRow & {
-  /** Only codes in `ASSIGNABLE_ROLES`; exactly what `setUserRoles` accepts back. */
-  realm_roles: string[];
-  /** Keycloak required actions, e.g. `UPDATE_PASSWORD`, `CONFIGURE_TOTP`. */
-  required_actions: string[];
-};
-
-/** `app/icms/collection.py` `Page[T]`, the same envelope as every other register. */
-export type UserPage = {
-  items: UserRow[];
-  page: number;
-  size: number;
-  total: number;
-  pages: number;
-  sort: string;
-  next_cursor?: string | null;
-};
-
-/**
- * `UserQuery`. Four parameters and no more — `CollectionParams` forbids extras,
- * so an invented `enabled` or `role` parameter is a 422 rather than a filter.
- */
-export type UserListQuery = {
-  page?: number;
-  size?: number;
-  /** Keycloak's own `search`: username, first name, last name, email. */
-  q?: string;
-  /** Keycloak orders users by username and offers no other key. */
-  sort?: "username";
-};
-
+export type UserRow = Schemas["UserRow"];
+/** The row plus the officer's ICMS roles and Keycloak required actions. */
+export type UserDetail = Schemas["UserDetail"];
+export type UserPage = Schemas["Page_UserRow_"];
+/** `UserQuery`: page, size, q, sort — `CollectionParams` forbids extras. */
+export type UserListQuery = NonNullable<
+  operations["list_users_api_icms_admin_users_get"]["parameters"]["query"]
+>;
 /** The create body as it goes on the wire. Build it with `UserCreateInput`. */
-export type UserCreateBody = {
-  username: string;
-  email: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  enabled: boolean;
-  realm_roles: string[];
-  credential: CredentialChoice;
-  password?: string;
-};
-
+export type UserCreateBody = Schemas["UserCreate"];
 /** Only these four. `username` is not amendable and the body forbids extras. */
-export type UserUpdate = {
-  first_name?: string | null;
-  last_name?: string | null;
-  /** A null is ignored server-side: an email can be changed but not cleared. */
-  email?: string;
-  enabled?: boolean;
-};
-
-export type UserRolesUpdate = { realm_roles: string[] };
-
-export type PasswordReset = {
-  password: string;
-  /** True makes Keycloak require `UPDATE_PASSWORD` at next sign-in. */
-  temporary: boolean;
-};
-
+export type UserUpdate = Schemas["UserUpdate"];
+export type UserRolesUpdate = Schemas["UserRolesUpdate"];
+export type PasswordReset = Schemas["PasswordReset"];
 /** Deliberately carries no credential — only that one was set, and when. */
-export type PasswordResetOut = {
-  id: string;
-  username: string;
-  temporary: boolean;
-  required_actions: string[];
-  reset_at: string;
-};
+export type PasswordResetOut = Schemas["PasswordResetOut"];
 
 /* ---- vocabularies -------------------------------------------------------- */
 

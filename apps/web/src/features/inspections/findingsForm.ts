@@ -68,15 +68,15 @@ export type FindingsFormState = {
  * every call site.
  */
 export type FindingsSource = {
-  findings: readonly { seq: number; finding: string }[];
-  sections: readonly { act_cd: string; section_cd: string }[];
-  occupant_name: string | null;
-  occupant_phone: string | null;
-  area_type_cd: string | null;
-  measured_area_sqm: number | null;
-  notice_required: boolean | null;
-  notice_act_cd: string | null;
-  officer_note: string | null;
+  findings?: readonly { seq: number; finding: string }[];
+  sections?: readonly { act_cd: string; section_cd: string }[];
+  occupant_name?: string | null;
+  occupant_phone?: string | null;
+  area_type_cd?: string | null;
+  measured_area_sqm?: number | null;
+  notice_required?: boolean | null;
+  notice_act_cd?: string | null;
+  officer_note?: string | null;
 };
 
 /** The request body, as `FindingsPut` spells it on the wire. */
@@ -123,7 +123,7 @@ function sortSections(sections: readonly SectionDraft[]): SectionDraft[] {
 
 /** The server's state, as the form holds it. One round trip's starting point. */
 export function findingsFormFrom(source: FindingsSource): FindingsFormState {
-  const findings = [...source.findings]
+  const findings = [...(source.findings ?? [])]
     .sort((a, b) => a.seq - b.seq)
     .map((item) => newFindingDraft(item.finding));
 
@@ -132,13 +132,13 @@ export function findingsFormFrom(source: FindingsSource): FindingsFormState {
     // screen is a place to write rather than a button that makes one.
     findings: findings.length > 0 ? findings : [newFindingDraft()],
     sections: sortSections(
-      source.sections.map((item) => ({ actCd: item.act_cd, sectionCd: item.section_cd })),
+      (source.sections ?? []).map((item) => ({ actCd: item.act_cd, sectionCd: item.section_cd })),
     ),
     occupantName: source.occupant_name ?? "",
     occupantPhone: source.occupant_phone ?? "",
     areaTypeCd: source.area_type_cd ?? "",
     measuredArea:
-      source.measured_area_sqm === null ? "" : String(source.measured_area_sqm),
+      source.measured_area_sqm == null ? "" : String(source.measured_area_sqm),
     noticeRequired: source.notice_required ?? false,
     noticeActCd: source.notice_act_cd ?? "",
     officerNote: source.officer_note ?? "",

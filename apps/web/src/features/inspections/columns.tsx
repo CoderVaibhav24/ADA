@@ -64,7 +64,7 @@ function meta(value: DataTableColumnMeta<InspectionRow>): DataTableColumnMeta<In
   return value;
 }
 
-function isoDate(value: string | null): string {
+function isoDate(value: string | null | undefined): string {
   return value ? value.slice(0, 10) : "";
 }
 
@@ -78,8 +78,8 @@ export function buildInspectionColumns({
   onOpenCase,
 }: InspectionColumnOptions): ColumnDef<InspectionRow, unknown>[] {
   // Shared by the three date columns: a null date is a state, not a blank cell.
-  const dateCell = (value: string | null, absent: string) =>
-    value === null ? (
+  const dateCell = (value: string | null | undefined, absent: string) =>
+    value == null ? (
       <span className="text-fg-faint">{absent}</span>
     ) : (
       <time dateTime={value} className="text-fg-strong tabular">
@@ -173,7 +173,7 @@ export function buildInspectionColumns({
         exportValue: (row) => [row.zone_name, row.zone_cd].filter(Boolean).join(" "),
       }),
       cell: ({ row }) =>
-        row.original.zone_cd === null ? (
+        row.original.zone_cd == null ? (
           <span className="text-fg-faint">{labels.notRecorded}</span>
         ) : (
           <span className="flex flex-col">

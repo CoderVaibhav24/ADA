@@ -174,7 +174,7 @@ function OfficerBody({
               {isSelf && <Badge variant="secondary">{labels.detail.self}</Badge>}
             </span>
             <span className="text-2xs text-fg-faint">
-              {detail.created_at === null
+              {detail.created_at == null
                 ? labels.detail.createdUnknown
                 : labels.detail.created(formats.dateTime(detail.created_at))}
             </span>

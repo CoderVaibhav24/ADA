@@ -12,7 +12,7 @@
  * one request rather than a paging problem of their own.
  */
 
-import type { components } from "@/api/generated/ada-api";
+import type { components } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 export type CodeValue = components["schemas"]["CodeValueOut"];
 export type Zone = components["schemas"]["ZoneOut"];

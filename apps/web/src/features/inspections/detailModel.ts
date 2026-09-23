@@ -69,8 +69,8 @@ export function geoStateOf(
 ): GeoState {
   return {
     trusted: !evidence.geotag_flagged,
-    hasFix: evidence.lat !== null && evidence.lon !== null,
-    accuracyM: evidence.accuracy_m,
+    hasFix: evidence.lat != null && evidence.lon != null,
+    accuracyM: evidence.accuracy_m ?? null,
   };
 }
 
@@ -137,7 +137,7 @@ export function decidedResurveys(
 }
 
 /** A ten-digit mobile, the only shape a `tel:` link is offered for. */
-export function telHref(phone: string | null): string | null {
+export function telHref(phone: string | null | undefined): string | null {
   const digits = phone?.replace(/\D/g, "") ?? "";
   return digits.length === 10 ? `tel:+91${digits}` : null;
 }

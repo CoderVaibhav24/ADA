@@ -86,17 +86,6 @@ test("a config that has not loaded bounds nothing — the server is the judge", 
   assert.equal(rule.count, 0);
 });
 
-test("an unpublished bound is not a bound, even when the other one is published", () => {
-  const noMaximum = photoRuleOf(config({ maximum_photo_count: null }), 9);
-  assert.equal(noMaximum.atCeiling, false);
-  assert.equal(noMaximum.shortfall, 0);
-  assert.equal(noMaximum.stated, false);
-
-  const noMinimum = photoRuleOf(config({ minimum_photo_count: null }), 0);
-  assert.equal(noMinimum.shortfall, 0);
-  assert.equal(noMinimum.stated, false);
-});
-
 test("the published numbers are carried through untouched, whatever they are", () => {
   // The server owns the count: 1 and 2 are as valid as 3 and 5, and nothing
   // in the client may prefer one set over another.

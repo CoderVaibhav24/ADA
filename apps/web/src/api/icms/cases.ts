@@ -7,7 +7,7 @@
  *
  * Every type here is the generated one. `CaseRow`, `CaseDetail`, the four
  * request bodies, the `Page` envelope and the whole query bag come from
- * `src/api/generated/ada-api.ts`, which is emitted by `npm run api:types` from
+ * `@ada/api-types/ada-api`, which `npm run api:types` (repo root) emits from
  * FastAPI's own document. Nothing in this file restates a field name that the
  * server already publishes, so renaming a column in `case_schemas.py` breaks
  * the build here instead of rendering an empty cell.
@@ -38,7 +38,7 @@
  *     a table it cannot see.
  */
 
-import type { components, operations } from "@/api/generated/ada-api";
+import type { components, operations } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 export type CaseRow = components["schemas"]["CaseRow"];
 export type CaseDetail = components["schemas"]["CaseDetail"];

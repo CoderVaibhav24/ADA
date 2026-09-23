@@ -155,7 +155,7 @@ export function RoundHistory({
                       </TableCell>
 
                       <TableCell>
-                        {round.submitted_at === null ? (
+                        {round.submitted_at == null ? (
                           <span className="text-fg-faint">{register.notRecorded}</span>
                         ) : (
                           <time dateTime={round.submitted_at} className="tabular">

@@ -112,7 +112,7 @@ async function send(
 /*
  * One request, typed by the caller against the generated schema.
  *
- * The caller passes the type it expects from `generated/ada-api.ts`; nothing here
+ * The caller passes the type it expects from `@ada/api-types`; nothing here
  * invents a shape. The body arrives as `unknown` and is returned as `T` at the
  * single point where the contract is asserted, so a proxy error page is a thrown
  * error at the boundary rather than a screen of `undefined`.

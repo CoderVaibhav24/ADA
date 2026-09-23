@@ -1,0 +1,30 @@
+{
+  "name": "@ada/api-types",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./ada-api": {
+      "types": "./dist/ada-api.d.ts",
+      "default": "./dist/ada-api.js"
+    },
+    "./notify-api": {
+      "types": "./dist/notify-api.d.ts",
+      "default": "./dist/notify-api.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "generate": "openapi-typescript openapi.json --alphabetize -o src/ada-api.ts && openapi-typescript openapi.notify.json --alphabetize -o src/notify-api.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "tsc --build tsconfig.json --clean"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "~6.0.2"
+  }
+}

@@ -31,227 +31,38 @@
  */
 
 import { authHeader } from "@/api/client";
-import type { components } from "@/api/generated/ada-api";
+import type { components, operations } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 
-/* -------------------------------------------------------------------------
-   TEMPORARY LOCAL TYPES — transcribed from batch-3-contract.md §3.
+/* ---- types: generated from ada-api's OpenAPI document (@ada/api-types) ---- */
 
-   Every other client in this folder imports its types from
-   `@/api/generated/ada-api`, so a renamed server field is a build error here
-   rather than an empty cell. These cannot, yet: the routes do not exist, so
-   FastAPI's document does not describe them and `npm run api:types` has nothing
-   to emit. The moment the backend module lands, rerun
+type Schemas = components["schemas"];
 
-       npm run api:types
+export type InspectionRow = Schemas["InspectionRow"];
+export type InspectionDetail = Schemas["InspectionDetail"];
+export type InspectionPage = Schemas["Page_InspectionRow_"];
+export type InspectionLocation = Schemas["LatLon"];
+export type InspectionSectionRef = Schemas["SectionOut-Output"];
+export type FindingOut = Schemas["FindingOut"];
+export type CheckInOut = Schemas["CheckInOut"];
+export type EvidenceOut = Schemas["EvidenceOut"];
+export type ResurveyRequestOut = Schemas["ResurveyRequestOut"];
+export type InspectionListQuery = NonNullable<
+  operations["list_inspections_api_icms_inspections_get"]["parameters"]["query"]
+>;
 
-   and replace this entire block with the generated aliases —
-
-       export type InspectionRow = components["schemas"]["InspectionRow"];
-       export type InspectionDetail = components["schemas"]["InspectionDetail"];
-       export type InspectionPage = components["schemas"]["Page_InspectionRow_"];
-       export type CheckInOut = components["schemas"]["CheckInOut"];
-       export type EvidenceOut = components["schemas"]["EvidenceOut"];
-       export type FindingOut = components["schemas"]["FindingOut"];
-       export type ResurveyRequestOut = components["schemas"]["ResurveyRequestOut"];
-       export type InspectionListQuery = NonNullable<
-         operations["list_inspections_api_icms_inspections_get"]["parameters"]["query"]
-       >;
-
-   — and delete nothing else. Everything below this block is written against
-   these names and keeps working.
-   ------------------------------------------------------------------------- */
-
-/** One row of the register. The three counts are correlated subqueries. */
-export type InspectionRow = {
-  inspection_ref: string;
-  case_ref: string;
-  case_title: string | null;
-  round_no: number;
-  status: string;
-  zone_cd: string | null;
-  zone_name: string | null;
-  /** The CASE's priority, joined onto the round. See `INSPECTION_PRIORITIES`. */
-  priority: string | null;
-  surveyor_user_id: string;
-  surveyor_name: string | null;
-  scheduled_for: string | null;
-  started_at: string | null;
-  submitted_at: string | null;
-  evidence_count: number;
-  finding_count: number;
-  has_check_in: boolean;
-};
-
-export type InspectionLocation = { lat: number; lon: number };
-
-export type FindingOut = {
-  seq: number;
-  finding: string;
-  created_at: string;
-};
-
-export type InspectionSectionRef = {
-  act_cd: string;
-  section_cd: string;
-};
-
-export type CheckInOut = {
-  id: number;
-  inspection_ref: string;
-  user_id: string;
-  lat: number;
-  lon: number;
-  accuracy_m: number;
-  device_timestamp: string;
-  server_timestamp: string;
-  capture_source: string;
-  inside_zone: boolean | null;
-};
-
-export type EvidenceOut = {
-  id: number;
-  case_ref: string;
-  inspection_ref: string | null;
-  round_no: number | null;
-  kind: string;
-  doc_type_cd: string | null;
-  original_filename: string | null;
-  content_type: string | null;
-  byte_size: number | null;
-  sha256: string | null;
-  lat: number | null;
-  lon: number | null;
-  accuracy_m: number | null;
-  device_timestamp: string | null;
-  capture_source: string | null;
-  captured_at: string | null;
-  uploaded_by: string;
-  uploaded_at: string;
-  content_url: string;
-  /** Server-computed: no fix, or an accuracy worse than the configured threshold. */
-  geotag_flagged: boolean;
-};
-
-export type ResurveyRequestOut = {
-  id: number;
-  case_ref: string;
-  from_round: number;
-  reason: string;
-  requested_by: string;
-  requested_at: string;
-  decision: string;
-  decided_by: string | null;
-  decided_at: string | null;
-  decision_note: string | null;
-  resulting_round: number | null;
-};
-
-/** The register row plus everything the detail screen renders. */
-export type InspectionDetail = InspectionRow & {
-  case_status: string;
-  occupant_name: string | null;
-  occupant_phone: string | null;
-  area_type_cd: string | null;
-  measured_area_sqm: number | null;
-  notice_required: boolean | null;
-  notice_act_cd: string | null;
-  officer_note: string | null;
-  location: InspectionLocation | null;
-  location_accuracy_m: number | null;
-  findings: FindingOut[];
-  sections: InspectionSectionRef[];
-  check_ins: CheckInOut[];
-  evidence: EvidenceOut[];
-  /** From the workflow, for THIS caller's roles, in THIS status. The only gate. */
-  available_actions: string[];
-};
-
-/** `app/icms/collection.py` `Page[T]`, the same envelope as every other register. */
-export type InspectionPage = {
-  items: InspectionRow[];
-  page: number;
-  size: number;
-  total: number;
-  pages: number;
-  sort: string;
-  next_cursor?: string | null;
-};
-
-export type InspectionListQuery = {
-  page?: number;
-  size?: number;
-  sort?: string;
-  q?: string;
-  case_ref?: readonly string[];
-  status?: readonly string[];
-  round_no?: readonly number[];
-  surveyor_user_id?: readonly string[];
-  zone_cd?: readonly string[];
-  /** The CASE's priority. Repeatable like the other five; `INSPECTION_PRIORITIES`. */
-  priority?: readonly string[];
-  /** `YYYY-MM-DD`, inclusive, on `submitted_at`. */
-  submitted_from?: string;
-  submitted_to?: string;
-};
-
-/* ---- request bodies, contract §3 ---------------------------------------- */
-
-export type InspectionOpen = {
-  surveyor_user_id: string;
-  scheduled_for?: string | null;
-};
-
-export type CheckInCreate = {
-  latitude: number;
-  longitude: number;
-  accuracy_m: number;
-  device_timestamp: string;
-  capture_source: string;
-  idempotency_key: string;
-};
-
-export type EvidenceCreate = {
-  file: File;
-  kind: string;
-  idempotency_key: string;
-  doc_type_cd?: string;
-  latitude?: number;
-  longitude?: number;
-  accuracy_m?: number;
-  device_timestamp?: string;
-  capture_source?: string;
-};
-
-export type FindingsPut = {
-  /** Replaces the whole list. An empty array is a 422, not a clear. */
-  findings: readonly string[];
-  sections?: readonly InspectionSectionRef[] | null;
-  occupant_name?: string | null;
-  occupant_phone?: string | null;
-  area_type_cd?: string | null;
-  measured_area_sqm?: number | null;
-  notice_required?: boolean | null;
-  notice_act_cd?: string | null;
-  officer_note?: string | null;
-};
-
-export type SubmitRequest = { idempotency_key: string };
-
-export type VerifyRequest = {
-  decision: VerifyDecision;
-  /** Required when the decision is `reject`. */
-  reason?: string | null;
-};
-
-export type ResurveyCreate = { reason: string };
-
-export type ResurveyDecide = {
-  decision: ResurveyDecisionInput;
-  note?: string | null;
-  /** Required when the decision is `approve` — the new round needs a surveyor. */
-  surveyor_user_id?: string | null;
-};
+export type InspectionOpen = Schemas["InspectionOpen"];
+export type CheckInCreate = Schemas["CheckInCreate"];
+/** The multipart form; the spec types `file` as a binary string, the browser hands us a File. */
+export type EvidenceCreate = Omit<Schemas["EvidenceCreate"], "file"> & { file: File };
+/** `findings` replaces the whole list. An empty array is a 422, not a clear. */
+export type FindingsPut = Schemas["FindingsPut"];
+export type SubmitRequest = Schemas["SubmitRequest"];
+/** `reason` is required when the decision is `reject`. */
+export type VerifyRequest = Schemas["VerifyRequest"];
+export type ResurveyCreate = Schemas["ResurveyCreate"];
+/** `surveyor_user_id` is required when the decision is `approve`. */
+export type ResurveyDecide = Schemas["ResurveyDecide"];
 
 /* ---- vocabularies -------------------------------------------------------- */
 
@@ -347,7 +158,7 @@ export function allows(
   detail: Pick<InspectionDetail, "available_actions"> | null | undefined,
   action: InspectionAction,
 ): boolean {
-  return detail?.available_actions.includes(action) ?? false;
+  return detail?.available_actions?.includes(action) ?? false;
 }
 
 /* ---- sorting ------------------------------------------------------------- */
@@ -592,14 +403,14 @@ export async function addEvidence(
   form.append("file", input.file, input.file.name);
   form.append("kind", input.kind);
   form.append("idempotency_key", input.idempotency_key);
-  if (input.doc_type_cd !== undefined) form.append("doc_type_cd", input.doc_type_cd);
-  if (input.latitude !== undefined) form.append("latitude", String(input.latitude));
-  if (input.longitude !== undefined) form.append("longitude", String(input.longitude));
-  if (input.accuracy_m !== undefined) form.append("accuracy_m", String(input.accuracy_m));
-  if (input.device_timestamp !== undefined) {
+  if (input.doc_type_cd != null) form.append("doc_type_cd", input.doc_type_cd);
+  if (input.latitude != null) form.append("latitude", String(input.latitude));
+  if (input.longitude != null) form.append("longitude", String(input.longitude));
+  if (input.accuracy_m != null) form.append("accuracy_m", String(input.accuracy_m));
+  if (input.device_timestamp != null) {
     form.append("device_timestamp", input.device_timestamp);
   }
-  if (input.capture_source !== undefined) {
+  if (input.capture_source != null) {
     form.append("capture_source", input.capture_source);
   }
 
@@ -700,7 +511,3 @@ export function newIdempotencyKey(): string {
     hex.slice(20),
   ].join("-");
 }
-
-// Keeps the generated module imported while the block above stands in for it,
-// so the swap described there is a deletion rather than a rewrite.
-export type GeneratedSchemas = components["schemas"];

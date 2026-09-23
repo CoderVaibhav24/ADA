@@ -53,7 +53,7 @@ export function isOverdue(
  * day count with no DST or offset arithmetic in it.
  */
 export function daysRemaining(
-  complianceDue: string | null,
+  complianceDue: string | null | undefined,
   todayIsoDate: string,
 ): number | null {
   if (!complianceDue) return null;
@@ -76,7 +76,7 @@ export function printableOf(row: Pick<NoticeRow, "has_artefact">): boolean {
  * the moment an act has a section 9 and a section 14: numeric part first, then
  * the suffix.
  */
-export function orderedSections(sections: readonly string[] | null): readonly string[] {
+export function orderedSections(sections: readonly string[] | null | undefined): readonly string[] {
   if (!sections) return [];
   return [...sections].sort((a, b) => {
     const na = Number.parseInt(a, 10);

@@ -105,9 +105,9 @@ export function InspectionActions({
 
   // The round's photographs against the server's bounds. It gates the upload's
   // PAYLOAD, never whether the button is drawn — `available_actions` does that.
-  const photos = usePhotoRule(detail.evidence, true);
+  const photos = usePhotoRule(detail.evidence ?? [], true);
 
-  const { known, unknown } = orderedActions(detail.available_actions);
+  const { known, unknown } = orderedActions(detail.available_actions ?? []);
 
   // A fresh dialog must not open onto the refusal the last one collected.
   const openPanel = (action: InspectionAction) => {

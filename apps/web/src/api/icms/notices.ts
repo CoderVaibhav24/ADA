@@ -10,9 +10,7 @@
  *     Parivartan App owns delivery tracking and every case status after issue
  *     (`docs/ICMS-API-Build-Order-and-Workflow.md` §3a, decided 23 September
  *     2026). `icms_notice_delivery` stays as a table and gains no route and no
- *     screen. The field is typed `readonly unknown[]` here on purpose: it
- *     cannot be destructured into a column by accident, and the day Parivartan
- *     publishes a shape it becomes a type change rather than a bug hunt.
+ *     screen. Nothing should render a column out of `deliveries`.
  *   - **issuing a notice is a workflow transition, not a permission.**
  *     `notice.read` gates the three READS and nothing else. `POST
  *     /cases/{ref}/notices` is gated by `ISSUE_NOTICE` in the transition table
@@ -31,136 +29,39 @@
  */
 
 import { authHeader } from "@/api/client";
-import type { components } from "@/api/generated/ada-api";
+import type { components, operations } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 
-/* -------------------------------------------------------------------------
-   TEMPORARY LOCAL TYPES — transcribed from batch-6-contract.md.
+/* ---- types: generated from ada-api's OpenAPI document (@ada/api-types) ---- */
 
-   `cases.ts` imports every one of its types from `@/api/generated/ada-api`, and
-   that is what this file should do too, so a renamed server field is a build
-   error here rather than an empty cell. It cannot yet: the notice routes do not
-   exist in the deployed API, so FastAPI's document does not describe them and
-   `npm run api:types` has nothing to emit — `grep -i notice` over
-   `src/api/generated/ada-api.ts` currently finds one comment and no schema.
-
-   The moment the backend module lands, rerun
-
-       npm run api:types
-
-   and replace this entire block with the generated aliases —
-
-       export type NoticeRow = components["schemas"]["NoticeRow"];
-       export type NoticeDetail = components["schemas"]["NoticeDetail"];
-       export type NoticeCreate = components["schemas"]["NoticeCreate"];
-       export type NoticePage = components["schemas"]["Page_NoticeRow_"];
-       export type NoticeListQuery = NonNullable<
-         operations["list_notices_api_icms_notices_get"]["parameters"]["query"]
-       >;
-
-   — and delete nothing else. Everything below this block is written against
-   these names and keeps working.
-   ------------------------------------------------------------------------- */
+type Schemas = components["schemas"];
 
 /** One row of the notice register. `zone_cd` and the address are joined from the case. */
-export type NoticeRow = {
-  notice_ref: string;
-  case_ref: string;
-  act_cd: string;
-  /** `icms_notice.section_cds`, a text[]. Null on a notice citing no section. */
-  section_cds: readonly string[] | null;
-  status: string;
-  issued_by: string | null;
-  issued_at: string | null;
-  /** A DATE, `YYYY-MM-DD` — not a timestamp. `icms_notice.compliance_due`. */
-  compliance_due: string | null;
-  zone_cd: string | null;
-  property_address: string | null;
-  /** Whether a rendered PDF exists. The only honest gate on the print control. */
-  has_artefact: boolean;
-};
+export type NoticeRow = Schemas["NoticeRow"];
+/** The row plus the rendered `body`. `deliveries` is always `[]`: Parivartan owns delivery. */
+export type NoticeDetail = Schemas["NoticeDetail"];
+export type NoticePage = Schemas["Page_NoticeRow_"];
+/** Repeatable lists for case_ref/status/act_cd/zone_cd. The page-size parameter is `size`. */
+export type NoticeListQuery = NonNullable<
+  operations["list_notices_api_icms_notices_get"]["parameters"]["query"]
+>;
 
 /**
- * The register row plus everything the detail screen renders.
- *
- * `body` is `icms_notice.body`, a JSON object of the rendered document's parts.
- * It is `Record<string, unknown>` rather than a named shape because the
- * template is provisional — see the notice-document appendix in
- * `docs/icms/batch-6-contract.md` — and a type asserting keys ADA has not
- * confirmed would be a promise this module cannot keep.
+ * `NoticeBodyOverrides`, except `grounds`: the server's `BeforeValidator` also
+ * accepts a single string (split on blank lines), which its OpenAPI document
+ * does not describe, and a string is what the portal sends.
  */
-export type NoticeDetail = NoticeRow & {
-  body: Record<string, unknown> | null;
-  issuing_authority: string | null;
-  artefact_sha256: string | null;
-  inspection_ref: string | null;
-  /**
-   * ALWAYS `[]`. Parivartan owns delivery; this API has no delivery route.
-   * Typed as `unknown` so no screen can render a field out of it by accident.
-   */
-  deliveries: readonly unknown[];
+export type NoticeBodyOverrides = Omit<Schemas["NoticeBodyOverrides"], "grounds"> & {
+  grounds?: string | string[] | null;
 };
 
-/** `app/icms/collection.py` `Page[T]`, the same envelope as every other register. */
-export type NoticePage = {
-  items: NoticeRow[];
-  page: number;
-  size: number;
-  total: number;
-  pages: number;
-  sort: string;
-  next_cursor?: string | null;
-};
-
-/**
- * The register's query bag.
- *
- * `case_ref`, `status`, `act_cd` and `zone_cd` are repeatable lists — one value
- * per parameter, `?status=issued&status=draft` — exactly as `CaseQuery` and
- * `InspectionListQuery` already do. `issued_from` / `issued_to` are single
- * dates. **The page-size parameter is `size`; there is no `page_size`.**
- */
-export type NoticeListQuery = {
-  page?: number;
-  size?: number;
-  sort?: string;
-  q?: string;
-  case_ref?: readonly string[];
-  status?: readonly string[];
-  act_cd?: readonly string[];
-  zone_cd?: readonly string[];
-  /** `YYYY-MM-DD`, inclusive, on `issued_at`. */
-  issued_from?: string;
-  issued_to?: string;
-};
-
-/**
- * `POST /cases/{case_ref}/notices`. 201 `NoticeDetail`.
- *
- * `act_cd` and `section_cds` are required — they are what makes the document a
- * legal instrument rather than a letter. The other three are optional and the
- * server fills its own defaults when they are absent.
- */
-export type NoticeCreate = {
-  act_cd: string;
-  /** At least one. `icms_notice.section_cds` is a text[]. */
-  section_cds: readonly string[];
-  /** `YYYY-MM-DD`. Absent means the server's configured compliance period. */
-  compliance_due?: string | null;
-  issuing_authority?: string | null;
-  /**
-   * Free-form overrides merged into the rendered `body`.
-   *
-   * The KEY NAMES ARE PROVISIONAL. `GROUNDS_KEY` below is the only one this
-   * portal writes, and it is recorded in the notice-document appendix of
-   * `docs/icms/batch-6-contract.md` so the renderer and the form agree on one
-   * spelling. Confirm it against that document before adding a second key.
-   */
-  body_overrides?: Record<string, string> | null;
+/** `POST /cases/{case_ref}/notices`. 201 `NoticeDetail`. */
+export type NoticeCreate = Omit<Schemas["NoticeCreate"], "body_overrides"> & {
+  body_overrides?: NoticeBodyOverrides | null;
 };
 
 /** The one `body_overrides` key the portal writes — Figma's "Reason / Grounds". */
-export const GROUNDS_KEY = "grounds";
+export const GROUNDS_KEY = "grounds" satisfies keyof NoticeBodyOverrides;
 
 /* ---- vocabularies -------------------------------------------------------- */
 
@@ -383,7 +284,3 @@ export async function createNotice(
   );
   return narrowDetail(result);
 }
-
-// Keeps the generated module imported while the block above stands in for it,
-// so the swap described there is a deletion rather than a rewrite.
-export type GeneratedSchemas = components["schemas"];

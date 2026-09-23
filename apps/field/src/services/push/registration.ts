@@ -1,3 +1,4 @@
+import type { components } from '@ada/api-types/notify-api';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -21,12 +22,7 @@ import { readRegistration, writeRegistration } from './storage';
  */
 
 // Body of POST /v1/me/devices. `apns_environment` is required for iOS and must be null for Android.
-export type DeviceRegistration = {
-  readonly platform: 'android' | 'ios';
-  readonly token: string;
-  readonly apns_environment: 'sandbox' | 'production' | null;
-  readonly app_version: string | null;
-};
+export type DeviceRegistration = components['schemas']['DeviceRegister'];
 
 // Registrations run one after another, so a token change mid-flight is never dropped.
 let queue: Promise<void> = Promise.resolve();

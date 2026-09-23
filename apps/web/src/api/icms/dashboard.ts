@@ -4,15 +4,7 @@
  * Written against `services/api/app/routers/icms_dashboard.py` and
  * `app/icms/dashboard_schemas.py`.
  *
- * ## Why these types are hand-written when every other module's are generated
- *
- * `src/api/generated/ada-api.ts` predates this router: it carries no
- * `DashboardSummary`, no `TrendPoint`, no `ZoneCount`. `scripts/generate-api-types.mjs`
- * warns about exactly this situation — the served spec can lag the source app,
- * and regenerating against a stale one LOSES types rather than gaining them.
- * So the shapes below mirror `dashboard_schemas.py` field for field, and this
- * comment is the marker for whoever next runs `npm run api:types`: delete them
- * and re-export from `components["schemas"]` once the spec carries them.
+ * Every type is the generated one, from `@ada/api-types/ada-api`.
  *
  * ## Four things about this contract a caller must not get wrong
  *
@@ -42,58 +34,22 @@
  * to derive it from. It belongs to whichever screen actually draws a map.
  */
 
+import type { components, operations } from "@ada/api-types/ada-api";
 import { IcmsApiError, icmsRequest } from "./http";
 
-export type Bucket = "day" | "week" | "month";
+type Schemas = components["schemas"];
 
-export type StatusCount = {
-  status: string;
-  count: number;
-  high_priority: number;
-};
-
-export type DashboardSummary = {
-  total: number;
-  open: number;
-  closed: number;
-  rejected: number;
-  high_priority: number;
-  by_status: StatusCount[];
-};
-
-export type TrendPoint = {
-  /** The first day of the bucket, `YYYY-MM-DD` in IST. */
-  period: string;
-  raised: number;
-  /** Of the cases raised in THIS bucket, how many have since closed or been rejected. */
-  resolved: number;
-};
-
-export type DashboardTrend = {
-  bucket: Bucket;
-  days: number;
-  start: string;
-  end: string;
-  points: TrendPoint[];
-};
-
-export type TypeCount = {
-  complaint_type_cd: string | null;
-  label: string | null;
-  total: number;
-  open: number;
-  resolved: number;
-};
-
-export type ZoneCount = {
-  zone_cd: string;
-  zone_name: string;
-  total: number;
-  open: number;
-  resolved: number;
-};
-
-export type TrendQuery = { days: number; bucket: Bucket };
+export type StatusCount = Schemas["StatusCount"];
+export type DashboardSummary = Schemas["DashboardSummary"];
+/** `period` is the first day of the bucket, `YYYY-MM-DD` in IST; `resolved` is a cohort. */
+export type TrendPoint = Schemas["TrendPoint"];
+export type DashboardTrend = Schemas["DashboardTrend"];
+export type Bucket = DashboardTrend["bucket"];
+export type TypeCount = Schemas["TypeCount"];
+export type ZoneCount = Schemas["ZoneCount"];
+export type TrendQuery = Required<
+  NonNullable<operations["dashboard_trend_api_icms_dashboard_trend_get"]["parameters"]["query"]>
+>;
 
 /** The one code gating all four reads. Read from capabilities, enforced server-side. */
 export const DASHBOARD_READ = "dashboard.read";

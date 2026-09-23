@@ -66,7 +66,7 @@ function meta(value: DataTableColumnMeta<NoticeRow>): DataTableColumnMeta<Notice
   return value;
 }
 
-function isoDate(value: string | null): string {
+function isoDate(value: string | null | undefined): string {
   return value ? value.slice(0, 10) : "";
 }
 
@@ -175,7 +175,7 @@ export function buildNoticeColumns({
           [row.property_address, row.zone_cd].filter(Boolean).join(" "),
       }),
       cell: ({ row }) =>
-        row.original.property_address === null && row.original.zone_cd === null ? (
+        row.original.property_address == null && row.original.zone_cd == null ? (
           <span className="text-fg-faint">{labels.notRecorded}</span>
         ) : (
           <span className="flex flex-col">
@@ -200,7 +200,7 @@ export function buildNoticeColumns({
       }),
       cell: ({ row }) =>
         // Null on every draft, and that is a state rather than a blank cell.
-        row.original.issued_at === null ? (
+        row.original.issued_at == null ? (
           <span className="text-fg-faint">{labels.notIssued}</span>
         ) : (
           <time dateTime={row.original.issued_at} className="text-fg-strong tabular">
@@ -221,7 +221,7 @@ export function buildNoticeColumns({
       }),
       cell: ({ row }) => {
         const record = row.original;
-        if (record.compliance_due === null) {
+        if (record.compliance_due == null) {
           return <span className="text-fg-faint">{labels.noDueDate}</span>;
         }
         const late = isOverdue(record, today);
@@ -354,7 +354,7 @@ export function buildNoticeColumns({
         exportValue: (row) => row.issued_by ?? "",
       }),
       cell: ({ row }) =>
-        row.original.issued_by === null ? (
+        row.original.issued_by == null ? (
           <span className="text-fg-faint">{labels.notIssued}</span>
         ) : (
           // The Keycloak subject is a UUID and there is no local users table to
@@ -375,7 +375,7 @@ export function buildNoticeColumns({
         exportValue: (row) => row.zone_cd ?? "",
       }),
       cell: ({ row }) =>
-        row.original.zone_cd === null ? (
+        row.original.zone_cd == null ? (
           <span className="text-fg-faint">{labels.notRecorded}</span>
         ) : (
           <span className="inline-flex items-center gap-1.5 font-mono text-2xs text-fg-base">

@@ -50,6 +50,7 @@
 import { useEffect, useId, useState } from "react";
 import {
   EVIDENCE_KINDS,
+  type EvidenceKind,
   newIdempotencyKey,
   type CheckInCreate,
   type EvidenceCreate,
@@ -278,7 +279,7 @@ export function EvidenceUploadDialog({
   const ceilingId = useId();
 
   const [file, setFile] = useState<File | null>(null);
-  const [kind, setKind] = useState<string>(EVIDENCE_KINDS[0]);
+  const [kind, setKind] = useState<EvidenceKind>(EVIDENCE_KINDS[0]);
   const [docType, setDocType] = useState("");
   const [key] = useState(newIdempotencyKey);
 
@@ -316,7 +317,7 @@ export function EvidenceUploadDialog({
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={kindId}>{evidenceLabels.kindLabel}</Label>
-            <Select value={kind} onValueChange={setKind}>
+            <Select value={kind} onValueChange={(value) => setKind(value as EvidenceKind)}>
               <SelectTrigger id={kindId} className="w-full">
                 <SelectValue />
               </SelectTrigger>
