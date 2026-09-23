@@ -1,0 +1,40 @@
+# Workspace root. Not a package: it holds the members, the shared dev tools and
+# the single lockfile (uv.lock) every service image and CI job installs from.
+[project]
+name = "ada-workspace"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+# ada-ml's torch/onnxruntime come in two mutually exclusive builds; see
+# services/ml-worker/pyproject.toml.
+conflicts = [
+  [
+    { package = "ada-ml", extra = "cpu" },
+    { package = "ada-ml", extra = "gpu" },
+  ],
+]
+
+[tool.uv.workspace]
+members = ["libs/python/*", "services/*"]
+
+# PyTorch wheel indexes. explicit = true: only torch/torchvision are ever read
+# from them (via ada-ml's [tool.uv.sources]); everything else comes from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.8",
+]

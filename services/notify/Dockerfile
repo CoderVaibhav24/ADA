@@ -1,56 +1,75 @@
-# ada-notify
+# syntax=docker/dockerfile:1.7
+# ada-notify - ingestion, fan-out and delivery. One image, three roles (see
+# infra/compose): the API (default CMD), `python -m app.worker`, and
+# `alembic upgrade head`. WORKDIR holds alembic.ini for the last one.
 #
-# Two stages so that build tooling and compilers do not ship to production.
-# asyncpg and the cryptography package used by PyJWT both have wheels for
-# linux/amd64 and linux/arm64, so the builder normally installs without
-# compiling anything — the build-essential line is there for the case where a
-# transitive dependency has no wheel for the platform.
+# Build context is the REPOSITORY ROOT (uv.lock lives there):
+#   docker build -f services/notify/Dockerfile -t ada/notify .
+#
+# Dependencies come only from /uv.lock (`uv sync --frozen`); no pip anywhere.
+# Base images are pinned by digest - bump them deliberately.
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.29@sha256:eb2843a1e56fd9e30c7276ce1a52cba86e64c7b385f5e3279a0e08e02dd058fc
 
-FROM python:3.12-slim-bookworm AS builder
+FROM ${UV_IMAGE} AS uv
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1
+# ---------------------------------------------------------------- builder ---
+FROM ${PYTHON_IMAGE} AS builder
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON=/usr/local/bin/python3.12 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+WORKDIR /src
 
-# The apt lists are deleted in the same layer that created them. A separate
-# RUN would leave them in the layer below, where deleting them frees nothing.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+# Third-party dependencies first, from the manifests alone, so this layer is
+# cached across every source change. uv needs every workspace member's manifest
+# to read the workspace, not just this service's.
+COPY pyproject.toml uv.lock ./
+COPY libs/python/ada-core/pyproject.toml     libs/python/ada-core/
+COPY libs/python/ada-platform/pyproject.toml libs/python/ada-platform/
+COPY services/api/pyproject.toml             services/api/
+COPY services/auth-otp/pyproject.toml        services/auth-otp/
+COPY services/ml-worker/pyproject.toml       services/ml-worker/
+COPY services/notify/pyproject.toml          services/notify/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package ada-notify --no-install-workspace --no-editable
 
-WORKDIR /build
+# No workspace libraries to add: this service imports neither ada_core nor
+# ada_platform. The service itself is not installed (package = false); its
+# source is copied into the runtime stage below.
 
-# Dependencies resolve from pyproject alone, so this layer is cached across every
-# change to application code.
-COPY services/notify/pyproject.toml ./
-RUN python -m venv /opt/venv \
- && /opt/venv/bin/pip install --upgrade pip setuptools wheel \
- && /opt/venv/bin/pip install .
+# ---------------------------------------------------------------- runtime ---
+FROM ${PYTHON_IMAGE} AS runtime
 
-
-FROM python:3.12-slim-bookworm AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH"
 
-# Non-root. The container writes nothing to disk, so it needs no writable path
-# outside /tmp.
-RUN useradd --create-home --uid 10001 ada
+# pip is removed: nothing installs at runtime, and it is the base image's main
+# CVE surface. Fixed UID/GID 10001 so k8s runAsUser / runAsNonRoot can name it.
+RUN rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* \
+ && groupadd --system --gid 10001 ada \
+ && useradd --system --uid 10001 --gid 10001 --home-dir /home/ada --create-home \
+        --shell /usr/sbin/nologin ada
 
 COPY --from=builder /opt/venv /opt/venv
 
-WORKDIR /srv/ada-notify
-COPY --chown=ada:ada services/notify/alembic.ini ./
-COPY --chown=ada:ada services/notify/alembic ./alembic
-COPY --chown=ada:ada services/notify/app ./app
+# Source stays root-owned: the process can read its code but not rewrite it.
+WORKDIR /app
+COPY services/notify/alembic.ini ./
+COPY services/notify/alembic ./alembic
+COPY services/notify/app ./app
 
-USER ada
+USER 10001:10001
 
 EXPOSE 8001
+# No image HEALTHCHECK on purpose: the worker and migrate roles serve no HTTP and
+# would report unhealthy. The API role probes /health/live from compose.
 
 # No --reload and no --workers. One process per container: replicas are the
-# compose file's business, and an in-process worker pool hides a crashed worker
-# from the orchestrator's restart policy.
+# orchestrator's business, and an in-process worker pool hides a crashed worker
+# from its restart policy.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--no-server-header"]

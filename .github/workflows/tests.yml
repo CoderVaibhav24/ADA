@@ -15,20 +15,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.11.29'
           python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      # One pytest run over the whole tree is not possible: api, ml, auth and
-      # notify each have a top-level package called `app`, so a single session
-      # imports whichever it reaches first. run_tests.sh runs them one at a
-      # time, which is why it is the entry point here too.
+      # --frozen: install exactly uv.lock and fail if it is stale. --extra cpu:
+      # ada-ml's CPU torch/onnxruntime build; the CUDA build (`gpu`) is image-only.
       - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e libs/python/ada-core -e libs/python/ada-platform
-          pip install -r services/api/requirements.txt
-          pip install pytest
+        run: uv sync --frozen --all-packages --group dev --extra cpu
 
-      - name: Run suites
-        run: PYTEST="python -m pytest" ./scripts/run_tests.sh
+      # One suite per package: api, ml, auth and notify each have a top-level
+      # package called `app`, so a single pytest session would import whichever
+      # it reached first.
+      - name: ada-core
+        working-directory: libs/python/ada-core
+        run: uv run --frozen --no-sync pytest -q
+
+      - name: ada-platform-sdk
+        working-directory: libs/python/ada-platform
+        run: uv run --frozen --no-sync pytest -q
+
+      - name: ada-api
+        working-directory: services/api
+        run: uv run --frozen --no-sync pytest -q
+
+      - name: ada-ml
+        working-directory: services/ml-worker
+        run: uv run --frozen --no-sync pytest -q
+
+      - name: ada-auth
+        working-directory: services/auth-otp
+        run: uv run --frozen --no-sync pytest -q
+
+      # These three post to a running ada-notify and fail with httpx.ConnectError
+      # without one; the rest of the integration tests skip themselves.
+      - name: ada-notify
+        working-directory: services/notify
+        run: >-
+          uv run --frozen --no-sync pytest -q
+          --deselect tests/test_ingestion.py::test_unauthenticated_is_refused
+          --deselect tests/test_ingestion.py::test_garbage_token_is_refused
+          --deselect tests/test_ingestion.py::test_wrong_auth_scheme_is_refused

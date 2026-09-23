@@ -4,20 +4,12 @@
   "pythonVersion": "3.12",
   "typeCheckingMode": "standard",
   "include": ["services", "libs/python", "scripts", "infra/scripts"],
-  "exclude": [
-    "**/node_modules",
-    "**/__pycache__",
-    "**/.venv",
-    "**/alembic/versions",
-    "data",
-    "apps",
-    "docs"
-  ],
+  "exclude": ["**/node_modules", "**/__pycache__", "**/.venv", "**/alembic/versions"],
   "executionEnvironments": [
-    { "root": "services/api",       "extraPaths": ["libs/python/ada-core", "libs/python/ada-platform"] },
-    { "root": "services/auth-otp",  "extraPaths": ["libs/python/ada-core", "libs/python/ada-platform"] },
-    { "root": "services/ml-worker", "extraPaths": ["libs/python/ada-core", "libs/python/ada-platform"] },
-    { "root": "services/notify",    "extraPaths": ["libs/python/ada-core", "libs/python/ada-platform"] },
+    { "root": "services/api" },
+    { "root": "services/auth-otp" },
+    { "root": "services/ml-worker" },
+    { "root": "services/notify" },
     { "root": "libs/python/ada-core" },
     { "root": "libs/python/ada-platform" },
     { "root": "infra/scripts" }

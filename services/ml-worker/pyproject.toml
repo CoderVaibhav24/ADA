@@ -4,18 +4,80 @@ version = "0.1.0"
 description = "ADA model service — raster ingestion and bi-temporal change detection."
 requires-python = ">=3.12"
 
-# The runtime dependencies live in requirements.txt, not here. That is not
-# laziness: torch and onnxruntime have to be installed from a specific index
-# and in a specific order (see services/ml-worker/Dockerfile), which a dependency list
-# cannot express.
-dependencies = []
+# Everything except the model runtime. torch/torchvision/onnxruntime are in the
+# `cpu` and `gpu` extras below, and exactly one of them must be installed:
+#   uv sync --package ada-ml --extra cpu   # CI and laptops; on macOS this is the
+#                                          # MPS torch + CoreML onnxruntime build
+#   uv sync --package ada-ml --extra gpu   # the CUDA 12.8 image (Linux only)
+dependencies = [
+  "ada-core",
+  "ada-platform-sdk",
+  # Floors raised past known CVEs (starlette multipart DoS, CVE-2024-47874).
+  "fastapi>=0.115.3",
+  "starlette>=0.40.0",
+  "uvicorn[standard]>=0.32",
+  "pydantic-settings>=2.6",
+  "python-dotenv>=1.0",
+  "httpx>=0.27",
+  # The worker writes progress into the same rows ada-api reads.
+  "sqlalchemy>=2.0",
+  "psycopg2-binary>=2.9",
+  "rasterio>=1.4",
+  "rio-cogeo>=5.3",
+  "shapely>=2.0",
+  "pyproj>=3.7",
+  "numpy>=1.26",
+  "pillow>=10.4",
+  "scikit-image>=0.24",
+  "scipy>=1.13",                  # imported directly by app/ml; was only transitive
+  "opencv-python-headless>=4.10",
+  "huggingface-hub>=0.24",        # auto-downloads the segmenter / land-cover / SAM weights
+  # scripts/fetch_weights.py bakes the ChangeStar export's symbolic H/W to 1024.
+  "onnx>=1.16",
+  # SegFormer land cover, Sam2Model and Sam3Model (SAM_BACKEND=sam3).
+  "transformers>=5.0",
+]
 
 [project.optional-dependencies]
-dev = [
-  "pytest>=8.3",
-  "pytest-asyncio>=0.24",
-  "ruff>=0.8",
+# PENDING BUSINESS DECISION - do not change these pins without it. The GPU build
+# of onnxruntime is tied to the CUDA major version torch was built against, and a
+# mismatch is silent (ORT falls back to CPU, ~13 s per 1024 px tile):
+#   torch cu12x -> onnxruntime-gpu==1.22.*   torch cu13x -> onnxruntime-gpu>=1.28
+# onnxruntime-gpu is CUDA-only and has no macOS wheel, hence the Linux marker.
+gpu = [
+  "torch>=2.6",
+  "torchvision>=0.21",
+  "onnxruntime-gpu==1.22.0 ; sys_platform == 'linux'",
 ]
+# CPU torch on Linux. On macOS: the PyPI torch wheel, which carries the MPS
+# backend, and the ordinary onnxruntime wheel, which carries the CoreML EP (1.20
+# is the floor for CoreML string provider options - see app/ml/gpu.py).
+cpu = [
+  "torch>=2.6",
+  "torchvision>=0.21",
+  "onnxruntime>=1.20",
+]
+
+[tool.uv.sources]
+ada-core = { workspace = true }
+ada-platform-sdk = { workspace = true }
+# Indexes are declared in the root pyproject.toml. macOS always takes PyPI: a
+# CUDA-index wheel there has no MPS backend.
+torch = [
+  { index = "pytorch-cu128", extra = "gpu", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", extra = "gpu", marker = "sys_platform == 'linux'" },
+  { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux'" },
+]
+
+[tool.uv]
+# An application, not a library: uv installs its dependencies but never the
+# service itself. Every service's top-level package is called `app`, so four
+# editable installs would shadow each other in the shared workspace venv; `app`
+# is imported from the service directory (cwd / PYTHONPATH) instead.
+package = false
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -25,6 +87,8 @@ build-backend = "setuptools.build_meta"
 include = ["app*"]
 
 [tool.pytest.ini_options]
+# `app` is not installed (package = false), so the service root goes on sys.path.
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"

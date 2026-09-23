@@ -5,7 +5,9 @@ description = "ADA notification service — ingestion, fan-out and delivery."
 requires-python = ">=3.12"
 
 dependencies = [
-  "fastapi>=0.115",
+  # Floors raised past known CVEs (starlette multipart DoS, CVE-2024-47874).
+  "fastapi>=0.115.3",
+  "starlette>=0.40.0",
   "uvicorn[standard]>=0.32",
   "sqlalchemy[asyncio]>=2.0.36",
   "asyncpg>=0.30",
@@ -25,12 +27,12 @@ dependencies = [
   "aiosmtplib>=3.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.3",
-  "pytest-asyncio>=0.24",
-  "ruff>=0.8",
-]
+[tool.uv]
+# An application, not a library: uv installs its dependencies but never the
+# service itself. Every service's top-level package is called `app`, so four
+# editable installs would shadow each other in the shared workspace venv; `app`
+# is imported from the service directory (cwd / PYTHONPATH) instead.
+package = false
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -40,6 +42,8 @@ build-backend = "setuptools.build_meta"
 include = ["app*"]
 
 [tool.pytest.ini_options]
+# `app` is not installed (package = false), so the service root goes on sys.path.
+pythonpath = ["."]
 asyncio_mode = "auto"
 # Both scopes, and they have to agree.
 #

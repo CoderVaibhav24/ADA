@@ -1,94 +1,107 @@
-# ADA model service — the pipeline, and the GPU.
+# syntax=docker/dockerfile:1.7
+# ADA model service - the pipeline, and the GPU.
 #
-# GPU image. The seg-diff pipeline runs three networks per analysis — ChangeStar
-# ViT-B (1024 px tiles), SegFormer-B5 land cover, and SAM for refinement — and
-# on CPU the ChangeStar tiles alone cost ~13 s each with every core saturated.
-# That is minutes of full-load CPU per analysis, so the GPU is not an
-# optimisation here; it is the difference between usable and not.
+# NOT BUILT OR VERIFIED. Treat this image as unbuildable until the onnxruntime
+# pin is decided: the lock carries onnxruntime-gpu==1.22.0 (CUDA 12) against
+# torch from the cu128 index, and that pairing is a pending business decision
+# (see the `gpu` extra in services/ml-worker/pyproject.toml). The Dockerfile
+# follows the same uv pattern as the other services so only the pin has to move.
 #
 # The NVIDIA *driver* comes from the host through the nvidia container runtime;
-# everything above it (CUDA runtime, cuBLAS, cuDNN) arrives as pip wheels
-# alongside torch. That keeps this on the same python:3.13 base and keeps the
-# CUDA versions consistent by construction.
+# CUDA runtime, cuBLAS and cuDNN arrive as nvidia-* wheels alongside torch.
 #
-# Build CPU-only instead (much smaller, much slower):
-#   docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
-#                        --build-arg ONNXRUNTIME_PKG=onnxruntime ada-ml
-#
-# The build context is the REPOSITORY ROOT, not the service directory, because
-# this image installs libs/python/ada-core and libs/python/ada-platform from
-# source. A context of services/ml-worker could not see them.
-FROM python:3.13-slim
+# Build context is the REPOSITORY ROOT (uv.lock and libs/python live there):
+#   docker build -f services/ml-worker/Dockerfile -t ada/ml .
+# CPU-only instead (much smaller, much slower; torch from the CPU index and the
+# plain onnxruntime wheel, both already in uv.lock):
+#   docker build -f services/ml-worker/Dockerfile --build-arg ML_EXTRA=cpu -t ada/ml:cpu .
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.29@sha256:eb2843a1e56fd9e30c7276ce1a52cba86e64c7b385f5e3279a0e08e02dd058fc
+
+FROM ${UV_IMAGE} AS uv
+
+# ---------------------------------------------------------------- builder ---
+FROM ${PYTHON_IMAGE} AS builder
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON=/usr/local/bin/python3.12 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+# gpu (default) or cpu - the mutually exclusive extras of ada-ml.
+ARG ML_EXTRA=gpu
+WORKDIR /src
+
+COPY pyproject.toml uv.lock ./
+COPY libs/python/ada-core/pyproject.toml     libs/python/ada-core/
+COPY libs/python/ada-platform/pyproject.toml libs/python/ada-platform/
+COPY services/api/pyproject.toml             services/api/
+COPY services/auth-otp/pyproject.toml        services/auth-otp/
+COPY services/ml-worker/pyproject.toml       services/ml-worker/
+COPY services/notify/pyproject.toml          services/notify/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package ada-ml --extra "${ML_EXTRA}" --no-install-workspace
+
+COPY libs/python/ada-core     libs/python/ada-core
+COPY libs/python/ada-platform libs/python/ada-platform
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package ada-ml --extra "${ML_EXTRA}" --no-editable
+
+# ---------------------------------------------------------------- runtime ---
+FROM ${PYTHON_IMAGE} AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
 # libglib2.0-0 -> opencv-python-headless, libgomp1 -> torch/onnxruntime OpenMP,
-# libexpat1 -> pyproj/GDAL XML parsing, curl -> container healthcheck.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libglib2.0-0 \
-        libgomp1 \
-        libexpat1 \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
+# libexpat1 -> rasterio's bundled GDAL. pip is removed: nothing installs at
+# runtime. Fixed UID/GID 10001; the home directory holds the HuggingFace cache.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 libexpat1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* \
+ && groupadd --system --gid 10001 ada \
+ && useradd --system --uid 10001 --gid 10001 --home-dir /home/ada --create-home \
+        --shell /usr/sbin/nologin ada
 
-WORKDIR /app
-
-# Torch first so the requirements resolve below finds it already satisfied.
-# cu128 pulls the CUDA 12.8 runtime + cuDNN 9 as nvidia-* wheels.
-ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
-RUN pip install --index-url "${TORCH_INDEX_URL}" torch torchvision
-
-# MUST match the CUDA major version torch was built against — see the long note
-# in services/ml-worker/requirements.txt. 1.22.x is the CUDA 12 line; 1.28+
-# requires CUDA 13.
-ARG ONNXRUNTIME_PKG=onnxruntime-gpu==1.22.0
-RUN pip install "${ONNXRUNTIME_PKG}"
-
-COPY services/ml-worker/requirements.txt ./
-RUN pip install -r requirements.txt
-
-# The shared packages, before the service that imports them. Copied as sources
-# and installed, rather than bind-mounted, so the image is self-contained.
-COPY libs/python/ada-core /app/shared/ada-core
-COPY libs/python/ada-platform /app/shared/ada-platform-sdk
-RUN pip install /app/shared/ada-core /app/shared/ada-platform-sdk
+COPY --from=builder /opt/venv /opt/venv
 
 # onnxruntime-gpu does not bundle CUDA/cuDNN; the only copies in this image are
-# the nvidia-* wheels torch pulled in. Register them with the dynamic linker so
-# onnxruntime can actually load CUDAExecutionProvider. Without this it silently
-# runs on the CPU — the exact failure this image exists to avoid.
-RUN python -c "import site, glob, os; \
-libs = sorted(glob.glob(os.path.join(site.getsitepackages()[0], 'nvidia', '*', 'lib'))) \
-     + glob.glob(os.path.join(site.getsitepackages()[0], 'torch', 'lib')); \
+# the nvidia-* wheels torch pulled in. Register them with the dynamic linker or
+# onnxruntime silently runs on the CPU. A no-op for the cpu extra.
+RUN python -c "import glob, os; \
+sp = '/opt/venv/lib/python3.12/site-packages'; \
+libs = sorted(glob.glob(os.path.join(sp, 'nvidia', '*', 'lib'))) + glob.glob(os.path.join(sp, 'torch', 'lib')); \
 open('/etc/ld.so.conf.d/nvidia-torch.conf', 'w').write('\n'.join(libs) + '\n'); \
 print('registered:', *libs, sep='\n  ')" \
-    && ldconfig
+ && ldconfig
 
+# Source stays root-owned: the process can read its code but not rewrite it.
+WORKDIR /app
 COPY services/ml-worker/app ./app
 COPY services/ml-worker/scripts ./scripts
 COPY services/ml-worker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-# Strip CR before chmod. This repo is developed on Windows with
-# core.autocrlf=true, so a checkout rewrites the script to CRLF and the shebang
-# becomes `/usr/bin/env sh\r`, which fails at container start with the unhelpful
-#   env: 'sh\r': No such file or directory
-# .gitattributes pins eol=lf for tracked clones; this covers everyone else.
+# Strip CR before chmod: a Windows checkout with core.autocrlf=true turns the
+# shebang into `/usr/bin/env sh\r`, which fails at start with `env: 'sh\r'`.
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
-    && chmod +x /usr/local/bin/docker-entrypoint.sh
+ && chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
-# DATA_DIR is set to /app/data by compose and bind-mounted from the host.
-# ada_core.config falls back to a marker search, which finds nothing inside an
-# image, so the variable is not optional here.
+# /app/data is a bind mount of the host's data/ and this service WRITES to it
+# (weights, samples, COGs). The mount point is owned by 10001 for the no-mount
+# case; with a mount the host directory's ownership wins, so on a Linux host run
+# `sudo chown -R 10001:10001 data` once (Docker Desktop maps ownership itself).
+# World-writable was rejected: it lets every local user tamper with the data.
 ENV DATA_DIR=/app/data
-RUN mkdir -p /app/data
+RUN install -d -o 10001 -g 10001 -m 0750 /app/data
+
+USER 10001:10001
 
 EXPOSE 8100
-# start-period is generous: first boot downloads ~1.5 GB of model weights
-# (ChangeStar 395 MB, SegFormer-B5 339 MB, SAM 2.1 large ~900 MB).
+# start-period is generous: first boot downloads ~1.5 GB of model weights.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=900s --retries=60 \
-    CMD curl -fsS http://127.0.0.1:8100/health/live || exit 1
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8100/health/live', timeout=4).status == 200 else 1)"]
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100"]
