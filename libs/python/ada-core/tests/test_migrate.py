@@ -109,3 +109,91 @@ def test_the_seed_insert_is_bound_and_skips_what_is_already_there():
     for name in ("domain", "code", "label", "label_hi", "parent_code", "sort_order"):
         assert f":{name}" in CODE_VALUE_INSERT
     assert "ON CONFLICT (domain, code) DO NOTHING" in CODE_VALUE_INSERT
+
+
+class _RecordingConn:
+    """Stands in for a PostgreSQL connection; records every statement in order."""
+
+    def __init__(self, log):
+        self.log = log
+
+    def execute(self, clause, params=None):
+        self.log.append(("sql", str(clause), params))
+
+
+class _RecordingEngine:
+    class dialect:
+        name = "postgresql"
+
+    def __init__(self, log):
+        self.log = log
+
+    def begin(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _tx():
+            self.log.append(("begin",))
+            yield _RecordingConn(self.log)
+            self.log.append(("commit",))
+        return _tx()
+
+
+def test_postgres_migrations_hold_an_advisory_lock_for_the_whole_upgrade(monkeypatch):
+    """Two starters (api-migrate and ada-ml, or two replicas) must not both run
+    the upgrade. The lock is the first statement of the transaction the upgrade
+    runs in, so the second starter waits and then finds the schema at head."""
+    import ada_core.migrate as migrate
+
+    log: list = []
+    monkeypatch.setattr(migrate, "get_engine", lambda: _RecordingEngine(log))
+
+    class _Inspector:
+        def has_table(self, name):
+            return True
+
+    monkeypatch.setattr(migrate, "inspect", lambda conn: _Inspector())
+    monkeypatch.setattr(migrate.command, "upgrade",
+                        lambda cfg, rev: log.append(("upgrade", rev)))
+
+    migrate.run_migrations()
+
+    assert log[0] == ("begin",)
+    kind, sql, params = log[1]
+    assert "pg_advisory_xact_lock" in sql
+    assert params == {"key": migrate.MIGRATION_LOCK_KEY}
+    upgrade_at = log.index(("upgrade", "head"))
+    assert 1 < upgrade_at < log.index(("commit",))
+
+
+def test_the_lock_key_fits_a_postgres_bigint():
+    import ada_core.migrate as migrate
+
+    assert -(2**63) <= migrate.MIGRATION_LOCK_KEY < 2**63
+
+
+def test_sqlite_takes_no_advisory_lock(monkeypatch):
+    """pg_advisory_xact_lock does not exist on SQLite; the test path must not call it."""
+    from sqlalchemy import event
+
+    previous = database._engine
+    database._engine = None
+    seen: list[str] = []
+    try:
+        engine = database.configure_engine("sqlite://", poolclass=StaticPool)
+        event.listen(engine, "before_cursor_execute",
+                     lambda conn, cur, stmt, *a: seen.append(stmt))
+        run_migrations()
+        assert not any("advisory" in s for s in seen)
+    finally:
+        if database._engine is not None:
+            database._engine.dispose()
+        database._engine = previous
+
+
+def test_python_dash_m_is_an_entrypoint():
+    import ada_core.migrate as migrate
+
+    source = open(migrate.__file__, encoding="utf-8").read()
+    assert 'if __name__ == "__main__":' in source
+    assert callable(migrate.main)

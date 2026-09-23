@@ -86,11 +86,14 @@ see `services/*/README.md`.
 ## Quick start — Docker (whole stack, nothing else installed)
 
 Everything runs in containers: Postgres/PostGIS, Redis, Keycloak, mailpit, the
-four ADA services and the built React app behind nginx. Only Docker with
-Compose v2 is required — no Python, Node or venv on the host.
+Kong gateway, the four ADA services and the built React app behind nginx. Only
+Docker with Compose v2 is required; you do not need Python, Node or a venv on
+the host.
 
-Every compose command runs from `infra/compose/`, which is where the compose
-file and its `.env` live.
+The application containers sit behind the compose profile `full`. A plain
+`docker compose up -d` starts only the infrastructure (see the native quick
+start below), so the whole stack needs `--profile full`. Every compose command
+runs from `infra/compose/`, where the compose file and its `.env` live.
 
 ```bash
 cd infra/compose
@@ -101,40 +104,51 @@ cp .env.example .env     # PowerShell: Copy-Item .env.example .env
 # POSTGRES_PASSWORD, REDIS_PASSWORD, KC_BOOTSTRAP_ADMIN_PASSWORD,
 # ADA_AUTH_CLIENT_SECRET, ADA_NOTIFY_CLIENT_SECRET, ADA_ML_CLIENT_SECRET,
 # ADA_OTP_HMAC_KEY, ML_SERVICE_TOKEN
-docker compose up -d --build
+KONG_UPSTREAM_API=http://ada-api:8000 KONG_UPSTREAM_AUTH=http://ada-auth:8002 \
+  docker compose --profile full up -d --build
 ```
+
+From the repository root, `make up-full` does the same (without `--build`) and
+`make down-full` stops it. The two `KONG_UPSTREAM_*` values point the gateway at
+the containers instead of the host (see [infra/gateway/README.md](infra/gateway/README.md)).
 
 The client secrets are substituted into the realm on Keycloak's FIRST start
 only (`--import-realm` is IGNORE_EXISTING), so a wrong value is baked into the
 database and correcting `.env` afterwards changes nothing until
-`docker compose down -v`. Get them right before the first `up`.
+`make nuke CONFIRM=yes`. Get them right before the first `up`.
+
+Start-up order is enforced by compose: `api-migrate` runs `python -m
+ada_core.migrate` once against Postgres, and ada-api and ada-ml start only after
+it exits 0. ada-api no longer waits for ada-ml to be healthy.
 
 Then open **http://localhost:5173** and press **Sign in** — Keycloak owns the
 login screen. Create an account first in the Keycloak admin console at
-http://localhost:8090 (realm `pcsmcpl`), or sign in with Google/GitHub if you
-filled in `ADA_GOOGLE_*` / `ADA_GITHUB_*`. API docs are at
+http://localhost:8090/idp/admin (realm `pcsmcpl`), or sign in with Google/GitHub
+if you filled in `ADA_GOOGLE_*` / `ADA_GITHUB_*`. API docs are at
 http://localhost:8000/api/docs.
 
-The first `up` takes a few minutes: it builds both images, downloads the 261 MB
-of model weights into `../data/weights/`, and generates the synthetic Agra demo
-pair into `../data/samples/`. Both are skipped on every later boot, and `../data`
-is bind-mounted so uploads, COGs, masks and weights survive
-`docker compose down`. Set `AUTO_FETCH_WEIGHTS=false` / `AUTO_SAMPLE_DATA=false`
-in `.env` to skip either step.
+The first `up` takes a few minutes: it builds the images, downloads the 261 MB
+of model weights into `data/weights/`, and generates the synthetic Agra demo
+pair into `data/samples/`. Both steps are skipped on later boots. `data/` is
+bind-mounted, so uploads, COGs, masks and weights survive `docker compose down`.
+Set `AUTO_FETCH_WEIGHTS=false` / `AUTO_SAMPLE_DATA=false` in `.env` to skip
+either step.
 
 ```bash
-docker compose ps                       # every service should be healthy
-docker compose logs -f ada-ml           # pipeline progress during a run
-docker compose logs -f ada-auth         # the OTP code, when SMS is 'console'
-curl http://localhost:5173/api/health   # -> {"status":"ok"}
-open http://localhost:8025              # mailpit: every email the stack sent
-docker compose down                     # stop (add -v to wipe the databases)
+docker compose --profile full ps              # every service healthy; api-migrate Exited (0)
+docker compose logs -f ada-ml                 # pipeline progress during a run
+docker compose logs -f ada-auth               # the OTP code, when SMS is 'console'
+curl http://localhost:5173/api/health         # -> {"status":"ok"}
+curl -i http://localhost:8080/api/health      # the same through the Kong gateway
+open http://localhost:8025                    # mailpit: every email the stack sent
+docker compose --profile full down            # stop; volumes survive
 ```
 
-If a port is already taken on your machine, change `FRONTEND_PORT`,
-`BACKEND_PORT`, `ML_PORT`, `POSTGRES_PORT`, `KC_HTTP_HOST_PORT` or
-`REDIS_HOST_PORT` in `.env` — the containers talk to each other over the
-compose network, so only the host-side mapping moves.
+All published ports are bound to 127.0.0.1. If one is already taken on your
+machine, change `FRONTEND_PORT`, `BACKEND_PORT`, `ML_PORT`, `POSTGRES_PORT`,
+`KC_HTTP_HOST_PORT`, `REDIS_HOST_PORT` or `KONG_PROXY_PORT` in `.env`. The
+containers talk to each other over the compose network, so only the host-side
+mapping moves. Container logs rotate at 5 × 50 MB per service.
 
 Upgrading an existing installation: the auth swap changed what a user id looks
 like, so projects created under SuperTokens belong to an id that can no longer
@@ -154,33 +168,44 @@ The container image is CPU-only, so SAM 2 refinement runs unaccelerated there
 
 ## Quick start — native (for development)
 
-Full first-time setup is in **[docs/guides/run-guide.md](docs/guides/run-guide.md)** — it covers the
-venv, the weights, and the per-machine GPU flags. The short version, once that
-is done:
+The development model is **infrastructure in Docker, services on the host**.
+Full first-time setup is in **[docs/guides/run-guide.md](docs/guides/run-guide.md)**:
+it covers the venv, the weights and the per-machine GPU flags. Once per
+checkout: one `.venv` for every Python service and library, built by uv from the
+workspace lockfile (root `pyproject.toml` / `uv.lock`; ada-ml takes its `cpu` or
+`gpu` extra, and the run guide has the exact flags), then the JS workspaces:
 
 ```bash
-# 1. infrastructure only — NOT `docker compose up -d`, which would also start
-#    containerised ada-api/ada-ml and fight the local ones for ports.
-cd infra/compose && docker compose up -d postgres redis keycloak mailpit ada-auth notify-migrate ada-notify ada-worker && cd ../..
-
-# 2. ada-ml first: it owns the schema that ada-api maps.
-cd services/ml-worker  && ML_SERVICE_TOKEN=dev-token ../../.venv/bin/python -m uvicorn app.main:app --reload --port 8100
-cd services/api && ML_SERVICE_TOKEN=dev-token OIDC_ISSUER=http://localhost:8090/realms/pcsmcpl \
-                       ../../.venv/bin/python -m uvicorn app.main:app --reload --port 8000
-cd apps/web && npm run dev
+uv sync --all-packages
+npm install
+cp infra/compose/.env.example infra/compose/.env    # fill in the change-me values
 ```
 
-`ML_SERVICE_TOKEN` must match across the two services or every upload answers
-503. These start the infrastructure containers — Postgres, Redis, Keycloak, mailpit
-— then run ada-api, ada-ml and the Vite dev server on the host. Then open
-http://localhost:5173 and sign in.
-
-The two host services need the shared packages installed once:
+Then, from the repository root, one terminal per line:
 
 ```bash
-pip install -e libs/python/ada-core -e libs/python/ada-platform
-pip install -r services/ml-worker/requirements.txt      # or ada-api's, or both
+make infra      # postgres, redis, keycloak, mailpit, kong; returns when all are healthy
+make migrate    # schema to head (ada_core.migrate, advisory-locked)
+make auth       # ada-auth   :8002  (reload)
+make notify     # ada-notify :8001  (runs its own alembic first)
+make worker     # notify delivery worker
+make ml         # ada-ml     :8100  (reload)
+make api        # ada-api    :8000  (reload)
+make web        # Vite       :5173
+make gateway-sync   # once Keycloak is up: copy its signing keys into Kong
 ```
+
+`make infra` is `docker compose up -d --wait` in `infra/compose/`; with no
+profile it starts only the infrastructure, so nothing fights the host processes
+for ports. The service targets source `infra/compose/.env` and point every
+connection string at the 127.0.0.1 ports the containers publish. Start only the
+services you are working on; `make help` lists every target, and `make -n
+<target>` prints the exact command without running it.
+
+Open http://localhost:5173 and sign in, or go through the gateway on
+http://localhost:8080 (it forwards to the host services via
+`host.docker.internal`). `make infra-down` stops the containers; the data
+volumes survive.
 
 ### Apple Silicon
 

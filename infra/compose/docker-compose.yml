@@ -2,11 +2,22 @@
 # directory this file lives in (they were infra_* before the relayout).
 name: ada
 
+# Dev model: `docker compose up -d` starts infrastructure only (postgres, redis,
+# keycloak, mailpit, kong) and the services run natively (`make api` etc.).
+# `docker compose --profile full up -d` starts the whole stack in containers.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgis/postgis:16-3.4
     container_name: ada-postgres
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -31,6 +42,7 @@ services:
     image: redis:7.4.11-alpine
     container_name: ada-redis
     restart: unless-stopped
+    logging: *default-logging
     command:
       - redis-server
       - --appendonly
@@ -59,6 +71,7 @@ services:
     image: quay.io/keycloak/keycloak:26.7.2
     container_name: ada-keycloak
     restart: unless-stopped
+    logging: *default-logging
     command: ["start-dev", "--import-realm", "--features=token-exchange:v1"]
     depends_on:
       postgres:
@@ -98,7 +111,7 @@ services:
       KC_SMTP_STARTTLS: "${KC_SMTP_STARTTLS:-false}"
       KC_SMTP_SSL: "${KC_SMTP_SSL:-false}"
     ports:
-      - "${KC_HTTP_HOST_PORT:-8090}:${KC_HTTP_PORT:-8090}"
+      - "127.0.0.1:${KC_HTTP_HOST_PORT:-8090}:${KC_HTTP_PORT:-8090}"
       - "127.0.0.1:${KC_MANAGEMENT_PORT:-9000}:9000"
     volumes:
       - ../keycloak/realm-ada.json:/opt/keycloak/data/import/realm-ada.json:ro
@@ -117,6 +130,7 @@ services:
     image: axllent/mailpit:v1.21
     container_name: ada-mailpit
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:${MAILPIT_HTTP_PORT:-8025}:8025"
       - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
@@ -126,13 +140,50 @@ services:
       MP_DATABASE: /data/mailpit.db
     networks: [ada]
 
+  # API gateway, DB-less: routes and plugins in ../gateway/kong.yml (see its README).
+  # Upstreams default to the native services on the host; with --profile full set
+  # KONG_UPSTREAM_API=http://ada-api:8000 and KONG_UPSTREAM_AUTH=http://ada-auth:8002.
+  kong:
+    image: kong:3.9.1
+    container_name: ada-kong
+    restart: unless-stopped
+    logging: *default-logging
+    entrypoint: ["/bin/sh", "/kong/docker-start.sh"]
+    environment:
+      KONG_DATABASE: "off"
+      # Rendered from /kong/kong.yml by docker-start.sh with the upstreams below.
+      KONG_DECLARATIVE_CONFIG: /tmp/kong/kong.yml
+      KONG_ADMIN_LISTEN: "off"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_HEADERS: "off"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_UPSTREAM_API: ${KONG_UPSTREAM_API:-http://host.docker.internal:8000}
+      KONG_UPSTREAM_AUTH: ${KONG_UPSTREAM_AUTH:-http://host.docker.internal:8002}
+      KONG_UPSTREAM_IDP: ${KONG_UPSTREAM_IDP:-http://keycloak:${KC_HTTP_PORT:-8090}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../gateway:/kong:ro
+    ports:
+      - "127.0.0.1:${KONG_PROXY_PORT:-8080}:8000"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [ada]
+
   ada-auth:
+    profiles: ["full"]
     build:
       context: ../..
       dockerfile: services/auth-otp/Dockerfile
     image: ada/auth:0.1.0
     container_name: ada-auth
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       redis:
         condition: service_healthy
@@ -176,12 +227,14 @@ services:
     networks: [ada]
 
   notify-migrate:
+    profiles: ["full"]
     build:
       context: ../..
       dockerfile: services/notify/Dockerfile
     image: ada/notify:0.1.0
     container_name: ada-notify-migrate
     restart: "no"
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -194,12 +247,14 @@ services:
     networks: [ada]
 
   ada-notify:
+    profiles: ["full"]
     build:
       context: ../..
       dockerfile: services/notify/Dockerfile
     image: ada/notify:0.1.0
     container_name: ada-notify
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -227,11 +282,13 @@ services:
     networks: [ada]
 
   ada-worker:
+    profiles: ["full"]
     build:
       context: ../..
       dockerfile: services/notify/Dockerfile
     image: ada/notify:0.1.0
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -272,18 +329,46 @@ services:
     command: ["python", "-m", "app.worker"]
     networks: [ada]
 
+  # One-shot schema migration (ada_core.migrate, advisory-locked). ada-api and
+  # ada-ml wait for it to exit 0.
+  api-migrate:
+    profiles: ["full"]
+    build:
+      context: ../..
+      dockerfile: services/api/Dockerfile
+    image: ada/api:0.1.0
+    container_name: ada-api-migrate
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["python", "-m", "ada_core.migrate"]
+    healthcheck:
+      disable: true
+    networks: [ada]
+
   ada-ml:
+    profiles: ["full"]
     build:
       context: ../..
       dockerfile: services/ml-worker/Dockerfile
     image: ada/ml:0.1.0
     container_name: ada-ml
     restart: unless-stopped
+    logging: *default-logging
     init: true
     depends_on:
       postgres:
         condition: service_healthy
+      api-migrate:
+        condition: service_completed_successfully
     environment:
+      # api-migrate owns the schema in this stack.
+      RUN_MIGRATIONS_ON_STARTUP: "false"
       DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
       # POOL_SIZE + MAX_OVERFLOW across ada-api, ada-ml and Keycloak must stay under max_connections.
       DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
@@ -293,6 +378,8 @@ services:
       DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-true}
       DATA_DIR: ${ADA_DATA_PATH:-/app/data}
       ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
+      # Compose is local development; anything else must set ADA_ENV and a token.
+      ADA_ENV: ${ADA_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       AUTO_FETCH_WEIGHTS: ${AUTO_FETCH_WEIGHTS:-true}
       AUTO_SAMPLE_DATA: ${AUTO_SAMPLE_DATA:-true}
@@ -334,17 +421,19 @@ services:
     networks: [ada]
 
   ada-api:
+    profiles: ["full"]
     build:
       context: ../..
       dockerfile: services/api/Dockerfile
     image: ada/api:0.1.0
     container_name: ada-api
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
-      ada-ml:
-        condition: service_healthy
+      api-migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
       # POOL_SIZE + MAX_OVERFLOW across ada-api, ada-ml and Keycloak must stay under max_connections.
@@ -364,6 +453,9 @@ services:
       OIDC_ADMIN_CLIENT_SECRET: ${ADA_API_CLIENT_SECRET:-}
       ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ada-ml:8100}
       ML_SERVICE_TOKEN: ${ML_SERVICE_TOKEN:-}
+      ADA_ENV: ${ADA_ENV:-local}
+      # Clients whose access tokens ada-api accepts (azp), comma-separated.
+      OIDC_ALLOWED_AZP: ${OIDC_ALLOWED_AZP:-ada-web,ada-field}
       WEBSITE_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
     volumes:
       - ../../data:${ADA_DATA_PATH:-/app/data}
@@ -372,6 +464,7 @@ services:
     networks: [ada]
 
   frontend:
+    profiles: ["full"]
     build:
       # Root context, not ../../apps/web: @ada/shared only resolves from the workspace root.
       context: ../..
@@ -379,6 +472,7 @@ services:
     image: ada/frontend:0.1.0
     container_name: ada-frontend
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       ada-api:
         condition: service_started
@@ -397,6 +491,7 @@ services:
     image: ada/ota:0.1.0
     container_name: ada-ota
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ../../data/ota-updates:/updates:ro
     ports:

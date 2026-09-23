@@ -110,6 +110,9 @@ POSTGIS_EXTENSION = "CREATE EXTENSION IF NOT EXISTS postgis"
 
 _SENTINEL_TABLE = "projects"
 
+# pg_advisory_xact_lock key for run_migrations(); any fixed bigint, unique to this purpose.
+MIGRATION_LOCK_KEY = 0x0ADA_5C4E_3A00_0001
+
 _STATEMENTS = [
     "ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS mode VARCHAR(10) DEFAULT 'ai'",
     "ALTER TABLE change_polygons ADD COLUMN IF NOT EXISTS review_status "
@@ -361,9 +364,10 @@ def run_migrations() -> None:
         create_tables()
         return
 
-    ensure_postgis()
-
     with engine.begin() as conn:
+        # Serialises concurrent starters (api-migrate, ada-ml, a hand run); released at commit.
+        conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": MIGRATION_LOCK_KEY})
+        conn.execute(text(POSTGIS_EXTENSION))
         has_version = inspect(conn).has_table("alembic_version")
         has_tables = inspect(conn).has_table(_SENTINEL_TABLE)
 
@@ -375,5 +379,5 @@ def run_migrations() -> None:
     log.info("Schema is at head")
 
 
-if __name__ == "__main__":  
+if __name__ == "__main__":
     raise SystemExit(main())
