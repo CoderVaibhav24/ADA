@@ -1287,6 +1287,7 @@
       "clientRoles": {
         "realm-management": [
           "view-users",
+          "query-clients",
           "impersonation"
         ]
       }

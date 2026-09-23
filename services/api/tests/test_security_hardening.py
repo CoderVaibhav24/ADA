@@ -75,7 +75,7 @@ class TestTokenPurpose:
     def test_the_allowlist_comes_from_settings(self):
         from app.config import Settings, settings
 
-        assert settings.oidc_allowed_azp == ["ada-web", "ada-field"]
+        assert settings.oidc_allowed_azp == ["ada-web", "ada-field", "ada-auth"]
         parsed = Settings(oidc_allowed_azp="ada-web, ada-kiosk")  # type: ignore[arg-type]
         assert parsed.oidc_allowed_azp == ["ada-web", "ada-kiosk"]
 

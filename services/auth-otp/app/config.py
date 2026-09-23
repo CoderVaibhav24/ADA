@@ -40,9 +40,10 @@ class Settings(BaseSettings):
 
     # --- The confidential client this service authenticates as --------------
     #
-    # Its service account needs two realm-management roles and no others:
+    # Its service account needs three realm-management roles and no others:
     #
     #   view-users     to find the account behind a phone number
+    #   query-clients  to find realm-management's id for the client-role check
     #   impersonation  to exchange its own token for that account's token
     #
     # impersonation is a genuinely powerful grant — it mints a user token for
@@ -52,16 +53,26 @@ class Settings(BaseSettings):
     auth_client_id: str = "ada-auth"
     auth_client_secret: str = ""
 
-    # Passed as `audience` on the exchange, so the minted token carries the
-    # client id ada-api accepts in `azp` (OIDC_ALLOWED_AZP) rather than
-    # ada-auth's. Keycloak must grant ada-auth a token-exchange permission on
-    # this client. An empty string omits the parameter.
-    exchange_audience: str = "ada-web"
+    # Optional `audience` for the exchange. Empty by default, on purpose:
+    # measured on Keycloak 26.7.2, the exchanged token's `azp` is ada-auth
+    # with OR without an audience (the audience only adds to `aud`, which the
+    # API does not check), and asking for one needs the deprecated
+    # admin-fine-grained-authz:v1 feature plus a token-exchange permission.
+    # ada-api therefore lists ada-auth in OIDC_ALLOWED_AZP, and refresh and
+    # logout keep presenting client_id=ada-auth, which is the client the
+    # refresh token was issued to. Set this only if that Keycloak feature is
+    # enabled and the permission exists (infra/keycloak/README.md).
+    exchange_audience: str = ""
 
     # Realm roles that may never sign in by one-time code. The exchange mints a
     # token without any credential of theirs, so a privileged account must use
     # password plus TOTP through Keycloak's own flow instead.
     otp_denied_roles: Annotated[list[str], NoDecode] = ["super-admin"]
+    # realm-management client roles with the same effect: any of these can
+    # administer the realm, so their holders are refused OTP sign-in as well.
+    otp_denied_client_roles: Annotated[list[str], NoDecode] = [
+        "realm-admin", "manage-users", "impersonation", "manage-realm", "manage-clients",
+    ]
 
     # --- Service ------------------------------------------------------------
 
@@ -217,7 +228,7 @@ class Settings(BaseSettings):
     def _blank_env_is_production(cls, value: object) -> object:
         return "production" if value is None or str(value).strip() == "" else value
 
-    @field_validator("otp_denied_roles", mode="before")
+    @field_validator("otp_denied_roles", "otp_denied_client_roles", mode="before")
     @classmethod
     def _split_denied_roles(cls, value: object) -> object:
         if isinstance(value, str):

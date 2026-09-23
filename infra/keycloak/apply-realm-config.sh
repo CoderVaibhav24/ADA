@@ -116,6 +116,26 @@ printf ']' >> \$ROLES
 rm -f \$ROLES
 echo "  ada-api service account + client scope -> view-users query-users manage-users view-realm"
 
+# ada-auth: the OTP service refuses to mint a token for any subject holding a
+# privileged realm-management client role, and that check reads the
+# realm-management client by clientId first, which needs query-clients on the
+# service account. Idempotent for realms imported before this role was added.
+AUTH_CID=\$(cid ada-auth)
+AUTH_SA=\$(\$K get clients/\$AUTH_CID/service-account-user -r \$R --fields id --format csv --noquotes | tail -1)
+AUTH_ROLES=/tmp/ada-auth-roles.json
+printf '[' > \$AUTH_ROLES
+FIRST=1
+for n in view-users query-clients impersonation; do
+  [ \$FIRST -eq 0 ] && printf ',' >> \$AUTH_ROLES
+  FIRST=0
+  \$K get clients/\$RM/roles/\$n -r \$R --fields id,name >> \$AUTH_ROLES
+done
+printf ']' >> \$AUTH_ROLES
+\$K create users/\$AUTH_SA/role-mappings/clients/\$RM -r \$R -f \$AUTH_ROLES >/dev/null 2>&1 || true
+\$K create clients/\$AUTH_CID/scope-mappings/clients/\$RM -r \$R -f \$AUTH_ROLES >/dev/null 2>&1 || true
+rm -f \$AUTH_ROLES
+echo "  ada-auth service account + client scope -> view-users query-clients impersonation"
+
 # ada-field: the native field app. Today it signs in with a direct access grant
 # from its own form; the standard flow is on, PKCE S256 only, for the planned
 # system-browser login (redirect adaicms://...).

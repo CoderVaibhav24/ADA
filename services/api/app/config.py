@@ -47,8 +47,11 @@ class Settings(CoreSettings):
     # The clients whose access tokens this API accepts, read from `azp`.
     # Anything else the shared realm issues — another application, a service
     # account, a token exchanged for a different audience — is refused.
+    # ada-auth is here because a token minted by the OTP exchange carries
+    # azp=ada-auth (measured on Keycloak 26.7.2); ada-auth's own service
+    # account is still refused by the service-account check.
     # OIDC_ALLOWED_AZP, comma-separated.
-    oidc_allowed_azp: Annotated[list[str], NoDecode] = ["ada-web", "ada-field"]
+    oidc_allowed_azp: Annotated[list[str], NoDecode] = ["ada-web", "ada-field", "ada-auth"]
 
     # --- user administration -------------------------------------------------
     #

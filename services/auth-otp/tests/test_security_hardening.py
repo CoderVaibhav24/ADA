@@ -14,6 +14,7 @@ from tests.test_api import PHONE, SUBJECT, build_app
 
 LOCAL_ISSUER = "http://localhost:8090/realms/pcsmcpl"
 PUBLIC_ISSUER = "https://id.example.gov.in/realms/pcsmcpl"
+RM_UUID = "0f0e-realm-management"
 
 
 # --- S-01 ------------------------------------------------------------------
@@ -84,9 +85,23 @@ def test_denied_roles_default_and_env_parsing(monkeypatch):
 class FakeKeycloakServer:
     """Answers the three endpoints exchange_for_subject touches."""
 
-    def __init__(self, roles: dict[str, list[str]], role_status: int = 200) -> None:
+    def __init__(
+        self,
+        roles: dict[str, list[str]],
+        role_status: int = 200,
+        client_roles: dict[str, list[str]] | None = None,
+        client_status: int = 200,
+        client_lookup_status: int = 200,
+        clients: list[dict] | None = None,
+    ) -> None:
         self.roles = roles
         self.role_status = role_status
+        self.client_roles = client_roles or {}
+        self.client_status = client_status
+        self.client_lookup_status = client_lookup_status
+        self.clients = [{"id": RM_UUID, "clientId": "realm-management"}] if clients is None \
+            else clients
+        self.client_lookups = 0
         self.exchanges: list[dict[str, str]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -105,6 +120,18 @@ class FakeKeycloakServer:
             subject = path.split("/users/")[1].split("/")[0]
             return httpx.Response(
                 200, json=[{"name": name} for name in self.roles.get(subject, [])]
+            )
+        if path.endswith("/clients") and request.url.params.get("clientId"):
+            self.client_lookups += 1
+            if self.client_lookup_status != 200:
+                return httpx.Response(self.client_lookup_status)
+            return httpx.Response(200, json=self.clients)
+        if path.endswith(f"/role-mappings/clients/{RM_UUID}/composite"):
+            if self.client_status != 200:
+                return httpx.Response(self.client_status)
+            subject = path.split("/users/")[1].split("/")[0]
+            return httpx.Response(
+                200, json=[{"name": name} for name in self.client_roles.get(subject, [])]
             )
         return httpx.Response(404)
 
@@ -126,11 +153,22 @@ async def test_exchange_refused_for_super_admin():
 async def test_exchange_allowed_for_ordinary_role_and_sends_the_audience():
     server = FakeKeycloakServer({"surveyor-id": ["field-surveyor"]})
 
-    tokens = await _gateway(server).exchange_for_subject("surveyor-id")
+    tokens = await _gateway(server, exchange_audience="ada-web").exchange_for_subject("surveyor-id")
 
     assert tokens.access_token == "user"
     assert server.exchanges[0]["requested_subject"] == "surveyor-id"
     assert server.exchanges[0]["audience"] == "ada-web"
+
+
+async def test_exchange_audience_defaults_to_empty():
+    """Measured on Keycloak 26.7.2: azp is ada-auth with or without an
+    audience, and requesting one needs a deprecated feature. So the default
+    sends none, and ada-api allows azp=ada-auth instead."""
+    server = FakeKeycloakServer({"surveyor-id": ["field-surveyor"]})
+
+    await _gateway(server).exchange_for_subject("surveyor-id")
+
+    assert "audience" not in server.exchanges[0]
 
 
 async def test_exchange_audience_empty_omits_the_parameter():
@@ -152,6 +190,50 @@ async def test_an_unreadable_role_list_fails_closed():
     server = FakeKeycloakServer({}, role_status=403)
     with pytest.raises(DirectoryUnavailable):
         await _gateway(server).exchange_for_subject("anyone")
+    assert server.exchanges == []
+
+
+# --- F4: realm-management client roles are privileged too ---------------------
+
+
+def test_denied_client_roles_default():
+    assert make_settings().otp_denied_client_roles == [
+        "realm-admin", "manage-users", "impersonation", "manage-realm", "manage-clients",
+    ]
+
+
+@pytest.mark.parametrize("role", ["realm-admin", "manage-users", "impersonation"])
+async def test_exchange_refused_for_a_realm_management_client_role(role: str):
+    server = FakeKeycloakServer({"ops-id": ["default-roles-pcsmcpl"]},
+                                client_roles={"ops-id": ["view-users", role]})
+
+    with pytest.raises(OtpNotPermitted):
+        await _gateway(server).exchange_for_subject("ops-id")
+
+    assert server.exchanges == []
+
+
+async def test_harmless_client_roles_are_allowed_and_the_client_id_is_cached():
+    server = FakeKeycloakServer({"u": []}, client_roles={"u": ["view-users"]})
+    gateway = _gateway(server)
+
+    await gateway.exchange_for_subject("u")
+    await gateway.exchange_for_subject("u")
+
+    assert len(server.exchanges) == 2
+    assert server.client_lookups == 1
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"client_status": 403}, {"client_lookup_status": 500}, {"clients": []}],
+)
+async def test_an_unreadable_client_role_list_fails_closed(kwargs):
+    from app.keycloak import DirectoryUnavailable
+
+    server = FakeKeycloakServer({"u": []}, **kwargs)
+    with pytest.raises(DirectoryUnavailable):
+        await _gateway(server).exchange_for_subject("u")
     assert server.exchanges == []
 
 
