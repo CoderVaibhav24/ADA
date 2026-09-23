@@ -4,15 +4,15 @@
 # that needs state across lines is one shell joined with backslashes.
 
 ROOT         := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-COMPOSE_FILE := $(ROOT)/infra/docker-compose.yml
+COMPOSE_FILE := $(ROOT)/infra/compose/docker-compose.yml
 COMPOSE      := docker compose -f $(COMPOSE_FILE)
 VENV         := $(ROOT)/.venv
 PY           := $(VENV)/bin/python
 RUFF         := $(VENV)/bin/ruff
 ALEMBIC      := $(VENV)/bin/alembic
-API_DIR      := $(ROOT)/backend/api
-CORE_DIR     := $(ROOT)/backend/shared/ada-core
-FE_DIR       := $(ROOT)/frontend
+API_DIR      := $(ROOT)/services/api
+CORE_DIR     := $(ROOT)/libs/python/ada-core
+FE_DIR       := $(ROOT)/apps/web
 
 # Overridable on the command line: make logs SERVICE=ada-api LINES=500
 SERVICE  ?=
@@ -55,7 +55,7 @@ help: ## Print this help
 	@printf '  CONFIRM=yes     required by the destructive targets (nuke, prune)\n'
 	@printf '\n\033[1mKnown broken\033[0m\n'
 	@printf '  ada-ml does not BUILD: onnxruntime-gpu==1.22.0 was pulled from PyPI\n'
-	@printf '  (backend/ml/Dockerfile:48; PyPI now has 1.29.0 / 1.30.0). The pin is a\n'
+	@printf '  (services/ml-worker/Dockerfile:48; PyPI now has 1.29.0 / 1.30.0). The pin is a\n'
 	@printf '  pending decision, not a bug to patch. Every target here works around it:\n'
 	@printf '  `make build` skips ada-ml, and `make up` reuses the ada/ml:0.1.0 image\n'
 	@printf '  already on disk. Use `make build SERVICE=ada-ml` to see the failure.\n\n'
@@ -200,9 +200,9 @@ doctor: ## Check daemon, services, ports, .env, schema and image freshness; non-
 	if docker info >/dev/null 2>&1; then printf 'PASS  docker daemon reachable\n'; \
 	else printf 'FAIL  docker daemon unreachable — start Docker Desktop\n'; exit 1; fi; \
 	if $(COMPOSE) config --quiet >/dev/null 2>&1; then printf 'PASS  compose file parses\n'; \
-	else printf 'FAIL  compose file will not parse — a required key is missing from infra/.env\n'; fail=$$((fail+1)); fi; \
-	if [ -f $(ROOT)/infra/.env ]; then printf 'PASS  infra/.env present (contents never read by this Makefile)\n'; \
-	else printf 'FAIL  infra/.env missing — copy infra/.env.example and fill it in\n'; fail=$$((fail+1)); fi; \
+	else printf 'FAIL  compose file will not parse — a required key is missing from infra/compose/.env\n'; fail=$$((fail+1)); fi; \
+	if [ -f $(ROOT)/infra/compose/.env ]; then printf 'PASS  infra/compose/.env present (contents never read by this Makefile)\n'; \
+	else printf 'FAIL  infra/compose/.env missing — copy infra/compose/.env.example and fill it in\n'; fail=$$((fail+1)); fi; \
 	if [ -x $(PY) ]; then printf 'PASS  host venv at .venv\n'; \
 	else printf 'FAIL  no .venv — the test and schema targets need it\n'; fail=$$((fail+1)); fi; \
 	printf '\n\033[1m-- services --\033[0m\n'; \
@@ -244,7 +244,7 @@ doctor: ## Check daemon, services, ports, .env, schema and image freshness; non-
 	fi; \
 	printf '\n\033[1m-- known broken --\033[0m\n'; \
 	printf 'NOTE  ada-ml will not build: onnxruntime-gpu==1.22.0 is gone from PyPI\n'; \
-	printf '      (backend/ml/Dockerfile:48). The pin is an open decision; the\n'; \
+	printf '      (services/ml-worker/Dockerfile:48). The pin is an open decision; the\n'; \
 	printf '      ada/ml:0.1.0 image on disk predates it, so make up still works.\n'; \
 	printf '\n'; \
 	if [ "$$fail" = "0" ]; then printf '\033[32mdoctor: all critical checks passed\033[0m\n\n'; \

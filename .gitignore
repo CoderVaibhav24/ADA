@@ -2,17 +2,17 @@
 #
 # The glob matters as much as the bare name: .env.local and .env.production
 # hold the same credentials, and a bare `.env` rule catches neither. The real
-# env file now lives beside the compose file it feeds (infra/.env); the
+# env file now lives beside the compose file it feeds (infra/compose/.env); the
 # committed template is re-admitted below.
 .env
 .env.*
 !.env.example
-!infra/.env.example
+!infra/compose/.env.example
 
 # Everything infra/scripts/ generates.
 #
 # `.env.*` above already catches the timestamped backups gen-env.mjs writes
-# (infra/.env.backup.<ISO8601>), because those are literally `.env.` plus a
+# (infra/compose/.env.backup.<ISO8601>), because those are literally `.env.` plus a
 # suffix. The two below are NOT caught by any rule above, and both matter:
 #
 #   infra/secrets/    create_users.py writes user-credentials-<UTC>.txt here,
@@ -46,14 +46,14 @@ htmlcov/
 
 # ── Node ─────────────────────────────────────────────────────
 #
-# Repo-wide, not frontend/-specific: there are two Vite projects (the console
-# and frontend/keycloak-theme/) and a path-anchored rule silently fails to
-# cover the second. frontend/keycloak-theme/node_modules alone is 3,381 files
+# Repo-wide, not apps/web/-specific: there are two Vite projects (the console
+# and apps/keycloak-theme/) and a path-anchored rule silently fails to
+# cover the second. apps/keycloak-theme/node_modules alone is 3,381 files
 # and carries platform-specific binaries plus a Maven cache full of jars.
 node_modules/
 dist/
 # Keycloakify's output: two theme jars, rebuilt by
-# `npm run build-keycloak-theme`. infra/docker-compose.yml bind-mounts one of
+# `npm run build-keycloak-theme`. infra/compose/docker-compose.yml bind-mounts one of
 # them, so it has to exist locally — it does not have to be in git.
 dist_keycloak/
 *.tsbuildinfo
@@ -87,7 +87,7 @@ docs/pdf-build/build/
 /ADA_Vision_Project_Documentation.docx
 
 # ── Docker ───────────────────────────────────────────────────
-infra/docker-compose.override.yml
+infra/compose/docker-compose.override.yml
 
 # ── OS ───────────────────────────────────────────────────────
 .DS_Store
@@ -113,9 +113,9 @@ npm-debug.log*
 
 docs
 
-backend/ml/scripts
-backend/ml/training
-backend/scripts
+services/ml-worker/scripts
+services/ml-worker/training
+/scripts
 .claude
 
 token.git

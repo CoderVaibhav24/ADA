@@ -7,7 +7,7 @@ Two scripts do the work:
 
 | script | language | what it owns |
 |---|---|---|
-| `infra/scripts/gen-env.mjs` | Node ≥ 18, no dependencies | `infra/.env` — every variable the 11 services read |
+| `infra/scripts/gen-env.mjs` | Node ≥ 18, no dependencies | `infra/compose/.env` — every variable the 11 services read |
 | `infra/scripts/create_users.py` | Python 3, standard library only | Keycloak users and their realm roles |
 
 Neither ever prints a secret. They report paths and variable names; you open
@@ -18,7 +18,7 @@ the file to see a value.
 ## 1. Bootstrap a fresh environment, in order
 
 ```bash
-# 1. Generate infra/.env. Creates what is missing, keeps what already exists,
+# 1. Generate infra/compose/.env. Creates what is missing, keeps what already exists,
 #    and backs the file up before touching it.
 node infra/scripts/gen-env.mjs
 
@@ -28,13 +28,13 @@ node infra/scripts/gen-env.mjs --check
 
 # 3. Fill in whichever external credentials you actually need. All start
 #    empty and all are optional — see section 6.
-$EDITOR infra/.env
+$EDITOR infra/compose/.env
 
 # 4. Start the stack. Keycloak imports realm-ada.json on FIRST start only.
-cd infra && docker compose up -d && cd ..
+cd infra/compose && docker compose up -d && cd ../..
 
 # 5. Create the four ICMS realm roles on the running realm.
-set -a; source infra/.env; set +a
+set -a; source infra/compose/.env; set +a
 ./infra/keycloak/create-icms-roles.sh
 
 # 6. Build the roster, then create the people and assign their roles.
@@ -61,12 +61,12 @@ person. `create_users.py` does the assigning.
 
 | path | in git? | what it is |
 |---|---|---|
-| `infra/.env.example` | **yes** | Template. Every variable, its class, a description, a placeholder. Never a real value. Regenerate with `--example`. |
+| `infra/compose/.env.example` | **yes** | Template. Every variable, its class, a description, a placeholder. Never a real value. Regenerate with `--example`. |
 | `infra/users.example.yaml` | **yes** | Sample roster covering all four roles. Fictional people, `.invalid` addresses, no credential field. |
 | `infra/scripts/*` | **yes** | The generators themselves. |
 | `infra/keycloak/realm-ada.json` | **yes** | Realm definition. `${VAR}` substitutions only, never a literal secret — see section 5. |
-| `infra/.env` | **no** | The real thing. Mode 0600. |
-| `infra/.env.backup.<ISO8601>` | **no** | Written before any change to `.env`. |
+| `infra/compose/.env` | **no** | The real thing. Mode 0600. |
+| `infra/compose/.env.backup.<ISO8601>` | **no** | Written before any change to `.env`. |
 | `infra/users.yaml` | **no** | The real roster. No credentials, but real names, addresses and phone numbers. |
 | `infra/secrets/user-credentials-<UTC>.txt` | **no** | Generated login credentials, mode 0600. Delete after delivery. |
 
@@ -84,7 +84,7 @@ git check-ignore -q infra/secrets/anything.txt && echo ignored || echo TRACKABLE
 enforces the first two:
 
 - **secret** — generated with `crypto.randomBytes`, base64url. Present only in
-  `infra/.env`.
+  `infra/compose/.env`.
 - **config** — a setting, not a credential. Safe to read aloud, and committed
   to `.env.example` verbatim.
 - **external** — issued by a third party. Generated **empty**, with a comment
@@ -184,7 +184,7 @@ To rotate a live client secret, set it in Keycloak directly. Read these, then
 run them yourself:
 
 ```bash
-set -a; source infra/.env; set +a
+set -a; source infra/compose/.env; set +a
 
 docker exec ada-keycloak /opt/keycloak/bin/kcadm.sh config credentials \
     --server "http://localhost:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}" \
@@ -201,7 +201,7 @@ docker exec ada-keycloak /opt/keycloak/bin/kcadm.sh update "clients/<ID>" \
     -r "${ADA_REALM:-pcsmcpl}" -s "secret=$ADA_ML_CLIENT_SECRET"
 
 # Recreate the service that uses it
-cd infra && docker compose up -d --force-recreate ada-ml
+cd infra/compose && docker compose up -d --force-recreate ada-ml
 ```
 
 Substitute `ada-notify` / `ADA_NOTIFY_CLIENT_SECRET` or `ada-auth` /
@@ -257,9 +257,9 @@ if echo "$staged" | grep -q '^infra/keycloak/realm-ada.json$'; then
   fi
 fi
 
-# 3. If infra/.env exists, it must not be generic.
-if [ -f infra/.env ] && ! node infra/scripts/gen-env.mjs --check >/dev/null 2>&1; then
-  echo "refusing: infra/.env has placeholder or missing values." >&2
+# 3. If infra/compose/.env exists, it must not be generic.
+if [ -f infra/compose/.env ] && ! node infra/scripts/gen-env.mjs --check >/dev/null 2>&1; then
+  echo "refusing: infra/compose/.env has placeholder or missing values." >&2
   echo "  node infra/scripts/gen-env.mjs --check   # names them, prints no values" >&2
   exit 1
 fi
@@ -276,7 +276,7 @@ the shape of a literal somebody pasted in.
 ## 8. Quick reference
 
 ```bash
-node infra/scripts/gen-env.mjs                    # create or top up infra/.env
+node infra/scripts/gen-env.mjs                    # create or top up infra/compose/.env
 node infra/scripts/gen-env.mjs --check            # exit 1 if anything is generic
 node infra/scripts/gen-env.mjs --example          # refresh the committed template
 node infra/scripts/gen-env.mjs --rotate VAR       # replace exactly one secret

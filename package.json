@@ -7,15 +7,15 @@
     "node": ">=22.0.0"
   },
   "workspaces": [
-    "frontend",
-    "app",
-    "packages/*"
+    "apps/web",
+    "apps/field",
+    "libs/ts/*"
   ],
   "scripts": {
     "build:shared": "npm run build -w @ada/shared",
-    "dev": "npm run build:shared && npm run dev -w frontend",
-    "build": "npm run build:shared && npm run build -w frontend",
-    "build:app": "npm run build:shared && npm run build -w app",
+    "dev": "npm run build:shared && npm run dev -w @ada/web",
+    "build": "npm run build:shared && npm run build -w @ada/web",
+    "build:app": "npm run build:shared && npm run build -w @ada/field",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

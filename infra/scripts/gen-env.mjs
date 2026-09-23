@@ -40,7 +40,7 @@ const VARS = [
     desc: 'Host port for postgres, bound to 127.0.0.1 only. 5435 rather than 5432 so it does not collide with a PostgreSQL already installed on the host. compose has no :- default.',
     placeholder: '5435' },
   { name: 'POSTGRES_KEYCLOAK_DB', cls: CONFIG, def: 'keycloak',
-    desc: "Keycloak's own database, created by infra/postgres-init/init-db.sh on FIRST init only." },
+    desc: "Keycloak's own database, created by infra/postgres/init/init-db.sh on FIRST init only." },
   { name: 'POSTGRES_NOTIFY_DB', cls: CONFIG, def: 'ada_notify',
     desc: 'ada-notify database, created by the same first-init script.' },
 
@@ -189,7 +189,7 @@ const VARS = [
 
   { name: 'HF_TOKEN', cls: EXTERNAL,
     desc: 'HuggingFace access token. Needed ONLY to pull the gated facebook/sam3 weights (SAM_BACKEND=sam3); harmless when unset. Obtain: huggingface.co -> Settings -> Access Tokens (read scope), after being granted access to the gated repo.' },
-  { name: 'AUTO_FETCH_WEIGHTS', cls: CONFIG, def: 'true', desc: 'First-boot convenience; see backend/ml/entrypoint.sh.' },
+  { name: 'AUTO_FETCH_WEIGHTS', cls: CONFIG, def: 'true', desc: 'First-boot convenience; see services/ml-worker/entrypoint.sh.' },
   { name: 'AUTO_SAMPLE_DATA', cls: CONFIG, def: 'true', desc: 'Seed the demo image pair on first boot.' },
   { name: 'MODEL_MODE', cls: CONFIG, def: 'segdiff', desc: 'Change-detection mode.' },
   { name: 'MODEL_BACKEND', cls: CONFIG, def: 'auto', desc: 'Inference backend selection.' },
@@ -458,10 +458,10 @@ function main() {
     return 0;
   }
 
-  const target = resolve(args.out ?? resolve(INFRA, '.env'));
+  const target = resolve(args.out ?? resolve(INFRA, 'compose', '.env'));
 
   if (args.example) {
-    const p = resolve(args.out ?? resolve(INFRA, '.env.example'));
+    const p = resolve(args.out ?? resolve(INFRA, 'compose', '.env.example'));
     writeFileSync(p, render({ values: new Map(), forExample: true, extras: null }) + '\n', { mode: 0o644 });
     console.error(`wrote ${p} (placeholders only, safe to commit)`);
     return 0;
@@ -537,7 +537,7 @@ function main() {
     console.error('  move the file into place yourself:');
     console.error('');
     console.error(`      node infra/scripts/gen-env.mjs --out /tmp/ada.env`);
-    console.error(`      mv /tmp/ada.env infra/.env && chmod 600 infra/.env`);
+    console.error(`      mv /tmp/ada.env infra/compose/.env && chmod 600 infra/compose/.env`);
     console.error('');
     return 1;
   }

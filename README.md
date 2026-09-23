@@ -10,49 +10,54 @@ user-defined **red zones** that automatically flag changes inside them as
 Detection is **not one model** — it is an ensemble of specialised stages
 (alignment → per-epoch building segmentation → confirmation gating → SAM 2
 full-structure refinement → deterministic zone rules). Run
-`backend/scripts/build_documentation.py` to generate a full project
+`scripts/build_documentation.py` to generate a full project
 write-up (`ADA_Vision_Project_Documentation.docx`, §6 has the rationale).
 
 ## Repository layout
 
 ```
-backend/        every Python service, one directory each
-  api/          browser-facing API (FastAPI). No models, no GPU.
-  auth/         phone + one-time code, exchanged for Keycloak tokens
-  ml/           the pipeline, the weights and the job worker. Owns the GPU.
-  notify/       notification ingestion + the Redis Streams outbox worker
-  shared/       libraries every service installs from source
-    ada-core/           config, models, storage — the shared domain layer
-    ada-platform-sdk/   the Atrium platform client
-  scripts/      repo-wide tooling (test runner, docs build, migrations)
-  .dockerignore the build context for all four images is backend/
+apps/
+  web/            React + TypeScript console (Vite), served by nginx in Docker
+  field/          Expo field-survey app
+  keycloak-theme/ Keycloakify login theme — a separate npm project, not a workspace
+services/         every Python service, one directory each
+  api/            browser-facing API (FastAPI). No models, no GPU.
+  auth-otp/       phone + one-time code, exchanged for Keycloak tokens
+  ml-worker/      the pipeline, the weights and the job worker. Owns the GPU.
+  notify/         notification ingestion + the Redis Streams outbox worker
+libs/
+  python/         libraries every Python service installs from source
+    ada-core/       config, models, storage — the shared domain layer
+    ada-platform/   the Atrium platform client (distribution ada-platform-sdk)
+  ts/shared/      @ada/shared, the TypeScript package both apps build against
+scripts/          repo-wide tooling (test runner, docs build, migrations)
 docs/
-  guides/       run guide and setup walk-throughs
-  ba/           the BA pack (BRD/PRD/FRD) as PDFs
-  pdf-build/    the toolchain that renders them; build/ output is not tracked
-frontend/       React + TypeScript console (Vite), served by nginx in Docker
-  keycloak-theme/ Keycloakify login theme — a second, separate Vite project
-infra/          everything needed to run the estate
-  docker-compose.yml       the whole stack
-  docker-compose.gpu.yml   NVIDIA passthrough overlay
-  .env / .env.example      the compose project's environment
-  keycloak/                realm export imported on Keycloak's first boot
-  postgres-init/           runs once, on an empty data directory
-data/           uploads, COGs, masks, weights, samples — bind-mounted, untracked
+  guides/         run guide and setup walk-throughs
+  ba/             the BA pack (BRD/PRD/FRD) as PDFs
+  pdf-build/      the toolchain that renders them; build/ output is not tracked
+infra/            everything needed to run the estate
+  compose/
+    docker-compose.yml       the whole stack
+    docker-compose.gpu.yml   NVIDIA passthrough overlay
+    .env / .env.example      the compose project's environment
+  keycloak/                  realm export imported on Keycloak's first boot
+  postgres/init/             runs once, on an empty data directory
+data/             uploads, COGs, masks, weights, samples — bind-mounted, untracked
+.dockerignore     the build context for every image except infra/ota is the repo root
 ```
 
 Each service directory carries its own `Dockerfile`, `pyproject.toml` and
-`tests/`, and the build context for all four is `backend/` — that is what lets
-`api` and `ml` install `shared/ada-core` from source.
+`tests/`, and the build context for all of them is the repository root — that
+is what lets `api` and `ml-worker` install `libs/python/ada-core` from source.
 
 ## Stack
 
 | Piece | Choice |
 |---|---|
-| API | FastAPI — `backend/api`. No models, no GPU. |
-| Models | FastAPI + the pipeline — `backend/ml` (torch 2.x+cu128, onnxruntime-gpu 1.22) |
-| Auth | Keycloak 26, with `backend/auth` for phone + one-time code |
-| Notifications | `backend/notify` + `ada-worker` (Redis Streams outbox, SMTP) |
+| API | FastAPI — `services/api`. No models, no GPU. |
+| Models | FastAPI + the pipeline — `services/ml-worker` (torch 2.x+cu128, onnxruntime-gpu 1.22) |
+| Auth | Keycloak 26, with `services/auth-otp` for phone + one-time code |
+| Notifications | `services/notify` + `ada-worker` (Redis Streams outbox, SMTP) |
 | Database | PostgreSQL 16 + PostGIS (Docker) |
 | Raster processing | rasterio, rio-cogeo, scikit-image, scipy |
 | Tile serving | rio-tiler dynamic XYZ endpoints (TiTiler's engine) |
@@ -76,7 +81,7 @@ requests carried several gigabytes of CUDA wheels it never executed.
 ada-api writes the row and returns; ada-ml picks it up, runs the pipeline, and
 writes progress back into the same row, which the frontend polls exactly as it
 did before. `ada-auth` and `ada-notify` came over from the Atrium platform —
-see `backend/*/README.md`.
+see `services/*/README.md`.
 
 ## Quick start — Docker (whole stack, nothing else installed)
 
@@ -84,11 +89,11 @@ Everything runs in containers: Postgres/PostGIS, Redis, Keycloak, mailpit, the
 four ADA services and the built React app behind nginx. Only Docker with
 Compose v2 is required — no Python, Node or venv on the host.
 
-Every compose command runs from `infra/`, which is where the compose file and
-its `.env` live.
+Every compose command runs from `infra/compose/`, which is where the compose
+file and its `.env` live.
 
 ```bash
-cd infra
+cd infra/compose
 cp .env.example .env     # PowerShell: Copy-Item .env.example .env
 # Every value marked change-me is REQUIRED — compose refuses to start without
 # them rather than booting with a known-weak default:
@@ -133,7 +138,7 @@ compose network, so only the host-side mapping moves.
 
 Upgrading an existing installation: the auth swap changed what a user id looks
 like, so projects created under SuperTokens belong to an id that can no longer
-sign in. They are invisible, not lost — `backend/scripts/remap_user_ids.py` matches the
+sign in. They are invisible, not lost — `scripts/remap_user_ids.py` matches the
 accounts up by email address and rewrites them. It is read-only until `--apply`.
 
 Demo walkthrough once you are signed in: create a project, upload
@@ -156,13 +161,13 @@ is done:
 ```bash
 # 1. infrastructure only — NOT `docker compose up -d`, which would also start
 #    containerised ada-api/ada-ml and fight the local ones for ports.
-cd infra && docker compose up -d postgres redis keycloak mailpit ada-auth notify-migrate ada-notify ada-worker && cd ..
+cd infra/compose && docker compose up -d postgres redis keycloak mailpit ada-auth notify-migrate ada-notify ada-worker && cd ../..
 
 # 2. ada-ml first: it owns the schema that ada-api maps.
-cd backend/ml  && ML_SERVICE_TOKEN=dev-token ../../.venv/bin/python -m uvicorn app.main:app --reload --port 8100
-cd backend/api && ML_SERVICE_TOKEN=dev-token OIDC_ISSUER=http://localhost:8090/realms/pcsmcpl \
+cd services/ml-worker  && ML_SERVICE_TOKEN=dev-token ../../.venv/bin/python -m uvicorn app.main:app --reload --port 8100
+cd services/api && ML_SERVICE_TOKEN=dev-token OIDC_ISSUER=http://localhost:8090/realms/pcsmcpl \
                        ../../.venv/bin/python -m uvicorn app.main:app --reload --port 8000
-cd frontend && npm run dev
+cd apps/web && npm run dev
 ```
 
 `ML_SERVICE_TOKEN` must match across the two services or every upload answers
@@ -173,8 +178,8 @@ http://localhost:5173 and sign in.
 The two host services need the shared packages installed once:
 
 ```bash
-pip install -e backend/shared/ada-core -e backend/shared/ada-platform-sdk
-pip install -r backend/ml/requirements.txt      # or ada-api's, or both
+pip install -e libs/python/ada-core -e libs/python/ada-platform
+pip install -r services/ml-worker/requirements.txt      # or ada-api's, or both
 ```
 
 ### Apple Silicon
@@ -202,7 +207,7 @@ Then vendor the weights — the same command also writes the **shape-frozen**
 ChangeStar graph, which CoreML requires:
 
 ```bash
-python backend/ml/scripts/fetch_weights.py   # --freeze redoes just that step
+python services/ml-worker/scripts/fetch_weights.py   # --freeze redoes just that step
 ```
 
 The export leaves height/width symbolic. CoreML resolves shapes at compile
@@ -229,7 +234,7 @@ first tensor. Releasing gives that 9 GB back.
 Verify:
 
 ```bash
-python backend/ml/scripts/gpu_smoke_test.py
+python services/ml-worker/scripts/gpu_smoke_test.py
 ```
 
 It prints which backend bound, whether the CoreML EP actually took the graph or
@@ -244,7 +249,7 @@ discrete card gives.
 
 ## Model weights (`data/weights/`)
 
-The pipeline ships **no weights in git** (261 MB) — `backend/ml/scripts/fetch_weights.py`
+The pipeline ships **no weights in git** (261 MB) — `services/ml-worker/scripts/fetch_weights.py`
 vendors them into the project on first setup, so the app never depends on a
 user-level `~/.cache` and can run **fully offline** (verified with
 `HF_HUB_OFFLINE=1`). Air-gapped ADA deployment = copy `data/weights/` across.
@@ -258,7 +263,7 @@ user-level `~/.cache` and can run **fully offline** (verified with
 | `resnet18/resnet18-f37072fd.pth` | DCVA backbone (`MODEL_MODE=cd` path) | 47 MB | BSD-3-Clause |
 
 The licence column is the upstream reality, verified on the model cards — **not**
-the `license` field in `backend/ml/scripts/fetch_weights.py`, which claims Apache-2.0 for
+the `license` field in `services/ml-worker/scripts/fetch_weights.py`, which claims Apache-2.0 for
 the first three and is wrong. Two of them are the pipeline defaults, so an
 enterprise deployment cannot ship as configured; the full analysis, and the
 per-model options (drop in, fine-tune, or retrain), are in
@@ -280,7 +285,7 @@ Demo data (synthetic Agra scene with 4 new buildings, different
 resolutions and a deliberate 3 m georef offset between epochs):
 
 ```powershell
-cd services\ada-ml
+cd services\ml-worker
 conda run -n torch python scripts\make_sample_data.py   # writes data\samples\*.tif
 cd ..\..
 conda run -n torch python scripts\e2e_test.py           # full API smoke test
@@ -291,7 +296,7 @@ realm account carrying `ADA_E2E_PHONE` on its `phoneNumber` attribute. With
 `ADA_ENV=local` the code is always `ADA_DEV_OTP`, so no SMS provider is
 involved. Set `ADA_ACCESS_TOKEN` instead to use a token you already have.
 
-## How the ML pipeline works (`backend/ml/app/`)
+## How the ML pipeline works (`services/ml-worker/app/`)
 
 1. **Ingest** (`preprocess.ingest_raster`) — every uploaded `.tif`
    (embedded georef or `.tfw` sidecar) becomes an 8-bit percentile-stretched
@@ -381,11 +386,11 @@ Each detection is adjudicated by a human before it counts:
 
 | Service | Where | Port |
 |---|---|---|
-| React app | `frontend/` (Vite dev) | 5173 |
-| API + tiles | `backend/api` | 8000 (docs at `/api/docs`) |
-| Model service | `backend/ml` | 8100 (docs at `/docs`) |
-| Notifications | `backend/notify` (+ `ada-worker`) | 8001 |
-| Phone + OTP sign-in | `backend/auth` | 8002 |
+| React app | `apps/web/` (Vite dev) | 5173 |
+| API + tiles | `services/api` | 8000 (docs at `/api/docs`) |
+| Model service | `services/ml-worker` | 8100 (docs at `/docs`) |
+| Notifications | `services/notify` (+ `ada-worker`) | 8001 |
+| Phone + OTP sign-in | `services/auth-otp` | 8002 |
 | Keycloak | Docker `ada-keycloak` | 8090 |
 | PostgreSQL + PostGIS | Docker `ada-postgres` | 5433 |
 | Redis | Docker `ada-redis` | 6379 |
@@ -394,8 +399,8 @@ Each detection is adjudicated by a human before it counts:
 Everything except the frontend and Keycloak binds to 127.0.0.1 — the two a
 person's browser must reach are the only two published wider.
 
-All secrets and tunables live in **`infra/.env`** (never commit it;
-`infra/.env.example` is the template). Auth cookies flow through the Vite
+All secrets and tunables live in **`infra/compose/.env`** (never commit it;
+`infra/compose/.env.example` is the template). Auth cookies flow through the Vite
 `/api` proxy, so the browser talks to one origin only.
 
 ## Accuracy: where this actually stands

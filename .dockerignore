@@ -1,8 +1,15 @@
-# Only the frontend image builds from the repository root (infra/docker-compose.yml);
-# without this the context is the whole repo including .venv, .git and data/.
+# Every image except infra/ota builds from the repository root
+# (infra/compose/docker-compose.yml): apps/web needs the root package-lock.json
+# for the @ada/shared workspace, and the Python services install
+# libs/python/ada-core and libs/python/ada-platform from source. Docker reads
+# only the .dockerignore at the root of the context, so this one file covers
+# all of them. Each Dockerfile then COPYs only what it needs, so anything listed
+# here is unreachable from a Dockerfile by construction.
 .git
 .venv
+**/.venv/
 .ruff_cache
+**/.ruff_cache/
 node_modules
 **/node_modules
 **/dist
@@ -11,14 +18,43 @@ node_modules
 **/.turbo
 data
 docs
-backend
 infra
+scripts
 Makefile
 *.pdf
 
-# app/ is in the npm workspace, so its manifest has to be in the context for
-# `npm ci` to validate the lockfile — none of its source is built here.
-app/*
-!app/package.json
+# apps/field/ is in the npm workspace, so its manifest has to be in the context
+# for `npm ci` to validate the lockfile — none of its source is built here.
+apps/field/*
+!apps/field/package.json
 
-frontend/keycloak-theme
+apps/keycloak-theme
+
+# Python build and test artefacts
+__pycache__/
+**/__pycache__/
+*.pyc
+*.egg-info/
+**/*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+
+# Test suites. The images run no tests; shipping them only invalidates layers.
+**/tests/
+
+# Training code and configs — a research tree, not part of the serving image.
+services/ml-worker/training/
+
+# Secrets. .env is gitignored, but a build context is not a git checkout, and
+# an .env copied into a layer is readable by anyone who can pull the image.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Documentation and editor state — no image needs them, and they invalidate the
+# build cache on every edit.
+**/*.md
+!**/README.md
+.DS_Store
+.vscode/
+.idea/

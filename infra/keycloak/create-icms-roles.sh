@@ -15,10 +15,10 @@ missing=""
 [ -z "$ADMIN_USER" ] && missing="KC_BOOTSTRAP_ADMIN_USERNAME"
 [ -z "$ADMIN_PASSWORD" ] && missing="${missing:+$missing and }KC_BOOTSTRAP_ADMIN_PASSWORD"
 if [ -n "$missing" ]; then
-  echo "${missing} is not set. Both are in infra/.env:" >&2
-  echo "    set -a; source infra/.env; set +a" >&2
+  echo "${missing} is not set. Both are in infra/compose/.env:" >&2
+  echo "    set -a; source infra/compose/.env; set +a" >&2
   echo >&2
-  echo "If infra/.env does not exist yet, generate it first:" >&2
+  echo "If infra/compose/.env does not exist yet, generate it first:" >&2
   echo "    node infra/scripts/gen-env.mjs" >&2
   exit 1
 fi

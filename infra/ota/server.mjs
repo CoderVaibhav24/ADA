@@ -1,7 +1,7 @@
 // ADA ICMS self-hosted update server: Expo Updates protocol v1, Node built-ins only.
 //
 // This server holds no signing key. Every manifest and directive it returns was
-// signed on the publisher's machine by app/scripts/publish-update.mjs, and the
+// signed on the publisher's machine by apps/field/scripts/publish-update.mjs, and the
 // app's embedded certificate rejects anything else. Whoever controls this host can
 // withhold updates or replay an older signed one; they cannot ship new code.
 //

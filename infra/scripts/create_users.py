@@ -178,7 +178,7 @@ class Admin:
                 raise KeycloakError(
                     "Keycloak rejected the admin credentials.\n"
                     "  Check KC_BOOTSTRAP_ADMIN_USERNAME / KC_BOOTSTRAP_ADMIN_PASSWORD:\n"
-                    "      set -a; source infra/.env; set +a"
+                    "      set -a; source infra/compose/.env; set +a"
                 ) from None
             raise KeycloakError(f"token endpoint returned HTTP {e.code} at {url}") from None
         except urllib.error.URLError as e:
@@ -347,8 +347,8 @@ def main() -> int:
     if not admin_user or not admin_secret:
         print("KC_BOOTSTRAP_ADMIN_USERNAME / KC_BOOTSTRAP_ADMIN_PASSWORD are not set.",
               file=sys.stderr)
-        print("  They live in infra/.env:", file=sys.stderr)
-        print("      set -a; source infra/.env; set +a", file=sys.stderr)
+        print("  They live in infra/compose/.env:", file=sys.stderr)
+        print("      set -a; source infra/compose/.env; set +a", file=sys.stderr)
         return 2
 
     print(f"realm '{realm}' at {base}")

@@ -117,7 +117,7 @@ echo "  ada-field public client -> direct access grants on, offline_access optio
 echo "  sessions -> web 12h, field app 30 days idle"
 
 echo
-echo "ada-api client secret (put in infra/.env as ADA_API_CLIENT_SECRET):"
+echo "ada-api client secret (put in infra/compose/.env as ADA_API_CLIENT_SECRET):"
 \$K get clients/\$CID/client-secret -r \$R --fields value
 EOF
 

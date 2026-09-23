@@ -26,12 +26,12 @@ jobs:
           echo "## Trivy Infrastructure Scan" >> $GITHUB_STEP_SUMMARY
 
           for target in \
-            backend/api/Dockerfile \
-            backend/auth/Dockerfile \
-            backend/ml/Dockerfile \
-            backend/notify/Dockerfile \
-            frontend/Dockerfile \
-            infra/docker-compose.yml; do
+            services/api/Dockerfile \
+            services/auth-otp/Dockerfile \
+            services/ml-worker/Dockerfile \
+            services/notify/Dockerfile \
+            apps/web/Dockerfile \
+            infra/compose/docker-compose.yml; do
 
             echo "### \`$target\`" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
