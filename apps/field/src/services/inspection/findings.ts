@@ -1,225 +1,214 @@
 import { WORKABLE_ROUND_STATUSES, putFindings } from '@/services/api/inspections';
-import type { FindingsPut, InspectionDetail } from '@/services/api/types';
+import type { InspectionDetail } from '@/services/api/types';
 import {
   clearDraft,
+  draftKeyPrefix,
   draftSnapshot,
+  moveDraft,
   parseDraft,
   readDraft,
   saveDraft,
-  saveDraftField,
-  subscribeToDraft,
+  saveDraftFields,
   type Draft,
   type DraftScope,
   type DraftValues,
 } from '@/services/storage/drafts';
 import { draftStore } from '@/services/storage/kv';
 
+import {
+  ANSWER_FIELDS,
+  EMPTY_ANSWERS,
+  answersFromServer,
+  encroachmentPatch,
+  serverHasAnswers,
+  sqmToSqft,
+  toFindingsPut,
+  validateAnswers,
+  type AnswerErrors,
+  type AnswerField,
+  type AnswerStage,
+  type Answers,
+  type EnglishLabels,
+} from './answers';
+import { localRound } from './rounds';
+
 /*
- * Step 3: the findings form, as `FindingsPut` accepts it.
+ * Steps 3 and 4: the answers, as a draft on the device, and the PUT that sends them.
  *
- * The draft is the form's only memory: every field is written on blur, and what
- * goes to the server is read back from the draft, never from component state, so
- * a value that failed to store is visibly missing on review rather than carried.
+ * The draft is the form's only memory: every field is written on blur (a select on
+ * choice), and what goes to the server is read back from the draft, never from
+ * component state — so a value that failed to store is visibly missing on review.
  *
- * A PUT replaces the round's findings and, because the server writes only the
- * fields present in the body, every field is sent — null for an empty one — so
- * clearing a field on the form clears it on the round.
+ * A PUT replaces the round's findings, and the server writes only the fields in
+ * the body, so every answer field is sent — null for an empty or hidden one. The
+ * one exception is notice_required, left out when the recommendation does not
+ * decide it, so an officer's flag is not wiped.
  */
-export const FINDINGS_FIELDS = [
-  'findings',
-  'measured_area_sqm',
-  'area_type_cd',
-  'occupant_name',
-  'occupant_phone',
-  'notice_required',
-  'officer_note',
-] as const;
-export type FindingsField = (typeof FINDINGS_FIELDS)[number];
+export type { AnswerErrors, AnswerField, Answers };
 
-export type FindingsErrors = Partial<Record<FindingsField, string>>;
-
-// The server's limits (`inspection_schemas.py`, `ada_core/validation.py`).
-const MAX_FINDINGS = 50;
-const MAX_LONG_TEXT = 5000;
-const MAX_NAME = 200;
-const MAX_AREA_SQM = 10_000_000;
-const PHONE_IN = /^[6-9]\d{9}$/;
-
-// Scope of the findings draft for a case.
-export function findingsScope(caseRef: string): DraftScope {
+// Answers before the round is known, and older per-case drafts; moved into the round's draft on first write.
+function unboundScope(caseRef: string): DraftScope {
   return { caseRef, step: 'findings' };
 }
 
-// Key recording which draft revision the server last accepted.
-function sentKey(caseRef: string): string {
+// The round's own answers draft, so answers left on one round are never sent to the next.
+function roundScope(caseRef: string, inspectionRef: string): DraftScope {
+  return { caseRef, step: `findings@${inspectionRef}` };
+}
+
+// Key recording which draft revision the server last accepted, beside the draft it belongs to.
+function sentKey(scope: DraftScope): string {
+  return `findings-sent:${scope.caseRef}:${scope.step}`;
+}
+
+// The case-keyed marker an older build wrote; moved with the unbound draft.
+function legacySentKey(caseRef: string): string {
   return `findings-sent:${caseRef}`;
 }
 
-export function readFindingsDraft(caseRef: string): Draft | null {
-  return readDraft(findingsScope(caseRef));
+// The round the answers belong to: the one named, else the one this phone is working on.
+function roundOf(caseRef: string, inspectionRef?: string | null): string | null {
+  return inspectionRef ?? localRound(caseRef)?.inspectionRef ?? null;
 }
 
-// Writes one field. Call from onBlur (or onChange for a select, which has no blur).
-export function saveFindingsField(caseRef: string, field: FindingsField, value: string | null): Draft {
-  return saveDraftField(findingsScope(caseRef), field, value === '' ? null : value);
+// Where answers are read: the round's draft, or an unbound draft not yet moved into it.
+function readScope(caseRef: string, inspectionRef?: string | null): DraftScope {
+  const round = roundOf(caseRef, inspectionRef);
+  if (round === null) return unboundScope(caseRef);
+  const own = roundScope(caseRef, round);
+  if (draftSnapshot(own) === '' && draftSnapshot(unboundScope(caseRef)) !== '') return unboundScope(caseRef);
+  return own;
+}
+
+// Where answers are written: the round's draft, after an unbound draft has moved into it.
+function writeScope(caseRef: string, inspectionRef?: string | null): DraftScope {
+  const round = roundOf(caseRef, inspectionRef);
+  const unbound = unboundScope(caseRef);
+  if (round === null) return unbound;
+  const own = roundScope(caseRef, round);
+  if (draftSnapshot(unbound) !== '') {
+    if (draftSnapshot(own) === '' && moveDraft(unbound, own)) {
+      const sent = draftStore.getString(sentKey(unbound)) ?? draftStore.getString(legacySentKey(caseRef));
+      if (sent !== undefined) draftStore.set(sentKey(own), sent);
+    } else {
+      clearDraft(unbound);
+    }
+    draftStore.remove(sentKey(unbound));
+    draftStore.remove(legacySentKey(caseRef));
+  }
+  return own;
 }
 
 // A stored value as text, whatever type an older build wrote.
-export function draftText(values: DraftValues, field: FindingsField): string {
+function text(values: DraftValues, field: string): string {
   const value = values[field];
   return value === null || value === undefined ? '' : String(value);
 }
 
-// Findings are one statement per line; blank lines are not statements.
-export function splitFindings(value: string): string[] {
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '');
-}
-
-// Indian mobile numbers as the server's PhoneIN accepts them: country code and spacing stripped.
-export function normalisePhone(value: string): string {
-  const digits = value.replace(/[^\d]/g, '');
-  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
-  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1);
-  return digits;
-}
-
-// The message for one field, or null when the value is acceptable. Specific, per code-standards.md §5.
-export function validateFindingsField(field: FindingsField, raw: string): string | null {
-  const value = raw.trim();
-  switch (field) {
-    case 'findings': {
-      const lines = splitFindings(raw);
-      if (lines.length === 0) return 'Record at least one finding — what you observed at the site.';
-      if (lines.length > MAX_FINDINGS) return `Record at most ${MAX_FINDINGS} findings, one per line.`;
-      if (lines.some((line) => line.length > MAX_LONG_TEXT)) {
-        return `Keep each finding under ${MAX_LONG_TEXT} characters.`;
-      }
-      return null;
-    }
-    case 'measured_area_sqm': {
-      if (value === '') return null;
-      const area = Number(value);
-      if (!Number.isFinite(area) || area < 0) return 'Enter the measured area in square metres, as a number.';
-      if (area > MAX_AREA_SQM) return 'That area is larger than the system accepts. Check the units are square metres.';
-      return null;
-    }
-    case 'occupant_name':
-      return value.length > MAX_NAME ? `Keep the name under ${MAX_NAME} characters.` : null;
-    case 'occupant_phone':
-      if (value === '') return null;
-      return PHONE_IN.test(normalisePhone(value))
-        ? null
-        : 'Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9.';
-    case 'officer_note':
-      return value.length > MAX_LONG_TEXT ? `Keep remarks under ${MAX_LONG_TEXT} characters.` : null;
-    case 'area_type_cd':
-    case 'notice_required':
-      return null;
+// The stored answers as form text. A draft from the m²-only build is read in square feet.
+export function answersOf(values: DraftValues): Answers {
+  const answers = { ...EMPTY_ANSWERS };
+  for (const field of ANSWER_FIELDS) answers[field] = text(values, field);
+  if (answers.area_sqft === '' && text(values, 'measured_area_sqm') !== '') {
+    const sqm = Number(text(values, 'measured_area_sqm'));
+    if (Number.isFinite(sqm) && sqm > 0) answers.area_sqft = String(sqmToSqft(sqm));
   }
+  return answers;
 }
 
-// Every field's message for the stored draft; empty when the draft can be sent.
-export function validateFindings(values: DraftValues): FindingsErrors {
-  const errors: FindingsErrors = {};
-  for (const field of FINDINGS_FIELDS) {
-    const message = validateFindingsField(field, draftText(values, field));
-    if (message !== null) errors[field] = message;
-  }
-  return errors;
+export function readFindingsDraft(caseRef: string, inspectionRef?: string | null): Draft | null {
+  return readDraft(readScope(caseRef, inspectionRef));
 }
 
-// Nullable text: empty means "nothing recorded", sent as null so the server clears it.
-function optional(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
+export function readAnswers(caseRef: string, inspectionRef?: string | null): Answers {
+  return answersOf(readFindingsDraft(caseRef, inspectionRef)?.values ?? {});
 }
 
-// The PUT body, built from stored values only. Assumes `validateFindings` passed.
-export function toFindingsPut(values: DraftValues): FindingsPut {
-  const area = optional(draftText(values, 'measured_area_sqm'));
-  const phone = optional(draftText(values, 'occupant_phone'));
-  const notice = draftText(values, 'notice_required');
-  return {
-    findings: splitFindings(draftText(values, 'findings')),
-    measured_area_sqm: area === null ? null : Number(area),
-    area_type_cd: optional(draftText(values, 'area_type_cd')),
-    occupant_name: optional(draftText(values, 'occupant_name')),
-    occupant_phone: phone === null ? null : normalisePhone(phone),
-    notice_required: notice === 'yes' ? true : notice === 'no' ? false : null,
-    officer_note: optional(draftText(values, 'officer_note')),
-  };
+// Writes one field (onBlur, or onChange for a select). The encroachment answer carries its dependants.
+export function saveAnswer(caseRef: string, field: AnswerField, value: string): Draft {
+  const scope = writeScope(caseRef);
+  const trimmed = field === 'officer_note' ? value.replace(/\s+$/u, '') : value.trim();
+  const patch: Partial<Answers> =
+    field === 'encroachment_confirmed_cd'
+      ? encroachmentPatch(answersOf(readDraft(scope)?.values ?? {}), trimmed)
+      : { [field]: trimmed };
+  const values: DraftValues = {};
+  for (const [key, next] of Object.entries(patch)) values[key] = next === '' ? null : next;
+  return saveDraftFields(scope, values);
 }
 
-// True when the stored draft has edits the server has not accepted.
-export function hasUnsentFindings(caseRef: string): boolean {
-  const draft = readFindingsDraft(caseRef);
+// True when the round's stored draft has edits the server has not accepted.
+export function hasUnsentFindings(caseRef: string, inspectionRef?: string | null): boolean {
+  const scope = readScope(caseRef, inspectionRef);
+  const draft = readDraft(scope);
   if (draft === null) return false;
-  return draftStore.getString(sentKey(caseRef)) !== draft.updatedAt;
+  const sent = draftStore.getString(sentKey(scope)) ?? (scope.step === 'findings' ? draftStore.getString(legacySentKey(caseRef)) : undefined);
+  return sent !== draft.updatedAt;
 }
 
 export class FindingsInvalid extends Error {
-  readonly errors: FindingsErrors;
+  readonly errors: AnswerErrors;
 
-  constructor(errors: FindingsErrors) {
-    super(Object.values(errors)[0] ?? 'The findings are incomplete.');
+  constructor(errors: AnswerErrors) {
+    super('The answers are incomplete.');
     this.name = 'FindingsInvalid';
     this.errors = errors;
   }
 }
 
 /*
- * Sends the stored draft. On success the draft revision is marked as accepted, so
- * review can tell the surveyor whether the office has their latest edits.
+ * Sends the stored answers. The draft is validated at the stage asking (step 3
+ * leaves the recommendation to step 4); on success the revision is marked as
+ * accepted, so review knows whether the office has the latest edits.
  */
-export async function sendFindings(caseRef: string, inspectionRef: string): Promise<InspectionDetail> {
-  const draft = readFindingsDraft(caseRef);
-  const values = draft?.values ?? {};
-  const errors = validateFindings(values);
+export async function sendFindings(
+  caseRef: string,
+  inspectionRef: string,
+  stage: AnswerStage,
+  labels: EnglishLabels = {},
+): Promise<InspectionDetail> {
+  const scope = writeScope(caseRef, inspectionRef);
+  const draft = readDraft(scope);
+  const answers = answersOf(draft?.values ?? {});
+  const errors = validateAnswers(answers, stage);
   if (Object.keys(errors).length > 0) throw new FindingsInvalid(errors);
 
-  const detail = await putFindings(inspectionRef, toFindingsPut(values));
-  if (draft !== null) draftStore.set(sentKey(caseRef), draft.updatedAt);
+  const detail = await putFindings(inspectionRef, toFindingsPut(answers, labels));
+  if (draft !== null) draftStore.set(sentKey(scope), draft.updatedAt);
   return detail;
 }
 
 /*
- * Seeds an empty draft from findings the server already holds — a round resumed
- * on a reinstalled or different handset. Never overwrites a local draft, and never
+ * Seeds an empty draft from answers the server already holds — a round resumed on
+ * a reinstalled or different handset. Never overwrites a local draft, and never
  * seeds from a finished round, whose draft was cleared on purpose at submit.
  */
 export function seedFindingsFromServer(caseRef: string, detail: InspectionDetail): Draft | null {
-  const findings = detail.findings ?? [];
   if (!(WORKABLE_ROUND_STATUSES as readonly string[]).includes(detail.status)) return null;
-  if (readFindingsDraft(caseRef) !== null || findings.length === 0) return null;
-  const draft = saveDraft(findingsScope(caseRef), {
-    findings: findings.map((item) => item.finding).join('\n'),
-    measured_area_sqm:
-      detail.measured_area_sqm === null || detail.measured_area_sqm === undefined
-        ? null
-        : String(detail.measured_area_sqm),
-    area_type_cd: detail.area_type_cd ?? null,
-    occupant_name: detail.occupant_name ?? null,
-    occupant_phone: detail.occupant_phone ?? null,
-    notice_required:
-      detail.notice_required === true ? 'yes' : detail.notice_required === false ? 'no' : null,
-    officer_note: detail.officer_note ?? null,
-  });
-  draftStore.set(sentKey(caseRef), draft.updatedAt);
+  if (readFindingsDraft(caseRef, detail.inspection_ref) !== null || !serverHasAnswers(detail)) return null;
+  const answers = answersFromServer(detail);
+  const values: DraftValues = {};
+  for (const field of ANSWER_FIELDS) values[field] = answers[field] === '' ? null : answers[field];
+  const scope = roundScope(caseRef, detail.inspection_ref);
+  const draft = saveDraft(scope, values);
+  draftStore.set(sentKey(scope), draft.updatedAt);
   return draft;
 }
 
-// Forgets the draft and its sent marker once the round has been submitted.
-export function clearFindings(caseRef: string): void {
-  clearDraft(findingsScope(caseRef));
-  draftStore.remove(sentKey(caseRef));
+// Forgets the round's draft, any unbound one, and their sent markers once the round is submitted or dropped.
+export function clearFindings(caseRef: string, inspectionRef?: string | null): void {
+  const round = roundOf(caseRef, inspectionRef);
+  const scopes = round === null ? [unboundScope(caseRef)] : [roundScope(caseRef, round), unboundScope(caseRef)];
+  for (const scope of scopes) {
+    clearDraft(scope);
+    draftStore.remove(sentKey(scope));
+  }
+  draftStore.remove(legacySentKey(caseRef));
 }
 
-// The findings draft as its raw string, for `useSyncExternalStore`.
+// The answers draft as its raw string, for `useSyncExternalStore`.
 export function findingsSnapshot(caseRef: string): string {
-  return draftSnapshot(findingsScope(caseRef));
+  return draftSnapshot(readScope(caseRef));
 }
 
 // Parses a snapshot taken by `findingsSnapshot`.
@@ -227,7 +216,12 @@ export function findingsFrom(snapshot: string): Draft | null {
   return parseDraft(snapshot);
 }
 
-// Calls `listener` whenever the case's findings draft changes.
+// Calls `listener` whenever any of the case's answers drafts, or the round they belong to, changes.
 export function subscribeToFindings(caseRef: string, listener: () => void): () => void {
-  return subscribeToDraft(findingsScope(caseRef), listener);
+  const drafts = `${draftKeyPrefix(caseRef)}findings`;
+  const round = `round:${caseRef}`;
+  const subscription = draftStore.addOnValueChangedListener((changed) => {
+    if (changed.startsWith(drafts) || changed === round) listener();
+  });
+  return () => subscription.remove();
 }

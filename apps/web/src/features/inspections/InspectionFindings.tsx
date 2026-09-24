@@ -77,7 +77,7 @@ import {
 } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
-import { FindingsList, ObservationFields, SectionsEditor } from "./FindingsFields";
+import { FindingsList, ObservationFields } from "./FindingsFields";
 import {
   findingsFormFrom,
   hasErrors,
@@ -94,6 +94,7 @@ import { useInspectionGate } from "./useInspections";
 import {
   ACT_DOMAIN,
   AREA_TYPE_DOMAIN,
+  CONSTRUCTION_STAGE_DOMAIN,
   SECTION_DOMAIN,
   isNotFound,
   useFindingsInspection,
@@ -115,8 +116,10 @@ const SHORTFALL_ID = "submit-photo-shortfall";
 function firstProblemId(errors: FindingsFormErrors): string | null {
   if (errors.findings !== undefined) return "findings-item-1";
   if (errors.phone !== undefined) return "occupant-phone";
+  if (errors.ownerPhone !== undefined) return "owner-phone";
+  if (errors.length !== undefined) return "length-m";
+  if (errors.width !== undefined) return "width-m";
   if (errors.area !== undefined) return "measured-area";
-  if (errors.noticeAct !== undefined) return "notice-act";
   return null;
 }
 
@@ -184,6 +187,7 @@ export default function InspectionFindings() {
   const photos = usePhotoRule(detail?.evidence ?? NO_EVIDENCE, gate.canRead);
 
   const areaTypes = useVocabulary(AREA_TYPE_DOMAIN, gate.canRead, language);
+  const constructionStages = useVocabulary(CONSTRUCTION_STAGE_DOMAIN, gate.canRead, language);
   const acts = useVocabulary(ACT_DOMAIN, gate.canRead, language);
   const sections = useVocabulary(SECTION_DOMAIN, gate.canRead, language);
 
@@ -336,7 +340,7 @@ export default function InspectionFindings() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {gateLabels.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{gateLabels.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{gateLabels.deniedBody}</p>
       </section>
     );
   }
@@ -379,33 +383,32 @@ export default function InspectionFindings() {
     // No gutter and no max-width here: AppShell's `main` supplies both, once,
     // for every screen.
     <div className="flex w-full min-w-0 flex-col gap-6">
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
-          onClick={goBack}
-        >
-          <Icon name="action.back" className="size-4" />
-          {labels.back}
-        </Button>
-      </div>
-
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
             {labels.title}
           </h1>
-          <p className="mt-1 text-sm text-fg-muted">
+          <p className="mt-1 text-sm text-fg-canvas-muted">
             {labels.subtitle(detail.inspection_ref, detail.round_no)}
           </p>
         </div>
-        {/* A fact on the header, never an input to a decision. The chip carries
-            a glyph as well as a tone, and its label is the status in words. */}
-        <StatusChip status={chip === null ? "unknown" : INSPECTION_STATUS_META[chip].chip}>
-          {chip === null ? detail.status : statusLabels[chip]}
-        </StatusChip>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* A fact on the header, never an input to a decision. The chip carries
+              a glyph as well as a tone, and its label is the status in words. */}
+          <StatusChip status={chip === null ? "unknown" : INSPECTION_STATUS_META[chip].chip}>
+            {chip === null ? detail.status : statusLabels[chip]}
+          </StatusChip>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
+            onClick={goBack}
+          >
+            <Icon name="action.back" className="size-4" />
+            {labels.back}
+          </Button>
+        </div>
       </header>
 
       <form
@@ -424,16 +427,6 @@ export default function InspectionFindings() {
           errors={shownErrors}
         />
 
-        <SectionsEditor
-          labels={labels}
-          state={form}
-          onChange={onChange}
-          disabled={!canRecord || busy}
-          errors={shownErrors}
-          acts={acts}
-          sections={sections}
-        />
-
         <ObservationFields
           labels={labels}
           state={form}
@@ -441,7 +434,9 @@ export default function InspectionFindings() {
           disabled={!canRecord || busy}
           errors={shownErrors}
           areaTypes={areaTypes}
+          constructionStages={constructionStages}
           acts={acts}
+          sections={sections}
         />
 
         {saveError && (

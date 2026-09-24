@@ -8,6 +8,7 @@ import { AdaApiError } from '@/services/api/errors';
 import { errorText } from '@/services/api/error-text';
 import { hasPermission, useCapabilities } from '@/services/config';
 import { localIsoDay } from '@/services/format/datetime';
+import { t, useT } from '@/services/i18n';
 
 import { refreshBindings } from './bindings';
 import { useLabeller } from './labels';
@@ -47,27 +48,28 @@ export function hasOwnHeader(envelope: ScreenEnvelope | null): boolean {
 
 function savedCopyNotice(error: Error | null): string {
   if (error instanceof AdaApiError && error.code === 'app_update_required') {
-    return 'Showing the saved copy of this screen. Update the app to see the newest version.';
+    return t('sdui.savedCopyUpdate');
   }
-  return `Showing the copy saved on this phone. ${errorText(error).message}`;
+  return t('sdui.savedCopy', { reason: errorText(error).message });
 }
 
 function Failure({ error, onRetry }: { readonly error: Error | null; readonly onRetry: () => void }) {
+  const t = useT();
   const detail = errorText(error);
   const code = error instanceof AdaApiError ? error.code : null;
   const title =
     code === 'app_update_required'
-      ? 'Update the app to open this screen'
+      ? t('sdui.failure.update')
       : code === 'role_not_permitted'
-        ? 'This screen is not available to you'
-        : 'This screen could not be opened';
+        ? t('sdui.failure.forbidden')
+        : t('sdui.failure.generic');
   return (
     <StateMessage
       tone={detail.offline ? 'offline' : 'error'}
       title={title}
       message={detail.message}
       reference={detail.requestId}
-      actionLabel="Try again"
+      actionLabel={t('common.retry')}
       onAction={onRetry}
     />
   );

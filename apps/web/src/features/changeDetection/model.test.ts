@@ -8,6 +8,15 @@ import {
   confidenceBand,
   confidencePercent,
   cycleOpacities,
+  etaMinutes,
+  flightChip,
+  fullGridMinutes,
+  isRetryingRun,
+  runErrorText,
+  pairLongestSidePx,
+  receivedPercent,
+  restoreHours,
+  progressPercent,
   DETECTION_HARD_CAP,
   detectionRef,
   filterDetections,
@@ -15,6 +24,7 @@ import {
   LAYER_GROUP_ORDER,
   LAYER_TREE,
   sortDetections,
+  splitStage,
   toChangeType,
   toComparisonPair,
   toDetectionRows,
@@ -311,4 +321,94 @@ test("the layer tree is fixed, unique, and every layer belongs to a known group"
     if (seen.at(-1) !== node.group) seen.push(node.group);
   }
   assert.equal(new Set(seen).size, seen.length, "a group is split across the tree");
+});
+
+/* ------------------------------------------------------------ the flights */
+
+test("a flight's chip follows its status, and 0% processing reads as queued", () => {
+  assert.equal(flightChip("processing", 0), "queued");
+  assert.equal(flightChip("processing", Number.NaN), "queued");
+  assert.equal(flightChip("processing", 0.02), "processing");
+  assert.equal(flightChip("ready", 1), "ready");
+  assert.equal(flightChip("failed", 0.4), "failed");
+});
+
+test("the upload and storage statuses each get their own chip", () => {
+  assert.equal(flightChip("uploading", 0), "uploading");
+  assert.equal(flightChip("rejected", 0), "rejected");
+  assert.equal(flightChip("failed_retryable", 0.3), "retrying");
+  assert.equal(flightChip("cold", 1), "archived");
+  assert.equal(flightChip("restoring", 1), "restoring");
+  assert.equal(flightChip("expired", 0), "failed");
+});
+
+test("received chunks become a floored percent and an unknown count reads as zero", () => {
+  assert.equal(receivedPercent(62, 100), 62);
+  assert.equal(receivedPercent(2, 3), 66);
+  assert.equal(receivedPercent(5, 0), 0);
+  assert.equal(receivedPercent(null, 10), 0);
+});
+
+test("the CPU ETA is eta_s_per_mpx times the capped longest side squared", () => {
+  const tile = { bounds: [78.0, 27.0, 78.02, 27.02] as [number, number, number, number], resolutionM: 0.4 };
+  const side = pairLongestSidePx(tile, tile);
+  assert.ok(side !== null && side > 5000 && side < 6000);
+  assert.equal(etaMinutes(60, side, 3072), Math.round((3072 * 3072) / 1e6));
+  const small = { bounds: [78.0, 27.0, 78.0005, 27.0005] as [number, number, number, number], resolutionM: 0.5 };
+  assert.equal(etaMinutes(60, pairLongestSidePx(small, small), 3072), 1);
+  assert.equal(pairLongestSidePx(tile, { ...tile, bounds: [79, 28, 79.1, 28.1] }), null);
+  assert.equal(etaMinutes(null, 5000, 3072), null);
+});
+
+test("a failed run whose error starts with retryable: is retrying, not failed", () => {
+  assert.equal(isRetryingRun({ status: "failed", error: "retryable: CUDA out of memory" }), true);
+  assert.equal(isRetryingRun({ status: "failed", error: "  Retryable: provider error" }), true);
+  assert.equal(runErrorText("retryable: CUDA out of memory"), "CUDA out of memory");
+});
+
+test("a plain failure, or a running job, is never retrying", () => {
+  assert.equal(isRetryingRun({ status: "failed", error: "No CRS on raster 4" }), false);
+  assert.equal(isRetryingRun({ status: "failed", error: null }), false);
+  assert.equal(isRetryingRun({ status: "running", error: "retryable: stale" }), false);
+});
+
+test("with no pair selected the CPU ETA is the full grid at the cap", () => {
+  assert.equal(fullGridMinutes(1800), 30);
+  assert.equal(fullGridMinutes(20), 1);
+  assert.equal(fullGridMinutes(null), null);
+});
+
+test("progress renders as a clamped whole percentage", () => {
+  assert.equal(progressPercent(0.494), 49);
+  assert.equal(progressPercent(1.2), 100);
+  assert.equal(progressPercent(-1), 0);
+  assert.equal(progressPercent(Number.NaN), 0);
+});
+
+test("splitStage keeps the human stage and moves the backend detail aside", () => {
+  assert.deepEqual(
+    splitStage(
+      "Segmenting building footprints — building_segdiff (ChangeStar ViT-B ONNX: geobase/changestar-building-segmentation-vitb, local, static, CoreML)",
+    ),
+    {
+      title: "Segmenting building footprints",
+      detail:
+        "building_segdiff (ChangeStar ViT-B ONNX: geobase/changestar-building-segmentation-vitb, local, static, CoreML)",
+    },
+  );
+  assert.deepEqual(splitStage("Refining full building structures — SAM2"), {
+    title: "Refining full building structures",
+    detail: "SAM2",
+  });
+  assert.deepEqual(splitStage("A — B — C"), { title: "A", detail: "B — C" });
+  assert.deepEqual(splitStage("strip 12/146"), { title: "strip 12/146", detail: null });
+  assert.deepEqual(splitStage("Co-registering — "), { title: "Co-registering", detail: null });
+  assert.deepEqual(splitStage(" — SAM2"), { title: "SAM2", detail: null });
+});
+
+test("a restore ETA of zero or less shows no hours", () => {
+  assert.equal(restoreHours(0), null);
+  assert.equal(restoreHours(-2), null);
+  assert.equal(restoreHours(null), null);
+  assert.equal(restoreHours(4.2), 5);
 });

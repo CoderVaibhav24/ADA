@@ -1,23 +1,27 @@
 import { useState } from "react";
 
 import { kcSanitize } from "keycloakify/lib/kcSanitize";
-import { getKcClsx } from "keycloakify/login/lib/kcClsx";
 import type { PageProps } from "keycloakify/login/pages/PageProps";
 
 import type { KcContext } from "../KcContext";
 import type { I18n } from "../i18n";
+import { Icon } from "../icons";
+import { Field, Notice, PasswordInput, SubmitButton } from "../parts";
 
 type LoginKcContext = Extract<KcContext, { pageId: "login.ftl" }>;
 
+// Hosted twin of apps/web/src/routes/Login.tsx step one; field names are Keycloak's.
 export default function Login(props: PageProps<LoginKcContext, I18n>) {
   const { kcContext, i18n, doUseDefaultCss, Template, classes } = props;
-  const { kcClsx } = getKcClsx({ doUseDefaultCss, classes });
-
   const { social, realm, url, usernameHidden, login, messagesPerField } = kcContext;
   const { msg, msgStr } = i18n;
 
   const [submitting, setSubmitting] = useState(false);
-  const [revealed, setRevealed] = useState(false);
+  const fieldError = messagesPerField.existsError("username", "password")
+    ? messagesPerField.getFirstError("username", "password")
+    : undefined;
+  // A prefilled name means the web login handed over (login_hint), so the password is what is owed.
+  const handedOver = !usernameHidden && !!login.username && !fieldError && !kcContext.message;
 
   return (
     <Template
@@ -25,19 +29,17 @@ export default function Login(props: PageProps<LoginKcContext, I18n>) {
       i18n={i18n}
       doUseDefaultCss={doUseDefaultCss}
       classes={classes}
-      displayMessage={!messagesPerField.existsError("username", "password")}
+      displayMessage={!fieldError}
       headerNode={msg("loginAccountTitle")}
       displayInfo={realm.password && realm.registrationAllowed && !kcContext.registrationDisabled}
       infoNode={
-        <div id="kc-registration-container">
-          <div id="kc-registration">
-            <span>
-              {msg("noAccount")}{" "}
-              <a tabIndex={8} href={url.registrationUrl}>
-                {msg("doRegister")}
-              </a>
-            </span>
-          </div>
+        <div id="kc-registration">
+          <span>
+            {msg("noAccount")}{" "}
+            <a tabIndex={8} href={url.registrationUrl} className="ada-link">
+              {msg("doRegister")}
+            </a>
+          </span>
         </div>
       }
       socialProvidersNode={
@@ -60,135 +62,93 @@ export default function Login(props: PageProps<LoginKcContext, I18n>) {
         ) : null
       }
     >
-      <div id="kc-form">
-        <div id="kc-form-wrapper">
-          {realm.password && (
-            <form
-              id="kc-form-login"
-              className="ada-login-form"
-              action={url.loginAction}
-              method="post"
-              onSubmit={() => {
-                setSubmitting(true);
-                return true;
-              }}
-            >
-              {!usernameHidden && (
-                <div className={kcClsx("kcFormGroupClass")}>
-                  <label htmlFor="username" className={kcClsx("kcLabelClass")}>
-                    {!realm.loginWithEmailAllowed
-                      ? msg("username")
-                      : !realm.registrationEmailAsUsername
-                        ? msg("usernameOrEmail")
-                        : msg("email")}
-                  </label>
-                  <input
-                    tabIndex={2}
-                    id="username"
-                    className="ada-input"
-                    name="username"
-                    defaultValue={login.username ?? ""}
-                    type="text"
-                    autoFocus
-                    autoComplete="username"
-                    aria-invalid={messagesPerField.existsError("username", "password")}
-                  />
-                  {messagesPerField.existsError("username", "password") && (
-                    <span
-                      id="input-error"
-                      className="ada-field-error"
-                      aria-live="polite"
-                      dangerouslySetInnerHTML={{
-                        __html: kcSanitize(
-                          messagesPerField.getFirstError("username", "password"),
-                        ),
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-
-              <div className={kcClsx("kcFormGroupClass")}>
-                <label htmlFor="password" className={kcClsx("kcLabelClass")}>
-                  {msg("password")}
-                </label>
-                <div className="ada-password-wrapper">
-                  <input
-                    tabIndex={3}
-                    id="password"
-                    className="ada-input"
-                    name="password"
-                    type={revealed ? "text" : "password"}
-                    autoComplete="current-password"
-                    aria-invalid={messagesPerField.existsError("username", "password")}
-                  />
-                  <button
-                    type="button"
-                    className="ada-reveal"
-                    aria-label={revealed ? "Hide password" : "Show password"}
-                    aria-controls="password"
-                    onClick={() => setRevealed((on) => !on)}
-                  >
-                    {revealed ? "Hide" : "Show"}
-                  </button>
-                </div>
-                {usernameHidden && messagesPerField.existsError("username", "password") && (
-                  <span
-                    id="input-error"
-                    className="ada-field-error"
-                    aria-live="polite"
-                    dangerouslySetInnerHTML={{
-                      __html: kcSanitize(messagesPerField.getFirstError("username", "password")),
-                    }}
-                  />
-                )}
-              </div>
-
-              <div className={kcClsx("kcFormGroupClass")}>
-                <div id="kc-form-options" className="ada-form-options">
-                  {realm.rememberMe && !usernameHidden && (
-                    <label className="ada-checkbox">
-                      <input
-                        tabIndex={5}
-                        id="rememberMe"
-                        name="rememberMe"
-                        type="checkbox"
-                        defaultChecked={!!login.rememberMe}
-                      />
-                      {msg("rememberMe")}
-                    </label>
-                  )}
-                  {realm.resetPasswordAllowed && (
-                    <a tabIndex={6} href={url.loginResetCredentialsUrl} className="ada-link">
-                      {msg("doForgotPassword")}
-                    </a>
-                  )}
-                </div>
-              </div>
-
-              <div id="kc-form-buttons" className={kcClsx("kcFormGroupClass")}>
-                <input
-                  type="hidden"
-                  id="id-hidden-input"
-                  name="credentialId"
-                  value={kcContext.auth?.selectedCredential ?? ""}
-                />
-                <button
-                  tabIndex={7}
-                  disabled={submitting}
-                  className="ada-button ada-button-primary ada-button-block"
-                  name="login"
-                  id="kc-login"
-                  type="submit"
-                >
-                  {submitting ? `${msgStr("doLogIn")}…` : msgStr("doLogIn")}
-                </button>
-              </div>
-              <p className="ada-note">You will be asked for your authenticator code next.</p>
-            </form>
+      {realm.password && (
+        <form
+          id="kc-form-login"
+          className="ada-form"
+          action={url.loginAction}
+          method="post"
+          onSubmit={() => {
+            setSubmitting(true);
+            return true;
+          }}
+        >
+          {fieldError && (
+            <Notice tone="error" title={msg("adaErrorHeading")} html={fieldError} />
           )}
-        </div>
-      </div>
+          {handedOver && <Notice tone="info">{msg("adaPasswordAgain")}</Notice>}
+
+          {!usernameHidden && (
+            <Field id="username" label={msg(!realm.loginWithEmailAllowed ? "username" : "usernameOrEmail")}>
+              <input
+                tabIndex={2}
+                id="username"
+                className="ada-input"
+                name="username"
+                defaultValue={login.username ?? ""}
+                type="text"
+                autoFocus={!handedOver}
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder={msgStr("adaUsernamePlaceholder")}
+                aria-invalid={!!fieldError}
+              />
+            </Field>
+          )}
+
+          <Field id="password" label={msg("password")} labelClassName="ada-label--password">
+            <PasswordInput
+              tabIndex={3}
+              id="password"
+              name="password"
+              i18n={i18n}
+              autoFocus={handedOver || usernameHidden}
+              autoComplete="current-password"
+              placeholder={msgStr("adaPasswordPlaceholder")}
+              aria-invalid={!!fieldError}
+            />
+          </Field>
+
+          <div id="kc-form-options" className="ada-options">
+            {realm.rememberMe && !usernameHidden ? (
+              <label htmlFor="rememberMe" className="ada-check">
+                <span className="ada-check__box">
+                  <input
+                    tabIndex={5}
+                    id="rememberMe"
+                    name="rememberMe"
+                    type="checkbox"
+                    defaultChecked={!!login.rememberMe}
+                  />
+                  <Icon name="check" className="ada-check__tick" />
+                </span>
+                <span className="ada-check__label">{msg("rememberMe")}</span>
+              </label>
+            ) : (
+              <span />
+            )}
+            {realm.resetPasswordAllowed && (
+              <a tabIndex={6} href={url.loginResetCredentialsUrl} className="ada-forgot">
+                {msg("doForgotPassword")}
+              </a>
+            )}
+          </div>
+
+          <input
+            type="hidden"
+            id="id-hidden-input"
+            name="credentialId"
+            value={kcContext.auth?.selectedCredential ?? ""}
+          />
+          <SubmitButton
+            id="kc-login"
+            name="login"
+            busy={submitting}
+            label={submitting ? msgStr("adaLoginBusy") : msgStr("doLogIn")}
+          />
+        </form>
+      )}
     </Template>
   );
 }

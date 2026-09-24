@@ -13,7 +13,14 @@ from datetime import date, datetime
 from typing import Annotated, Literal
 
 from ada_core.datetimes import IstDateTime, isoformat_ist, to_ist
-from ada_core.models_icms import CASE_PRIORITIES, EVIDENCE_KINDS
+from ada_core.models_icms import (
+    CASE_PRIORITIES,
+    ENCROACHMENT_CONFIRMED,
+    EVIDENCE_KINDS,
+    EXTERNAL_SUPPORT,
+    FINDINGS_SOURCES,
+    RECOMMENDATIONS,
+)
 from ada_core.validation import (
     AccuracyMetres,
     CaseRef,
@@ -23,6 +30,7 @@ from ada_core.validation import (
     Longitude,
     Name,
     PhoneIN,
+    PlaceName,
     SafeLongText,
     check_device_timestamp,
 )
@@ -165,6 +173,24 @@ class SectionOut(BaseModel):
     section_cd: Code
 
 
+EncroachmentConfirmed = Literal[ENCROACHMENT_CONFIRMED]
+ExternalSupport = Literal[EXTERNAL_SUPPORT]
+Recommendation = Literal[RECOMMENDATIONS]
+
+# 1,000 hectares: far past any single encroachment, short of a typo in sq ft.
+MAX_AREA_SQM = 10_000_000
+# Ten kilometres on one side; matches icms_inspection_length_ck / _width_ck.
+MAX_SIDE_M = 10_000
+
+OBSERVED_COLUMNS = (
+    "occupant_name", "occupant_phone", "owner_name", "owner_phone", "property_type_cd", "floor_count",
+    "police_station", "encroachment_confirmed_cd", "area_type_cd",
+    "measured_area_sqm", "external_support_cd", "recommendation_cd",
+    "notice_required", "notice_act_cd", "officer_note",
+    "construction_stage_cd", "length_m", "width_m",
+)
+
+
 class FindingsPut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -177,25 +203,66 @@ class FindingsPut(BaseModel):
     sections: list[SectionOut] | None = Field(
         default=None,
         max_length=50,
-        description="Replaces the cited sections when present; omit to leave them alone.",
+        description="Replaces the cited sections when present; omit to leave them alone. "
+                    "Each pair must be an active `section` code under its `act`. At submit "
+                    "a round with notice_required needs at least one under notice_act_cd.",
     )
 
-    occupant_name: Name | None = None
+    occupant_name: Name | None = Field(
+        default=None, description="The person found on site. Required at submit when "
+                                  "occupant_phone is given.")
     occupant_phone: PhoneIN | None = None
-    area_type_cd: Code | None = None
-    measured_area_sqm: float | None = Field(default=None, ge=0, le=10_000_000)
-    notice_required: bool | None = None
-    notice_act_cd: Code | None = None
+    owner_name: Name | None = Field(
+        default=None, description="Who holds the property (legacy owner_name). Required "
+                                  "at submit when owner_phone is given.")
+    owner_phone: PhoneIN | None = None
+    property_type_cd: Code | None = Field(
+        default=None, description="An active `property_type` code value.")
+    floor_count: int | None = Field(default=None, ge=0, le=200)
+    police_station: PlaceName | None = None
+    encroachment_confirmed_cd: EncroachmentConfirmed | None = Field(
+        default=None,
+        description="Required at submit. no_false_positive forces recommendation_cd "
+                    "no_action_required and notice_required false.")
+    area_type_cd: Code | None = Field(
+        default=None,
+        description="An active `area_type` code value. Required at submit when "
+                    "encroachment_confirmed_cd is yes or partial.")
+    measured_area_sqm: float | None = Field(
+        default=None, ge=0.01, le=MAX_AREA_SQM,
+        description="Square metres; the client converts sq ft or gaj. Required at "
+                    "submit when encroachment_confirmed_cd is yes or partial.")
+    external_support_cd: ExternalSupport | None = Field(
+        default=None,
+        description="Single select. Required at submit when encroachment_confirmed_cd "
+                    "is yes or partial; police makes officer_note required.")
+    recommendation_cd: Recommendation | None = Field(
+        default=None,
+        description="Required at submit. no_action_required only with no_false_positive. "
+                    "issue_notice, demolition_order and impose_fine set notice_required.")
+    notice_required: bool | None = Field(
+        default=None,
+        description="Required at submit once recommendation_cd is set; derived for "
+                    "no_action_required and the three notice recommendations.")
+    notice_act_cd: Code | None = Field(
+        default=None,
+        description="An active `act` code value. Required at submit when notice_required; "
+                    "cleared when notice_required is false.")
     officer_note: SafeLongText | None = None
+    construction_stage_cd: Code | None = Field(
+        default=None, description="An active `construction_stage` code value. Optional.")
+    length_m: float | None = Field(
+        default=None, gt=0, le=MAX_SIDE_M,
+        description="Metres; the field app converts feet. Optional. With width_m and "
+                    "no measured_area_sqm, the area is derived as length × width.")
+    width_m: float | None = Field(
+        default=None, gt=0, le=MAX_SIDE_M, description="Metres. Optional.")
 
     def observations(self) -> dict:
         """The Inspection columns the form actually carried, and no others."""
         return {
             name: getattr(self, name)
-            for name in (
-                "occupant_name", "occupant_phone", "area_type_cd", "measured_area_sqm",
-                "notice_required", "notice_act_cd", "officer_note",
-            )
+            for name in OBSERVED_COLUMNS
             if name in self.model_fields_set
         }
 
@@ -289,6 +356,8 @@ class CheckInOut(BaseModel):
     id: int
     inspection_ref: str
     user_id: str
+    user_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     lat: float | None = None
     lon: float | None = None
     accuracy_m: float
@@ -322,15 +391,27 @@ class EvidenceOut(BaseModel):
     capture_source: str | None = None
     captured_at: IstDateTime | None = None
     uploaded_by: str
+    uploaded_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     uploaded_at: IstDateTime
     content_url: str
+    stamped_url: str | None = Field(
+        default=None,
+        description="The server-stamped JPEG (location bar added by the API), or null "
+                    "when none was made. The original at content_url is untouched.",
+    )
     geotag_flagged: bool = Field(
         default=False,
-        description="True when the capture carried no position, or one worse than the "
-                    "accuracy threshold. Computed at write time and stored nowhere: "
-                    "the threshold is server configuration a browser cannot read, so "
-                    "the flag has to come over the wire. The gallery shows it.",
+        description="True when the capture carried no position, one worse than the "
+                    "accuracy threshold, or (photos) EXIF GPS missing or farther than "
+                    "icms_exif_mismatch_m from the submitted fix. The EXIF part is "
+                    "stored at upload; the accuracy part is recomputed on read.",
     )
+    distance_to_site_m: float | None = Field(
+        default=None,
+        description="Metres from the submitted fix to the case point; null without one.")
+    exif_lat: float | None = Field(default=None, description="Latitude read from EXIF GPS.")
+    exif_lon: float | None = Field(default=None, description="Longitude read from EXIF GPS.")
 
 
 class InspectionRow(BaseModel):
@@ -355,8 +436,8 @@ class InspectionRow(BaseModel):
     surveyor_user_id: str
     surveyor_name: str | None = Field(
         default=None,
-        description="Null: Keycloak is the user store and there is no local users "
-                    "table to join. Resolve it from /api/icms/admin/users.",
+        description="From Keycloak at read time; null when it cannot say, and the "
+                    "screen shows the id.",
     )
     scheduled_for: IstDateTime | None = None
     started_at: IstDateTime | None = None
@@ -374,9 +455,13 @@ class ResurveyRequestOut(BaseModel):
     from_round: int
     reason: str
     requested_by: str
+    requested_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     requested_at: IstDateTime
     decision: str
     decided_by: str | None = None
+    decided_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     decided_at: IstDateTime | None = None
     decision_note: str | None = None
     resulting_round: int | None = None
@@ -386,11 +471,32 @@ class InspectionDetail(InspectionRow):
     case_status: str
     occupant_name: str | None = None
     occupant_phone: str | None = None
-    area_type_cd: str | None = None
+    owner_name: str | None = None
+    owner_phone: str | None = None
+    property_type_cd: str | None = None
+    floor_count: int | None = None
+    police_station: str | None = None
+    encroachment_confirmed_cd: EncroachmentConfirmed | None = Field(
+        default=None, description="Null on rounds recorded before it existed.")
+    area_type_cd: str | None = Field(
+        default=None, description="May be an inactive legacy `area_type` code.")
     measured_area_sqm: float | None = None
+    external_support_cd: ExternalSupport | None = None
+    recommendation_cd: Recommendation | None = None
     notice_required: bool | None = None
     notice_act_cd: str | None = None
     officer_note: str | None = None
+    construction_stage_cd: str | None = None
+    length_m: float | None = None
+    width_m: float | None = None
+    area_mismatch: bool = Field(
+        default=False,
+        description="True when measured_area_sqm and length × width are both held and "
+                    "differ by more than 10% of length × width. Accepted, not refused.")
+    findings_source: Literal[FINDINGS_SOURCES] | None = Field(  # type: ignore[valid-type]
+        default=None,
+        description="Which client last saved the findings, from the token's azp. A web "
+                    "round is not held to the notice act, sections or owner at submit.")
     location: LatLon | None = None
     location_accuracy_m: float | None = None
 

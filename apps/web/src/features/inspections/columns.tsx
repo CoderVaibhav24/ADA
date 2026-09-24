@@ -44,6 +44,8 @@ import { PriorityChip, StatusChip } from "@/components/icms/StatusChip";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/lib/icons";
 import type { InspectionsLabels } from "@/i18n/labels";
+import { ActorName } from "@/components/icms/ActorName";
+import { actorLabel } from "@/lib/actor";
 import { INSPECTION_STATUS_META } from "./inspectionStatus";
 import type { InspectionPriorityLabels } from "./priorityLabels";
 
@@ -190,18 +192,14 @@ export function buildInspectionColumns({
         sortKey: "surveyor_user_id",
         menuLabel: labels.columns.surveyor,
         minWidth: "9rem",
-        exportValue: (row) => row.surveyor_name ?? row.surveyor_user_id,
+        exportValue: (row) => actorLabel(row.surveyor_name, row.surveyor_user_id).text,
       }),
       cell: ({ row }) =>
-        // The Keycloak subject is a UUID. Shown only when there is no name to
-        // show, because an unattributable row is worse than an ugly one.
-        row.original.surveyor_name ? (
-          <span className="text-fg-base">{row.original.surveyor_name}</span>
-        ) : (
-          <span className="font-mono text-2xs break-all text-fg-faint">
-            {row.original.surveyor_user_id}
-          </span>
-        ),
+        <ActorName
+          className="text-fg-base"
+          name={row.original.surveyor_name}
+          id={row.original.surveyor_user_id}
+        />,
     },
 
     {

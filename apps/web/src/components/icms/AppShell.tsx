@@ -78,7 +78,7 @@ export function AppShell({
       className={cn(
         // Pinned to the viewport: the rail never scrolls, only the content
         // column to its right does (it carries overflow-y-auto below).
-        "flex h-dvh w-full flex-col overflow-hidden bg-surface-canvas text-foreground",
+        "relative flex h-dvh w-full flex-col overflow-hidden bg-surface-canvas bg-(image:--canvas-glow) bg-no-repeat text-foreground",
         className,
       )}
     >
@@ -94,7 +94,7 @@ export function AppShell({
         <aside
           data-slot="app-rail"
           className={cn(
-            "flex w-rail shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+            "flex w-rail shrink-0 flex-col border-r border-sidebar-border bg-surface-rail text-sidebar-foreground backdrop-blur-md",
             "transition-[width] duration-slow ease-standard",
             // 82px and 248px are both measured off the Figma frames. The wide
             // one is reachable only at `lg`.
@@ -129,27 +129,30 @@ export function AppShell({
           </ScrollArea>
         </aside>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {/* min-w-0 so a long page title truncates inside the header instead of
               pushing the account pill off-screen at 360px. */}
-          <header className="sticky top-0 z-30 flex h-header shrink-0 items-center gap-2 border-b border-line-subtle bg-surface-1/95 px-3 backdrop-blur-sm sm:px-4">
+          <header className="z-30 flex h-header shrink-0 items-center gap-2 border-b border-line-subtle bg-surface-2 px-3 backdrop-blur-sm sm:px-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">{header}</div>
           </header>
 
-          <main
-            id="icms-main"
-            className={cn("min-w-0 flex-1", bleed && "flex min-h-0 flex-col")}
-          >
-            {bleed ? (
-              children
-            ) : (
-              <div className="mx-auto w-full max-w-(--layout-content-max) px-3 py-4 sm:px-6 sm:py-6">
-                {children}
-              </div>
-            )}
-          </main>
+          {bleed ? (
+            // No scroller here: a bleed page such as the map decides what
+            // scrolls, so it never fights an outer scrollbar.
+            <main id="icms-main" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              {children}
+            </main>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              <main id="icms-main" className="min-w-0 flex-1">
+                <div className="mx-auto w-full max-w-(--layout-content-max) px-3 py-4 sm:px-6 sm:py-6">
+                  {children}
+                </div>
+              </main>
 
-          {footer}
+              {footer}
+            </div>
+          )}
         </div>
       </div>
     </div>

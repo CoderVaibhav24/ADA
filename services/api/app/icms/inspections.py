@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -12,6 +11,7 @@ from ada_core.models_icms import (
     Case,
     CaseEvent,
     CheckIn,
+    CodeValue,
     Evidence,
     Inspection,
     InspectionFinding,
@@ -27,11 +27,25 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..errors import ApiError
+from . import runtime_settings
 from . import workflow as wf
 from .cases import current_assignee, move_case
 from .collection import PageResult, Sortable, paginate, row_dict, search_clause
+from .evidence_stamp import StampFacts, exif_gps, haversine_m, write_stamped
+from .evidence_store import StoredEvidence, stored_file
+from .evidence_store import discard_stored as _discard_stored
+from .evidence_store import resolve_stored as _resolve_stored  # noqa: F401
+from .evidence_store import store as _store
 from .geo import as_geojson_column, parse_geojson, point_value
+from .inspection_rules import (
+    area_mismatch,
+    derive,
+    inconsistencies,
+    missing_for_submit,
+    side_area,
+)
 from .inspection_schemas import (
+    OBSERVED_COLUMNS,
     CheckInCreate,
     EvidenceCreate,
     FindingsPut,
@@ -44,10 +58,10 @@ from .inspection_schemas import (
 )
 from .numbering import IST, Series, allocate
 from .security import ZoneScope
-from .uploads import check_upload
 
 __all__ = [
     "EVIDENCE_CONTENT_PATH",
+    "EVIDENCE_STAMPED_PATH",
     "INSPECTION_SORTS",
     "add_evidence",
     "check_in",
@@ -69,6 +83,7 @@ __all__ = [
 log = logging.getLogger("ada.api.icms.inspections")
 
 EVIDENCE_CONTENT_PATH = "/api/icms/evidence/{evidence_id}/content"
+EVIDENCE_STAMPED_PATH = "/api/icms/evidence/{evidence_id}/stamped"
 
 SCHEDULED, IN_PROGRESS, SUBMITTED, ACCEPTED, REJECTED = (
     "scheduled", "in_progress", "submitted", "accepted", "rejected")
@@ -226,11 +241,23 @@ def inspection_detail(
             Case.status.label("case_status"),
             Inspection.occupant_name,
             Inspection.occupant_phone,
+            Inspection.owner_name,
+            Inspection.owner_phone,
+            Inspection.property_type_cd,
+            Inspection.floor_count,
+            Inspection.police_station,
+            Inspection.encroachment_confirmed_cd,
             Inspection.area_type_cd,
             Inspection.measured_area_sqm,
+            Inspection.external_support_cd,
+            Inspection.recommendation_cd,
             Inspection.notice_required,
             Inspection.notice_act_cd,
             Inspection.officer_note,
+            Inspection.construction_stage_cd,
+            Inspection.length_m,
+            Inspection.width_m,
+            Inspection.findings_source,
             Inspection.location_accuracy_m,
             as_geojson_column(db, Inspection.location).label("_location"),
         )
@@ -252,6 +279,7 @@ def inspection_detail(
     inspection_id = data.pop("_id")
     latitude, longitude = _latlon(data.pop("_location"))
     data["location"] = None if latitude is None else {"lat": latitude, "lon": longitude}
+    data["area_mismatch"] = area_mismatch(data)
 
     data["findings"] = [
         dict(item._mapping)
@@ -351,6 +379,11 @@ def _evidence_select(db: Session) -> Select:
             Evidence.captured_at,
             Evidence.uploaded_by,
             Evidence.uploaded_at,
+            Evidence.distance_to_site_m,
+            Evidence.exif_lat,
+            Evidence.exif_lon,
+            Evidence.geotag_flagged.label("_stored_flag"),
+            Evidence.stamped_storage_key.label("_stamped"),
             as_geojson_column(db, Evidence.location).label("_location"),
         )
         .join(Case, Case.id == Evidence.case_id)
@@ -362,7 +395,11 @@ def _evidence_dict(row) -> dict:
     data = dict(row._mapping)
     data["lat"], data["lon"] = _latlon(data.pop("_location"))
     data["content_url"] = EVIDENCE_CONTENT_PATH.format(evidence_id=data["id"])
-    data["geotag_flagged"] = _is_flagged(
+    data["stamped_url"] = (
+        EVIDENCE_STAMPED_PATH.format(evidence_id=data["id"])
+        if data.pop("_stamped") else None
+    )
+    data["geotag_flagged"] = bool(data.pop("_stored_flag")) or _is_flagged(
         data["lat"], data["lon"], data["accuracy_m"])
     return data
 
@@ -381,20 +418,15 @@ def evidence_for(
     return [_evidence_dict(row) for row in rows]
 
 
-@dataclass(frozen=True)
-class StoredEvidence:
-    path: Path
-    filename: str
-    content_type: str | None
-
-
 def evidence_content(
-    db: Session, evidence_id: int, scope: ZoneScope, *, roles, user_id: str
+    db: Session, evidence_id: int, scope: ZoneScope, *, roles, user_id: str,
+    stamped: bool = False,
 ) -> StoredEvidence | None:
     """The file behind one evidence row, or None when it is not the caller's to read."""
+    path_column = Evidence.stamped_storage_key if stamped else Evidence.storage_path
     statement = (
         select(
-            Evidence.storage_path, Evidence.original_filename,
+            path_column.label("storage_path"), Evidence.original_filename,
             Evidence.content_type, Evidence.sha256, Case.zone_id,
         )
         .join(Case, Case.id == Evidence.case_id)
@@ -413,30 +445,15 @@ def evidence_content(
     row = db.execute(scope.apply(statement, Case.zone_id)).first()
     if row is None:
         return None
-
-    path = _resolve_stored(row.storage_path)
-    if path is None or not path.is_file():
-        log.error("evidence %s is recorded at %r and is not on disk",
-                  evidence_id, row.storage_path)
-        raise ApiError(
-            404, "evidence_content_missing",
-            "the record exists but its file is not in the evidence store",
-        )
-    return StoredEvidence(
-        path=path,
-        filename=row.original_filename or f"{row.sha256 or evidence_id}{path.suffix}",
-        content_type=row.content_type,
-    )
-
-
-# storage_path is ours and relative, but a stored path that escapes the root is
-# worth one comparison rather than a trusted join.
-def _resolve_stored(storage_path: str | None) -> Path | None:
-    if not storage_path:
-        return None
-    root = settings.icms_evidence_dir.resolve()
-    candidate = (root / storage_path).resolve()
-    return candidate if candidate.is_relative_to(root) else None
+    if not stamped:
+        return stored_file(row, evidence_id)
+    if row.storage_path is None:
+        raise ApiError(404, "evidence_not_stamped",
+                       "this evidence has no server-stamped copy")
+    found = stored_file(row, evidence_id)
+    stem = Path(row.original_filename or row.sha256 or str(evidence_id)).stem
+    return StoredEvidence(path=found.path, filename=f"{stem}-stamped.jpg",
+                          content_type="image/jpeg")
 
 
 # ------------------------------------------------------------------ the writes
@@ -727,6 +744,43 @@ def _inside_zone(
     ).scalar_one_or_none()
 
 
+# Great-circle metres; the same on SQLite and PostGIS, so the gate never depends on the dialect.
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6_371_008.8 * math.asin(math.sqrt(min(1.0, a)))
+
+
+def _case_point(db: Session, case_id: int) -> tuple[float | None, float | None]:
+    value = db.execute(
+        select(as_geojson_column(db, Case.location)).where(Case.id == case_id)
+    ).scalar_one_or_none()
+    return _latlon(value)
+
+
+# Distance from the case point, or None when the case has no point; refuses outside the fence.
+def _refuse_outside_geofence(db: Session, row: _Round, latitude: float, longitude: float,
+                             ) -> float | None:
+    site_lat, site_lon = _case_point(db, row.case_id)
+    if site_lat is None or site_lon is None:
+        log.warning("check-in on %s: case %s has no location, geofence not applied",
+                    row.inspection_ref, row.case_ref)
+        return None
+    distance = _haversine_m(site_lat, site_lon, latitude, longitude)
+    radius = runtime_settings.geofence_radius_m(db)
+    if runtime_settings.geofence_enforced(db) and distance > radius:
+        raise ApiError(
+            422,
+            "outside_geofence",
+            f"the fix is {distance:.0f} m from the case location and a check-in must be "
+            f"within {radius:g} m; move closer to the site",
+            field="latitude",
+            details={"distance_m": round(distance, 1), "radius_m": radius},
+        )
+    return distance
+
+
 def check_in(
     db: Session, inspection_ref: str, body: CheckInCreate, scope: ZoneScope,
     *, actor: str, roles,
@@ -753,6 +807,7 @@ def check_in(
 
     _refuse_unless_current(row)
     _refuse_poor_accuracy(body.accuracy_m)
+    distance_m = _refuse_outside_geofence(db, row, body.latitude, body.longitude)
 
     try:
         move_case(db, row.case_id, row.case_status, round_no=row.round_no)
@@ -773,14 +828,22 @@ def check_in(
 
         db.execute(
             update(Inspection).where(Inspection.id == row.inspection_id)
-            .values(**_in_progress(row))
+            .values(**_in_progress(row),
+                    location=point_value(db, body.latitude, body.longitude),
+                    location_accuracy_m=body.accuracy_m)
         )
         _event(
             db, case_id=row.case_id, inspection_id=row.inspection_id,
             action=str(wf.Action.CHECK_IN), actor=actor, roles=roles,
             from_status=row.case_status, to_status=row.case_status,
             round_no=row.round_no,
-            payload={"check_in_id": check_in_id, "accuracy_m": float(body.accuracy_m)},
+            payload={
+                "check_in_id": check_in_id, "accuracy_m": float(body.accuracy_m),
+                "distance_m": None if distance_m is None else round(distance_m, 1),
+                "site_located": distance_m is not None,
+                "geofence_enforced": runtime_settings.geofence_enforced(db),
+                "geofence_radius_m": runtime_settings.geofence_radius_m(db),
+            },
         )
         db.commit()
     except IntegrityError:
@@ -873,44 +936,6 @@ def _refuse_untagged_photo(meta: EvidenceCreate) -> None:
         )
 
 
-# Validated as it streams and only then moved into place, so a rejected upload
-# leaves a .part file to sweep rather than a file the register points at.
-def _store(db: Session, case_ref: str, kind: str, upload: UploadFile) -> tuple:
-    folder = settings.icms_evidence_dir / case_ref
-    folder.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(dir=folder, suffix=".part", delete=False)
-    try:
-        with handle as sink:
-            result = check_upload(
-                db, kind, upload.file,
-                filename=upload.filename, declared_type=upload.content_type, sink=sink,
-            )
-    except BaseException:
-        Path(handle.name).unlink(missing_ok=True)
-        raise
-
-    # Content-addressed: the same bytes sent twice occupy one file and two rows.
-    stored = folder / f"{result.sha256}{result.extension}"
-    created = not stored.exists()
-    os.replace(handle.name, stored)
-    return result, f"{case_ref}/{stored.name}", created
-
-
-# Removes a file this request created and no committed row points at.
-def _discard_stored(db: Session, storage_path: str, created: bool) -> None:
-    if not created:
-        return
-    try:
-        referenced = db.execute(
-            select(Evidence.id).where(Evidence.storage_path == storage_path).limit(1)
-        ).first()
-        if referenced is None:
-            (settings.icms_evidence_dir / storage_path).unlink(missing_ok=True)
-    except Exception:
-        log.warning("could not discard unreferenced evidence file %s", storage_path,
-                    exc_info=True)
-
-
 def _evidence_by_key(db: Session, key: str):
     return db.execute(
         select(Evidence.id, Evidence.inspection_id).where(Evidence.idempotency_key == key)
@@ -933,6 +958,54 @@ def _replayed_evidence(db: Session, key: str, row: _Round) -> dict | None:
             field="idempotency_key",
         )
     return {"evidence": _one_evidence(db, existing.id), "replayed": True}
+
+
+def _discard_stamped(stamped_key: str | None) -> None:
+    path = _resolve_stored(stamped_key)
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
+# EXIF cross-check, distance to site and the stamped copy; never fails the upload.
+def _photo_checks(
+    db: Session, row: _Round, meta: EvidenceCreate, storage_path: str, sha256: str,
+    key: str,
+) -> dict:
+    out = {"_flagged": False, "stamped_storage_key": None, "distance_to_site_m": None,
+           "exif_lat": None, "exif_lon": None}
+    if meta.kind not in GEOTAGGED_KINDS or not meta.located:
+        return out
+    lat, lon = float(meta.latitude), float(meta.longitude)
+    site_lat, site_lon = _case_point(db, row.case_id)
+    if site_lat is not None and site_lon is not None:
+        out["distance_to_site_m"] = round(haversine_m(lat, lon, site_lat, site_lon), 1)
+
+    original = _resolve_stored(storage_path)
+    try:
+        exif_lat, exif_lon = exif_gps(original)
+    except Exception:
+        log.info("evidence %s is not a decodable image; EXIF and stamp skipped", key)
+        return out
+    out["exif_lat"], out["exif_lon"] = exif_lat, exif_lon
+    out["_flagged"] = (
+        exif_lat is None or exif_lon is None
+        or haversine_m(lat, lon, exif_lat, exif_lon) > settings.icms_exif_mismatch_m
+    )
+
+    stamped_key = f"{row.case_ref}/{sha256}-{key}.stamped.jpg"
+    facts = StampFacts(
+        case_ref=row.case_ref, inspection_ref=row.inspection_ref,
+        latitude=lat, longitude=lon,
+        accuracy_m=None if meta.accuracy_m is None else float(meta.accuracy_m),
+        device_timestamp=meta.device_timestamp, received_at=_now(),
+        distance_to_site_m=out["distance_to_site_m"],
+    )
+    try:
+        out["stamped_storage_key"] = write_stamped(original, stamped_key, facts)
+    except Exception:
+        log.warning("could not stamp evidence %s; the original stands alone", key,
+                    exc_info=True)
+    return out
 
 
 def add_evidence(
@@ -963,6 +1036,9 @@ def add_evidence(
     flagged = _is_flagged(meta.latitude, meta.longitude, meta.accuracy_m)
 
     result, storage_path, created = _store(db, row.case_ref, meta.kind, upload)
+    checks = _photo_checks(db, row, meta, storage_path, result.sha256, key)
+    flagged = checks.pop("_flagged") or flagged
+    stamped = checks["stamped_storage_key"]
 
     try:
         move_case(db, row.case_id, row.case_status, round_no=row.round_no)
@@ -992,6 +1068,8 @@ def add_evidence(
                 captured_at=meta.device_timestamp,
                 uploaded_by=actor,
                 idempotency_key=key,
+                geotag_flagged=flagged,
+                **checks,
             )
             .returning(Evidence.id)
         ).scalar_one()
@@ -1012,6 +1090,7 @@ def add_evidence(
     except IntegrityError:
         db.rollback()
         _discard_stored(db, storage_path, created)
+        _discard_stamped(stamped)
         replayed = _replayed_evidence(db, key, row)
         if replayed is not None:
             log.info("evidence %s raced its own replay on %s", key, inspection_ref)
@@ -1020,15 +1099,108 @@ def add_evidence(
     except Exception:
         db.rollback()
         _discard_stored(db, storage_path, created)
+        _discard_stamped(stamped)
         raise
 
     return {"evidence": _one_evidence(db, evidence_id), "replayed": False}
 
 
 # Stage 4 — findings ----------------------------------------------------------
+# The round's stored answers, keyed by column name.
+def _stored_answers(db: Session, inspection_id: int) -> dict:
+    row = db.execute(
+        select(*(getattr(Inspection, name) for name in OBSERVED_COLUMNS),
+               Inspection.findings_source)
+        .where(Inspection.id == inspection_id)
+    ).one()
+    return dict(row._mapping)
+
+
+# A newly written code must be active in its domain; the round's own legacy code may stay.
+def _refuse_unknown_code(
+    db: Session, carried: dict, stored: dict, column: str, domain: str
+) -> None:
+    code = carried.get(column)
+    if code is None or code == stored.get(column):
+        return
+    active = db.execute(
+        select(CodeValue.code)
+        .where(CodeValue.domain == domain, CodeValue.active.is_(True))
+        .order_by(CodeValue.sort_order, CodeValue.code)
+    ).scalars().all()
+    if code not in active:
+        raise ApiError(
+            422, "validation_failed",
+            f"{code!r} is not an active {domain} code value",
+            field=column, allowed=active,
+        )
+
+
+# Each newly cited (act, section) must be an active section under an active act; the round's own pairs may stay.
+def _refuse_unknown_sections(
+    db: Session, inspection_id: int, sections: list | None
+) -> None:
+    if not sections:
+        return
+    held = set(_sections_of(db, inspection_id))
+    wanted = {(s.act_cd, s.section_cd) for s in sections} - held
+    if not wanted:
+        return
+    acts = set(db.execute(
+        select(CodeValue.code)
+        .where(CodeValue.domain == "act", CodeValue.active.is_(True))
+    ).scalars().all())
+    active = db.execute(
+        select(CodeValue.parent_code, CodeValue.code)
+        .where(CodeValue.domain == "section", CodeValue.active.is_(True))
+        .order_by(CodeValue.parent_code, CodeValue.sort_order, CodeValue.code)
+    ).all()
+    known = {(act, code) for act, code in active if act in acts}
+    for act_cd, section_cd in sorted(wanted):
+        if (act_cd, section_cd) not in known:
+            raise ApiError(
+                422, "validation_failed",
+                f"{section_cd!r} is not an active section of act {act_cd!r}",
+                field="sections",
+                allowed=[code for act, code in active if act == act_cd] or sorted(acts),
+            )
+
+
+def _sections_of(db: Session, inspection_id: int) -> list[tuple[str, str]]:
+    return [
+        (act_cd, section_cd)
+        for act_cd, section_cd in db.execute(
+            select(InspectionSection.act_cd, InspectionSection.section_cd)
+            .where(InspectionSection.inspection_id == inspection_id)
+        ).all()
+    ]
+
+
+def _refuse_inconsistent(values: dict) -> None:
+    problems = inconsistencies(values)
+    if problems:
+        first = problems[0]
+        raise ApiError(422, "validation_failed", first.message,
+                       field=first.field, allowed=first.allowed)
+
+
+# length × width when no area was sent and none is stored, or the stored one was itself derived.
+def _derive_area(observed: dict, stored: dict) -> dict:
+    if observed.get("measured_area_sqm") is not None:
+        return observed
+    held = stored.get("measured_area_sqm")
+    if held is not None and "measured_area_sqm" not in observed and (
+            side_area(stored) is None or float(held) != side_area(stored)):
+        return observed
+    area = side_area({**stored, **observed})
+    if area is None or area <= 0:
+        return observed
+    return {**observed, "measured_area_sqm": area}
+
+
 def record_findings(
     db: Session, inspection_ref: str, body: FindingsPut, scope: ZoneScope,
-    *, actor: str, roles,
+    *, actor: str, roles, source: str,
 ) -> bool:
     """Replaces the round's findings; the sections only when the form carried them."""
     row = _locate(db, inspection_ref, scope)
@@ -1041,6 +1213,15 @@ def record_findings(
         payload={"findings": body.findings},
     )
     _refuse_unless_current(row)
+
+    stored = _stored_answers(db, row.inspection_id)
+    observed = _derive_area(derive(body.observations()), stored)
+    _refuse_unknown_code(db, observed, stored, "area_type_cd", "area_type")
+    _refuse_unknown_code(db, observed, stored, "property_type_cd", "property_type")
+    _refuse_unknown_code(db, observed, stored, "construction_stage_cd", "construction_stage")
+    _refuse_unknown_code(db, observed, stored, "notice_act_cd", "act")
+    _refuse_unknown_sections(db, row.inspection_id, body.sections)
+    _refuse_inconsistent({**stored, **observed})
 
     try:
         move_case(db, row.case_id, row.case_status, {
@@ -1077,7 +1258,7 @@ def record_findings(
 
         db.execute(
             update(Inspection).where(Inspection.id == row.inspection_id)
-            .values(**body.observations(), **_in_progress(row))
+            .values(**observed, findings_source=source, **_in_progress(row))
         )
         _event(
             db, case_id=row.case_id, inspection_id=row.inspection_id,
@@ -1085,7 +1266,7 @@ def record_findings(
             from_status=row.case_status, to_status=str(transition.target),
             round_no=row.round_no,
             payload={"findings": len(body.findings),
-                     "fields": sorted(body.observations())},
+                     "fields": sorted(observed), "source": source},
         )
         db.commit()
     except Exception:
@@ -1108,6 +1289,31 @@ def _refuse_too_few_photos(db: Session, inspection_id: int) -> None:
             f"submitted round must carry at least {floor}; upload the rest before "
             "submitting",
             field="evidence",
+        )
+
+
+# R1-R6 on what the round holds; `missing_payload` lists every field still owed.
+def _refuse_unanswered(db: Session, inspection_id: int) -> None:
+    if not settings.icms_require_inspection_answers:
+        return
+    stored = _stored_answers(db, inspection_id)
+    _refuse_inconsistent(stored)
+    findings = db.execute(
+        select(func.count()).select_from(InspectionFinding)
+        .where(InspectionFinding.inspection_id == inspection_id)
+    ).scalar_one()
+    check_ins = db.execute(
+        select(func.count()).select_from(CheckIn)
+        .where(CheckIn.inspection_id == inspection_id)
+    ).scalar_one()
+    missing = missing_for_submit(stored, findings=findings, check_ins=check_ins,
+                                 sections=_sections_of(db, inspection_id),
+                                 origin=stored.get("findings_source"))
+    if missing:
+        raise ApiError(
+            422, "missing_payload",
+            f"the round cannot be submitted until it carries: {', '.join(missing)}",
+            field=missing[0], allowed=missing,
         )
 
 
@@ -1158,6 +1364,7 @@ def submit(
         # submitted is answered with itself whatever the count rule says today.
         _lock_round(db, row.inspection_id)
         _refuse_too_few_photos(db, row.inspection_id)
+        _refuse_unanswered(db, row.inspection_id)
         db.execute(
             update(Inspection).where(Inspection.id == row.inspection_id)
             .values(status=SUBMITTED, submitted_at=_now(), updated_at=_now())
@@ -1328,10 +1535,7 @@ def _refuse_unless_may_open_round(status: str, roles) -> None:
         (t for t in wf.transitions_for(status) if t.action == wf.Action.OPEN_ROUND), None)
     if transition is None:
         raise wf.UnknownTransition(wf.Status(status), wf.Action.OPEN_ROUND)
-    held = frozenset(str(role) for role in roles)
-    if not frozenset(str(role) for role in transition.roles) & held:
-        raise wf.RoleNotPermitted(
-            wf.Action.OPEN_ROUND, held, (str(role) for role in transition.roles))
+    wf.require_permission(wf.Action.OPEN_ROUND, transition.permission, roles)
 
 
 def decide_resurvey(

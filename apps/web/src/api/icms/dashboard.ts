@@ -51,8 +51,11 @@ export type TrendQuery = Required<
   NonNullable<operations["dashboard_trend_api_icms_dashboard_trend_get"]["parameters"]["query"]>
 >;
 
-/** The one code gating all four reads. Read from capabilities, enforced server-side. */
+/** The screen gate, and the one code gating all four reads. Enforced server-side. */
+export const DASHBOARD_ACCESS = "dashboard.access";
 export const DASHBOARD_READ = "dashboard.read";
+/** The Reports screen is built on the dashboard aggregates, so its gate sits here. */
+export const REPORTS_ACCESS = "reports.access";
 
 /** `TrendQuery.days` in `dashboard_schemas.py`. Outside it the request is a 422. */
 export const MIN_TREND_DAYS = 1;

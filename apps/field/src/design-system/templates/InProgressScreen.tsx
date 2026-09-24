@@ -5,10 +5,10 @@
  */
 
 import { StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { useT } from '@/services/i18n';
 
 import { Icon, Text } from '../atoms';
-import { IN_PROGRESS_LINE } from '../molecules/InProgressBlock';
 import { colors, space, type LayoutStyle } from '../tokens';
 import { ScreenHeader } from './ScreenHeader';
 
@@ -22,21 +22,23 @@ export type InProgressScreenProps = {
 
 // Header, then the one line, centred in the remaining space.
 export function InProgressScreen({ title, onBack, testID, style }: InProgressScreenProps) {
+  const t = useT();
+  const line = t('common.inProgress');
   return (
-    <SafeAreaView edges={['top']} style={[styles.screen, style]} testID={testID}>
+    <View style={[styles.screen, style]} testID={testID}>
       <ScreenHeader title={title} onBack={onBack} />
-      <View style={styles.body} accessible accessibilityLabel={`${title}. ${IN_PROGRESS_LINE}`}>
-        <Icon name="clock" size="xl" color="ink3" />
-        <Text variant="body" color="ink2" align="center">
-          {IN_PROGRESS_LINE}
+      <View style={styles.body} accessible accessibilityLabel={`${title}. ${line}`}>
+        <Icon name="clock" size="xl" color="figBeige" />
+        <Text variant="figBodyLg" color="figChevron" align="center">
+          {line}
         </Text>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.surface0 },
+  screen: { flex: 1, backgroundColor: colors.figScreen },
   body: {
     flex: 1,
     alignItems: 'center',

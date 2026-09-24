@@ -11,6 +11,7 @@ from ada_core.models_icms import (
     CodeValue,
     Evidence,
     Inspection,
+    PolicyRole,
     Zone,
     ZoneAssignment,
 )
@@ -20,31 +21,43 @@ from sqlalchemy.orm import Session
 
 from ..clients.keycloak import KeycloakAdmin
 from ..errors import ApiError
+from . import policy
 from . import workflow as wf
+from .actors import display_name
 from .case_schemas import (
+    AssigneeCandidate,
+    AssigneeOptions,
+    AssigneeRole,
     CaseAmend,
     CaseAssign,
+    CaseClose,
     CaseConfirm,
     CaseCreate,
     CaseHandover,
     CaseQuery,
+    CaseReject,
+    today_ist,
 )
 from .collection import PageResult, Sortable, paginate, row_dict, search_clause
 from .geo import as_geojson_column, parse_geojson, point_value, zone_containing
 from .numbering import IST, Series, allocate
-from .security import ZoneScope
+from .security import ZoneScope, icms_roles
 
 __all__ = [
     "CASE_SORTS",
     "amend_case",
+    "assignee_options",
     "assign_case",
     "case_detail",
+    "close_case",
     "confirm_case",
     "current_assignee",
     "hand_over_case",
+    "locate_case",
     "move_case",
     "raise_case",
     "register",
+    "reject_case",
 ]
 
 
@@ -137,6 +150,7 @@ _ROW_COLUMNS = (
     Case.source,
     CaseAssignment.assignee_user_id.label("assignee_user_id"),
     Case.raised_at,
+    Case.complaint_date,
 )
 
 
@@ -220,6 +234,21 @@ def register(
     return paginate(db, statement, params, CASE_SORTS)
 
 
+# The detail route's visibility rule for one case, without the detail's joins.
+def locate_case(
+    db: Session, case_ref: str, scope: ZoneScope, *, roles, user_id: str,
+    own_only: bool = True,
+):
+    statement = (
+        select(Case.id, Case.case_ref, Case.status, Case.zone_id, Case.source)
+        .outerjoin(CaseAssignment, _OPEN_SURVEY)
+        .where(Case.case_ref == case_ref)
+    )
+    if own_only and _own_cases_only(roles):
+        statement = statement.where(CaseAssignment.assignee_user_id == user_id)
+    return db.execute(scope.apply(statement, Case.zone_id)).first()
+
+
 # `own_only=False` is the creator reading back their own write, and nothing else.
 def case_detail(
     db: Session, case_ref: str, scope: ZoneScope, *, roles, user_id: str,
@@ -245,6 +274,9 @@ def case_detail(
             Case.district_lgd_code,
             Case.idempotency_key,
             Case.closed_at,
+            Case.closed_by,
+            Case.outcome_cd,
+            Case.outcome_reason,
             Case.created_by,
             Case.updated_at,
             as_geojson_column(db, Case.location).label("location"),
@@ -284,11 +316,17 @@ def case_detail(
                 Inspection.inspection_ref, Inspection.round_no,
                 Inspection.surveyor_user_id, Inspection.status,
                 Inspection.submitted_at, Inspection.measured_area_sqm,
+                Inspection.occupant_name, Inspection.occupant_phone,
+                Inspection.property_type_cd, Inspection.floor_count,
+                Inspection.police_station,
             )
             .where(Inspection.case_id == case_id)
             .order_by(Inspection.round_no)
         ).all()
     ]
+
+    data["outcome_label"], data["outcome_label_hi"] = outcome_labels(
+        db, data["status"], data["outcome_cd"])
 
     data["evidence_count"] = int(
         db.execute(
@@ -404,6 +442,7 @@ def raise_case(
             "stage_no": transition.stage_no,
             "created_by": actor,
             "idempotency_key": key,
+            "complaint_date": body.complaint_date or today_ist(),
         }
         for field in (
             "complaint_type_cd", "other_type", "detail",
@@ -510,7 +549,58 @@ def _assignable(db: Session, zone_id: int, user_id: str) -> bool:
     ).scalar_one_or_none() is not None
 
 
-# The realm is the only record of who holds field-surveyor; docs carry the rest.
+# The permission the first assignee-only step needs; whoever holds it may be assigned.
+SURVEYOR_PERMISSION = "inspection.check_in"
+
+
+# Roles from the loaded policy, users from Keycloak, narrowed to the case's zone.
+def assignee_options(
+    db: Session, case_ref: str, scope: ZoneScope, admin: KeycloakAdmin | None,
+) -> AssigneeOptions | None:
+    row = db.execute(
+        scope.apply(select(Case.zone_id).where(Case.case_ref == case_ref), Case.zone_id)
+    ).first()
+    if row is None:
+        return None
+    if admin is None:
+        raise ApiError(503, "officer_directory_unavailable",
+                       "the officer directory is not configured, so no officer can be listed")
+
+    eligible = policy.snapshot().roles_holding({SURVEYOR_PERMISSION}) & icms_roles()
+    # A role with no `icms_role` row (an unmigrated database) keeps its code as label.
+    rows = {r.role_cd: r for r in db.execute(
+        select(PolicyRole).where(PolicyRole.role_cd.in_(eligible))
+    ).scalars()}
+    roles = [
+        AssigneeRole(role_cd=code, label=rows[code].label, label_hi=rows[code].label_hi)
+        if code in rows else AssigneeRole(role_cd=code, label=code)
+        for code in sorted(eligible, key=lambda c: (rows[c].sort_order if c in rows else 0, c))
+        if code not in rows or rows[code].active
+    ]
+
+    in_zone = set(db.execute(
+        select(ZoneAssignment.user_id).where(
+            ZoneAssignment.zone_id == row.zone_id, ZoneAssignment.active.is_(True))
+    ).scalars())
+
+    found: dict[str, AssigneeCandidate] = {}
+    for role in roles:
+        for member in admin.role_members(role.role_cd):
+            user_id = str(member.get("id") or "")
+            if not user_id or user_id not in in_zone or member.get("enabled") is False:
+                continue
+            if user_id in found:
+                found[user_id].role_cds.append(role.role_cd)
+                continue
+            found[user_id] = AssigneeCandidate(
+                user_id=user_id, name=display_name(member),
+                username=member.get("username"), role_cds=[role.role_cd],
+            )
+    candidates = sorted(found.values(), key=lambda c: (c.name or c.username or c.user_id).lower())
+    return AssigneeOptions(roles=roles, candidates=candidates)
+
+
+# A surveyor is whoever the realm roles make hold inspection.check_in.
 def _refuse_unless_surveyor(admin: KeycloakAdmin | None, user_id: str) -> None:
     if admin is None:
         return
@@ -519,7 +609,7 @@ def _refuse_unless_surveyor(admin: KeycloakAdmin | None, user_id: str) -> None:
     except ApiError:
         log.warning("the officer directory is unreachable; assignee %s unchecked", user_id)
         return
-    if str(wf.Role.FIELD_SURVEYOR) not in held:
+    if SURVEYOR_PERMISSION not in policy.snapshot().permitted(held):
         raise ApiError(
             422,
             "assignee_not_a_surveyor",
@@ -532,7 +622,7 @@ def _refuse_unless_surveyor(admin: KeycloakAdmin | None, user_id: str) -> None:
 def assign_case(
     db: Session, case_ref: str, body: CaseAssign, scope: ZoneScope,
     *, actor: str, roles, admin: KeycloakAdmin | None = None,
-) -> bool:
+) -> int | None:
     row = db.execute(
         scope.apply(
             select(Case.id, Case.status, Case.zone_id).where(Case.case_ref == case_ref),
@@ -540,7 +630,7 @@ def assign_case(
         )
     ).first()
     if row is None:
-        return False
+        return None
 
     candidates = {
         t.action for t in wf.transitions_for(row.status)
@@ -579,7 +669,7 @@ def assign_case(
             )
             .values(active=False, released_at=_now())
         )
-        db.execute(
+        assignment_id = db.execute(
             insert(CaseAssignment).values(
                 case_id=row.id,
                 assignee_user_id=body.assignee_user_id,
@@ -587,8 +677,8 @@ def assign_case(
                 assignment_type="survey",
                 note=body.note,
                 active=True,
-            )
-        )
+            ).returning(CaseAssignment.id)
+        ).scalar_one()
         _event(
             db, case_id=row.id, action=str(action), actor=actor, roles=roles,
             from_status=row.status, to_status=str(transition.target),
@@ -599,7 +689,7 @@ def assign_case(
     except Exception:
         db.rollback()
         raise
-    return True
+    return assignment_id
 
 
 # Stages 6 and 7: the status, the stage and the roles all come off the transition.
@@ -645,6 +735,101 @@ def confirm_case(
 ) -> bool:
     return _advance(
         db, case_ref, wf.Action.CONFIRM, scope, actor=actor, roles=roles, note=body.note)
+
+
+_OUTCOME_DOMAIN = {
+    str(wf.Status.REJECTED): "case_reject_reason",
+    str(wf.Status.CLOSED): "case_close_outcome",
+}
+
+
+# The en and hi labels of a terminal case's outcome code; the code itself when unseeded.
+def outcome_labels(db: Session, status: str, code: str | None) -> tuple[str | None, str | None]:
+    domain = _OUTCOME_DOMAIN.get(str(status))
+    if code is None or domain is None:
+        return None, None
+    row = db.execute(
+        select(CodeValue.label, CodeValue.label_hi)
+        .where(CodeValue.domain == domain, CodeValue.code == code)
+    ).first()
+    if row is None:
+        return code, code
+    return row.label, row.label_hi or row.label
+
+
+def _replayed_ending(db: Session, case_id: int, action: wf.Action, key: str | None) -> bool:
+    if key is None:
+        return False
+    payload = db.execute(
+        select(CaseEvent.payload)
+        .where(CaseEvent.case_id == case_id, CaseEvent.action == str(action))
+        .order_by(CaseEvent.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    return isinstance(payload, dict) and payload.get("idempotency_key") == key
+
+
+# Reject (stages 1-2) and close (stage 7): terminal, stamps the outcome, releases every assignment.
+def _end_case(
+    db: Session, case_ref: str, action: wf.Action, scope: ZoneScope, *,
+    outcome_cd: str, remarks: str | None, key: str | None, actor: str, roles,
+) -> dict | None:
+    found = _case_for_update(db, case_ref, scope)
+    if found is None:
+        return None
+    case_id, status = found
+    if _replayed_ending(db, case_id, action, key):
+        return {"replayed": True, "released_assignee": None}
+
+    transition = wf.check(status, action, roles, payload={"reason": outcome_cd})
+    released = current_assignee(db, case_id)
+    now = _now()
+    try:
+        move_case(db, case_id, status, {
+            "status": str(transition.target),
+            "stage_no": transition.stage_no,
+            "outcome_cd": outcome_cd,
+            "outcome_reason": remarks,
+            "closed_by": actor,
+            "closed_at": now,
+            "updated_at": now,
+        })
+        # A terminal case is nobody's work: it leaves every worklist that reads the open row.
+        db.execute(
+            update(CaseAssignment)
+            .where(CaseAssignment.case_id == case_id, CaseAssignment.active.is_(True))
+            .values(active=False, released_at=now)
+        )
+        _event(
+            db, case_id=case_id, action=str(action), actor=actor, roles=roles,
+            from_status=status, to_status=str(transition.target), note=remarks,
+            payload={"outcome_cd": outcome_cd, "idempotency_key": key,
+                     "released_assignee": released},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"replayed": False, "released_assignee": released}
+
+
+def reject_case(
+    db: Session, case_ref: str, body: CaseReject, scope: ZoneScope, *, actor: str, roles
+) -> dict | None:
+    return _end_case(
+        db, case_ref, wf.Action.REJECT, scope, outcome_cd=body.reason_cd,
+        remarks=body.remarks,
+        key=str(body.idempotency_key) if body.idempotency_key else None,
+        actor=actor, roles=roles)
+
+
+def close_case(
+    db: Session, case_ref: str, body: CaseClose, scope: ZoneScope, *, actor: str, roles
+) -> dict | None:
+    return _end_case(
+        db, case_ref, wf.Action.CLOSE, scope, outcome_cd=body.outcome_cd,
+        remarks=body.remarks,
+        key=str(body.idempotency_key) if body.idempotency_key else None,
+        actor=actor, roles=roles)
 
 
 def rows_to_dicts(result: PageResult) -> list[dict]:

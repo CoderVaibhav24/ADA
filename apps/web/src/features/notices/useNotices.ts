@@ -38,6 +38,8 @@ import { CASE_READ, fetchCase, listCases, type CaseDetail, type CaseRow } from "
 import { IcmsApiError, toSearchParams, type QueryParams } from "@/api/icms/http";
 import {
   ACT_DOMAIN,
+  NOTICES_ACCESS,
+  NOTICE_ISSUE,
   NOTICE_READ,
   SECTION_DOMAIN,
   createNotice,
@@ -199,6 +201,10 @@ export type NoticeGate = {
   loading: boolean;
   /** True only once capabilities have actually answered. Never optimistic. */
   canRead: boolean;
+  /** `notices.access`. The route guard checks it too; exposed for in-screen links. */
+  canAccess: boolean;
+  /** `notice.issue`. Notice Create also needs `issue_notice` in the case's `allowed_actions`. */
+  canIssue: boolean;
   /** `case.read`. Whether the confirmed-case picker on Notice Create may be drawn. */
   canReadCases: boolean;
   /** The signed-in officer, for "Issued by me". */
@@ -225,10 +231,13 @@ export function useNoticeGate(): NoticeGate {
     retry: shouldRetry,
   });
 
+  const permissions = data?.permissions ?? [];
   return {
     loading: isPending,
-    canRead: (data?.permissions ?? []).includes(NOTICE_READ),
-    canReadCases: (data?.permissions ?? []).includes(CASE_READ),
+    canRead: permissions.includes(NOTICE_READ),
+    canAccess: permissions.includes(NOTICES_ACCESS),
+    canIssue: permissions.includes(NOTICE_ISSUE),
+    canReadCases: permissions.includes(CASE_READ),
     userId: data?.user_id ?? null,
     refused:
       error instanceof IcmsApiError && (error.status === 401 || error.status === 403)

@@ -36,7 +36,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/icms/states";
 import { PriorityChip, StatusChip } from "@/components/icms/StatusChip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useFormats } from "@/i18n";
+import { useFormats, useLanguage } from "@/i18n";
 import {
   useCaseStatusLabels,
   useComplaintsLabels,
@@ -45,13 +45,15 @@ import {
 } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
+import { ActorName } from "@/components/icms/ActorName";
 import { CASE_STATUS_META, toCaseStatus, toPriority } from "./caseStatus";
-import { ComplaintDetailActions } from "./ComplaintDetailActions";
+import { ComplaintDetailActionNotes, ComplaintDetailActions } from "./ComplaintDetailActions";
 import { useCase, useCaseGate } from "./ComplaintDetailData";
 import { useComplaintDetailLabels } from "./ComplaintDetailLabels";
 import { evidenceRound, pointOf, telHref } from "./ComplaintDetailModel";
 import { Absent, DetailPanel, Field, Mono } from "./ComplaintDetailParts";
 import { ComplaintDetailRounds } from "./ComplaintDetailRounds";
+import { ComplaintDetailSurvey } from "./ComplaintDetailSurvey";
 import { resolveParcelId } from "./parcelId";
 
 /** Six decimal places is about a tenth of a metre; more is false precision. */
@@ -73,6 +75,7 @@ export default function ComplaintDetail() {
   const priorityLabels = usePriorityLabels();
   const parcelKinds = useParcelKindLabels();
   const { date, dateTime, number } = useFormats();
+  const { language } = useLanguage();
 
   const gate = useCaseGate();
   const complaint = useCase(caseRef, gate.canRead);
@@ -103,26 +106,25 @@ export default function ComplaintDetail() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {labels.gate.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{labels.gate.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{labels.gate.deniedBody}</p>
       </section>
     );
   }
 
-  const back = (
-    <div className="flex justify-end">
-      <Button
-        variant="outline"
-        size="sm"
-        className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
-        onClick={() => {
-          void navigate(ROUTES.complaints);
-        }}
-      >
-        <Icon name="action.back" className="size-4" />
-        {labels.back}
-      </Button>
-    </div>
+  const backButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
+      onClick={() => {
+        void navigate(ROUTES.complaints);
+      }}
+    >
+      <Icon name="action.back" className="size-4" />
+      {labels.back}
+    </Button>
   );
+  const back = <div className="flex justify-end">{backButton}</div>;
 
   if (complaint.isPending) {
     return (
@@ -187,8 +189,6 @@ export default function ComplaintDetail() {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
-      {back}
-
       {/* ---- title, state, and what may be done to it -------------------- */}
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
@@ -211,9 +211,13 @@ export default function ComplaintDetail() {
           <p className="mt-1 text-sm text-fg-muted text-pretty">
             {labels.subtitle(detail.zone_name || detail.zone_cd)}
           </p>
+          <ComplaintDetailActionNotes detail={detail} labels={labels} />
         </div>
 
-        <ComplaintDetailActions detail={detail} gate={gate} labels={labels} />
+        <div className="flex flex-wrap items-start justify-end gap-2">
+          <ComplaintDetailActions detail={detail} gate={gate} labels={labels} />
+          {backButton}
+        </div>
       </header>
 
       {/* ---- the case, at a glance --------------------------------------- */}
@@ -240,7 +244,11 @@ export default function ComplaintDetail() {
           </Field>
 
           <Field label={labels.fields.created_by}>
-            {detail.created_by ? <Mono>{detail.created_by}</Mono> : absent}
+            {detail.created_by ? (
+              <ActorName name={detail.created_by_name} id={detail.created_by} />
+            ) : (
+              absent
+            )}
           </Field>
 
           <Field label={labels.fields.updated_at}>
@@ -258,6 +266,26 @@ export default function ComplaintDetail() {
               <time dateTime={detail.closed_at} className="tabular">
                 {dateTime(detail.closed_at)}
               </time>
+            </Field>
+          )}
+
+          {detail.closed_by && (
+            <Field label={labels.fields.closed_by}>
+              <ActorName name={detail.closed_by_name} id={detail.closed_by} />
+            </Field>
+          )}
+
+          {/* Why it was rejected, or how it was closed: the server's label, in this language. */}
+          {detail.outcome_cd && (
+            <Field label={labels.fields.outcome_cd}>
+              {(language === "hi-IN" ? detail.outcome_label_hi : detail.outcome_label) ??
+                detail.outcome_cd}
+            </Field>
+          )}
+
+          {detail.outcome_reason && (
+            <Field label={labels.fields.outcome_reason} wide>
+              <span className="text-pretty">{detail.outcome_reason}</span>
             </Field>
           )}
 
@@ -379,7 +407,11 @@ export default function ComplaintDetail() {
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
                 <Field label={labels.rounds.columns.surveyor}>
                   <span className="flex flex-wrap items-center gap-2">
-                    <Mono className="text-fg-strong">{assignment.assignee_user_id}</Mono>
+                    <ActorName
+                      className="text-fg-strong"
+                      name={assignment.assignee_name}
+                      id={assignment.assignee_user_id}
+                    />
                     {/* Their own case, said in words rather than by a tint. */}
                     {gate.userId === assignment.assignee_user_id && (
                       <Badge variant="secondary" className="text-2xs">
@@ -396,7 +428,7 @@ export default function ComplaintDetail() {
                 </Field>
 
                 <Field label={labels.fields.created_by}>
-                  <Mono>{assignment.assigned_by}</Mono>
+                  <ActorName name={assignment.assigned_by_name} id={assignment.assigned_by} />
                 </Field>
 
                 {assignment.note && (
@@ -453,6 +485,12 @@ export default function ComplaintDetail() {
               </dl>
             )}
           </DetailPanel>
+
+          <ComplaintDetailSurvey
+            rounds={detail.rounds ?? []}
+            labels={labels}
+            notRecorded={register.notRecorded}
+          />
 
           <DetailPanel title={labels.panels.parcel}>
             {parcel.value === null ? (

@@ -109,10 +109,14 @@ class TestImageryPermissions:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "role_not_permitted"
 
-    @pytest.mark.parametrize("role", ["super-admin", "pcs-nodal-officer", "ada-project-lead"])
-    def test_writers_can_create(self, icms_client, role):
-        response = icms_client.sign_in(role).post("/api/projects", json={"name": "Agra"})
+    def test_writers_can_create(self, icms_client):
+        response = icms_client.sign_in("pcs-nodal-officer").post("/api/projects", json={"name": "Agra"})
         assert response.status_code == 200
+
+    @pytest.mark.parametrize("role", ["super-admin", "ada-project-lead", SURVEYOR])
+    def test_only_the_nodal_officer_writes_imagery(self, icms_client, role):
+        response = icms_client.sign_in(role).post("/api/projects", json={"name": "Agra"})
+        assert response.status_code == 403
 
     @pytest.mark.parametrize("method,path", [
         ("GET", "/api/projects/1/rasters"),
@@ -142,10 +146,11 @@ class TestImageryPermissions:
         from app.icms import policy
 
         grants = policy.DEFAULT_GRANTS
-        for role in ("super-admin", "pcs-nodal-officer", "ada-project-lead"):
-            assert {"imagery.read", "imagery.write"} <= grants[role], role
-        assert "imagery.read" in grants["field-surveyor"]
-        assert "imagery.write" not in grants["field-surveyor"]
+        change_detection = {"change_detection.access", "imagery.write", "imagery.run"}
+        assert change_detection <= grants["pcs-nodal-officer"]
+        for role in ("super-admin", "ada-project-lead", "field-surveyor"):
+            assert "imagery.read" in grants[role], role
+            assert not grants[role] & change_detection, role
         assert not grants["public"] & {"imagery.read", "imagery.write"}
 
 

@@ -22,6 +22,9 @@ const ROUTES = ['@/app/*', '@/app/**', '**/src/app/*', '**/src/app/**'];
 const NAVIGATION = ['expo-router', 'expo-router/*', '@react-navigation/*'];
 const DESIGN_SYSTEM = ['@/design-system', '@/design-system/**', '**/src/design-system/**'];
 
+// The one service the design system may import: words and script, no data, no network (i18n.md).
+const I18N_BARREL = '!@/services/i18n';
+
 const layer = (name) => [
   `@/design-system/${name}`,
   `@/design-system/${name}/**`,
@@ -79,6 +82,7 @@ module.exports = defineConfig([
           ...layer('molecules'),
           ...layer('organisms'),
           ...layer('templates'),
+          I18N_BARREL,
         ],
         message:
           'An atom imports tokens and React Native, nothing else (code-standards.md §3). ' +
@@ -101,6 +105,7 @@ module.exports = defineConfig([
           ...NAVIGATION,
           ...layer('organisms'),
           ...layer('templates'),
+          I18N_BARREL,
         ],
         message:
           'A molecule imports atoms (code-standards.md §3). A molecule that reads the ' +
@@ -128,7 +133,7 @@ module.exports = defineConfig([
     files: ['src/design-system/templates/**/*.{ts,tsx}'],
     rules: restrict([
       {
-        group: [...SERVICES, ...STORE, ...SCREENS, ...ROUTES],
+        group: [...SERVICES, ...STORE, ...SCREENS, ...ROUTES, I18N_BARREL],
         message:
           'A template is a layout shell: header, body, footer. The screen that uses it ' +
           'owns the data and passes it in.',

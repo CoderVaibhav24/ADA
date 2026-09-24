@@ -15,11 +15,11 @@ from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
-from ada_core.models_icms import Permission, PolicyRevision, RolePermission, WorkflowTransition
+from ada_core.models_icms import PolicyRevision, RolePermission, WorkflowTransition
 
 from app.icms import policy
 from app.icms import workflow as wf
-from tests.conftest import policy_seed
+from tests.conftest import _load_revision, policy_seed
 
 SURVEYOR = [wf.Role.FIELD_SURVEYOR]
 NODAL = [wf.Role.PCS_NODAL_OFFICER]
@@ -33,11 +33,13 @@ ASSIGN_PAYLOAD = {"assignee_user_id": "user-b"}
 # --- the seed and the code are one fact stated twice -----------------------
 
 def test_the_seeded_transitions_and_the_code_tuple_agree():
+    """0003's role lists are now what the code grants resolve each permission to."""
     seed = policy_seed()
+    grants = policy.from_code()
     coded = {
         (t.action.value, None if t.source is None else t.source.value): (
             t.target.value, t.stage_no, t.assignee_only, t.opens_round,
-            tuple(t.requires), frozenset(str(r) for r in t.roles),
+            tuple(t.requires), grants.roles_holding({t.permission}),
         )
         for t in wf.TRANSITIONS
     }
@@ -49,6 +51,49 @@ def test_the_seeded_transitions_and_the_code_tuple_agree():
         for row in seed.TRANSITIONS
     }
     assert seeded == coded
+
+
+def test_the_backfilled_permission_is_the_code_tuple_permission():
+    codes = _load_revision("0010_atomic_permissions").TRANSITION_CODES
+    assert {t.action.value: t.permission for t in wf.TRANSITIONS} == codes
+
+
+def test_a_null_permission_falls_back_to_the_code_seed(db, policy_tables):
+    db.execute(sa.update(WorkflowTransition).values(permission_cd=None))
+    db.commit()
+    snapshot = policy.reload(db)
+
+    assert snapshot.source == "database"
+    assert {(t.source, t.action): t.permission for t in snapshot.transitions} == {
+        (t.source, t.action): t.permission for t in wf.TRANSITIONS
+    }
+
+
+def test_a_row_naming_an_unknown_permission_is_dropped(db, policy_tables):
+    row = db.execute(
+        sa.select(WorkflowTransition).where(WorkflowTransition.action_cd == "assign")
+    ).scalar_one()
+    snapshot = policy.snapshot()
+    known = frozenset(snapshot.permissions) - {"case.assign"}
+
+    assert policy._to_transition(row, known) is None
+    assert policy._to_transition(row, snapshot.permissions).permission == "case.assign"
+
+
+def test_moving_a_transition_to_another_permission_moves_who_may_act(db, policy_tables):
+    db.execute(
+        sa.update(WorkflowTransition)
+        .where(WorkflowTransition.action_cd == "assign")
+        .values(permission_cd="case.confirm")
+    )
+    db.commit()
+    policy.reload(db)
+
+    wf.check(wf.Status.RAISED, wf.Action.ASSIGN, LEAD, payload=ASSIGN_PAYLOAD)
+    with pytest.raises(wf.RoleNotPermitted) as exc:
+        wf.check(wf.Status.RAISED, wf.Action.ASSIGN, NODAL, payload=ASSIGN_PAYLOAD)
+    assert exc.value.permission == "case.confirm"
+    assert exc.value.allowed == ("ada-project-lead",)
 
 
 def test_the_seed_order_matches_the_tuple_order():
@@ -81,7 +126,7 @@ def test_an_unseeded_database_answers_from_the_code_seed(db):
 
     assert snapshot.source == "code"
     assert snapshot.transitions == wf.TRANSITIONS
-    assert snapshot.permitted(["super-admin"]) == frozenset(policy.PERMISSIONS)
+    assert snapshot.permitted(["super-admin"]) == policy.DEFAULT_GRANTS["super-admin"]
 
 
 def test_the_snapshot_matches_the_seed(db, policy_tables):
@@ -203,19 +248,18 @@ def test_deactivating_a_row_removes_the_move(db, policy_tables):
         wf.check(wf.Status.RAISED, wf.Action.ASSIGN, NODAL, payload=ASSIGN_PAYLOAD)
 
 
-def test_the_grant_table_governs_amendment_once_the_permission_exists(db, policy_tables):
-    """Until `case.amend` is seeded the code default stands; the moment it is,
-    the grant table decides and the code constant stops being consulted."""
-    assert policy.snapshot().amendable_roles == wf.AMENDABLE_ROLES
+def test_the_grant_table_governs_amendment(db, policy_tables):
+    """The seeded `case.amend` grant is the nodal officer's; move it and the table decides."""
+    assert policy.snapshot().roles_holding({wf.AMEND_PERMISSION}) == {"pcs-nodal-officer"}
 
-    db.add(Permission(permission_cd=policy.AMEND_PERMISSION, resource="case",
-                      action="amend", label="Correct a case", is_system=True))
+    db.execute(sa.delete(RolePermission).where(
+        RolePermission.permission_cd == policy.AMEND_PERMISSION))
     db.add(RolePermission(role_cd="ada-project-lead",
                           permission_cd=policy.AMEND_PERMISSION))
     db.commit()
     policy.reload(db)
 
-    assert policy.snapshot().amendable_roles == frozenset({wf.Role.ADA_PROJECT_LEAD})
+    assert policy.snapshot().roles_holding({wf.AMEND_PERMISSION}) == {"ada-project-lead"}
     wf.check_amendable(wf.Status.RAISED, LEAD)
     with pytest.raises(wf.RoleNotPermitted):
         wf.check_amendable(wf.Status.RAISED, NODAL)

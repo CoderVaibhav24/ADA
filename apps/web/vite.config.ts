@@ -66,6 +66,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/auth-api/, ""),
       },
+      "/notify-api": {
+        target: `http://localhost:${port("ADA_NOTIFY_PORT", 8001)}`,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/notify-api/, ""),
+      },
     },
   },
 });

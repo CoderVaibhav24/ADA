@@ -2,6 +2,7 @@ import { newIdempotencyKey } from '@/services/api/idempotency';
 import { retryCapture } from '@/services/api/uploads';
 import {
   discardCapture,
+  releaseHeldCaptures,
   saveCapture,
   type CaptureRecord,
 } from '@/services/storage/captures';
@@ -23,21 +24,6 @@ export type ShutterFix = {
   readonly accuracyM: number;
 };
 
-/*
- * GPS tags written into the JPEG itself, so the file carries its position even
- * outside this system. Best effort: the platform decides which tags it honours.
- * The authoritative record is the five fields sent beside the file.
- */
-export function gpsExif(fix: ShutterFix): Record<string, string | number> {
-  return {
-    GPSLatitude: Math.abs(fix.latitude),
-    GPSLatitudeRef: fix.latitude >= 0 ? 'N' : 'S',
-    GPSLongitude: Math.abs(fix.longitude),
-    GPSLongitudeRef: fix.longitude >= 0 ? 'E' : 'W',
-    GPSHPositioningError: fix.accuracyM,
-  };
-}
-
 // Records one camera capture with its geo stamp and starts sending it.
 export async function recordPhoto(input: {
   readonly caseRef: string;
@@ -46,6 +32,8 @@ export async function recordPhoto(input: {
   readonly fix: ShutterFix;
   /** The handset clock at the shutter press. */
   readonly pressedAt: Date;
+  /** True while the surveyor may still retake it in the camera; sent on `releasePhotos`. */
+  readonly held?: boolean;
 }): Promise<CaptureRecord> {
   const record = await saveCapture({
     caseRef: input.caseRef,
@@ -61,9 +49,15 @@ export async function recordPhoto(input: {
       captureSource: 'camera',
     },
     idempotencyKey: newIdempotencyKey(),
+    held: input.held === true,
   });
-  void syncRound(input.caseRef);
+  if (input.held !== true) void syncRound(input.caseRef);
   return record;
+}
+
+// Sends every photo the surveyor kept in the camera for this case.
+export function releasePhotos(caseRef: string): void {
+  if (releaseHeldCaptures(caseRef)) void syncRound(caseRef);
 }
 
 // Removes a photograph the server never stored. False when it may have been stored.

@@ -13,7 +13,12 @@
 
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { ComplaintFieldError } from "./complaintForm";
+import {
+  MAX_EVIDENCE_BYTES,
+  MAX_EVIDENCE_FILES,
+  type EvidenceRejection,
+} from "./complaintEvidence";
+import { detectionSentence, type ComplaintFieldError } from "./complaintForm";
 
 export type FieldLabels = {
   label: string;
@@ -37,7 +42,12 @@ export type ComplaintNewLabels = {
     confidence: (value: string) => string;
     status: (status: "change" | "illegal") => string;
     /** Seeds the description with the detection's own numbers, nothing invented. */
-    seedDetail: (ref: string, area: string, confidence: string) => string;
+    seedDetail: (
+      ref: string,
+      status: "change" | "illegal" | null,
+      area: string | null,
+      confidence: string | null,
+    ) => string;
     locked: string;
   };
 
@@ -47,12 +57,33 @@ export type ComplaintNewLabels = {
     option: (value: string) => string;
   };
 
+  /** The two tabs, and the note on the detection tab when there is no hand-off. */
+  mode: {
+    label: string;
+    detection: string;
+    manual: string;
+    noHandoff: string;
+  };
+
+  /** The detection tab's read-only block: who raised it, and from which polygon. */
+  officer: {
+    legend: string;
+    name: string;
+    email: string;
+    source: string;
+    detectionId: string;
+  };
+
   complainant: {
     legend: string;
     hint: string;
     name: FieldLabels;
     phone: FieldLabels;
     email: FieldLabels;
+    /** Under a complainant field filled from the officer's own account. */
+    fromAccount: string;
+    /** Copies the officer's own name and email into the complainant fields. */
+    useMine: string;
   };
 
   location: {
@@ -66,7 +97,67 @@ export type ComplaintNewLabels = {
     readout: (lat: string, lon: string) => string;
     readoutEmpty: string;
     clear: string;
-    mapDeferred: string;
+    /** Beside a field the pin filled in, until the officer edits it. */
+    suggested: string;
+    /** Beside a field the imported land record under the pin filled in. */
+    fromLandRecord: string;
+    /** Beside Parcel ID when the land record filled it with a scheme plot's number. */
+    fromLandRecordPlot: string;
+    /** Under the zone picker when the land record's zone is not one of the officer's. */
+    foreignZone: (zone: string) => string;
+  };
+
+  /** The "Select Location on Map" card. */
+  map: {
+    title: string;
+    /** The map canvas's accessible name, which also says how to use it by keyboard. */
+    canvas: string;
+    pin: string;
+    /** The same button once a pin exists: it moves the pin to the map's centre. */
+    movePin: string;
+    none: string;
+    hint: string;
+    unavailable: string;
+  };
+
+  /** Figma's "Village" and "Parcel ID" row, under the complainant. */
+  parcelRow: {
+    hint: string;
+    village: FieldLabels;
+    parcelId: FieldLabels;
+  };
+
+  more: {
+    title: string;
+    hint: string;
+  };
+
+  complaintDate: FieldLabels;
+
+  evidence: {
+    label: string;
+    hint: string;
+    add: string;
+    addLabel: string;
+    /** The drop zone's own words; the whole zone is the file picker. */
+    drop: string;
+    dropHint: string;
+    remove: (name: string) => string;
+    fromDetection: string;
+    detectionLoading: string;
+    detectionFailed: string;
+    rejected: (reason: EvidenceRejection, name: string) => string;
+    full: string;
+  };
+
+  /** After the case exists, while and after its photos upload. */
+  filed: {
+    title: (ref: string) => string;
+    uploading: (done: number, total: number) => string;
+    failed: (count: number) => string;
+    saved: string;
+    retry: string;
+    open: string;
   };
 
   type: {
@@ -75,22 +166,18 @@ export type ComplaintNewLabels = {
     unavailable: string;
     loading: string;
     clear: string;
+    /** Beside the type when the detection chose it and the officer has not changed it. */
+    suggested: string;
     other: FieldLabels;
   };
 
   property: {
     legend: string;
-    ownerName: FieldLabels;
-    ownerPhone: FieldLabels;
-    propertyType: FieldLabels;
-    floors: FieldLabels;
     address: FieldLabels;
     landmark: FieldLabels;
-    policeStation: FieldLabels;
     district: FieldLabels;
     pinCode: FieldLabels;
     state: FieldLabels;
-    country: FieldLabels;
   };
 
   parcel: {
@@ -167,8 +254,18 @@ export function useComplaintNewLabels(): ComplaintNewLabels {
         area: (value: string) => t("complaintNew.origin.area", { value }),
         confidence: (value: string) => t("complaintNew.origin.confidence", { value }),
         status: (status: "change" | "illegal") => t(`complaintNew.origin.status.${status}`),
-        seedDetail: (ref: string, area: string, confidence: string) =>
-          t("complaintNew.origin.seedDetail", { ref, area, confidence }),
+        seedDetail: (ref, status, area, confidence) =>
+          detectionSentence(
+            t("complaintNew.origin.seed.lead", { ref }),
+            [
+              status === null ? null : t(`complaintNew.origin.seed.status.${status}`),
+              area === null ? null : t("complaintNew.origin.seed.area", { area }),
+              confidence === null
+                ? null
+                : t("complaintNew.origin.seed.confidence", { confidence }),
+            ],
+            t("complaintNew.origin.seed.end"),
+          ),
         locked: t("complaintNew.origin.locked"),
       },
 
@@ -179,12 +276,29 @@ export function useComplaintNewLabels(): ComplaintNewLabels {
           t(`complaintNew.source.option.${value}`, { defaultValue: value }),
       },
 
+      mode: {
+        label: t("complaintNew.mode.label"),
+        detection: t("complaintNew.mode.detection"),
+        manual: t("complaintNew.mode.manual"),
+        noHandoff: t("complaintNew.mode.noHandoff"),
+      },
+
+      officer: {
+        legend: t("complaintNew.officer.legend"),
+        name: t("complaintNew.officer.name"),
+        email: t("complaintNew.officer.email"),
+        source: t("complaintNew.officer.source"),
+        detectionId: t("complaintNew.officer.detectionId"),
+      },
+
       complainant: {
         legend: t("complaintNew.complainant.legend"),
         hint: t("complaintNew.complainant.hint"),
         name: field("complainant.name"),
         phone: field("complainant.phone", { hint: true }),
         email: field("complainant.email"),
+        fromAccount: t("complaintNew.complainant.fromAccount"),
+        useMine: t("complaintNew.complainant.useMine"),
       },
 
       location: {
@@ -199,7 +313,66 @@ export function useComplaintNewLabels(): ComplaintNewLabels {
           t("complaintNew.location.readout", { lat, lon }),
         readoutEmpty: t("complaintNew.location.readoutEmpty"),
         clear: t("complaintNew.location.clear"),
-        mapDeferred: t("complaintNew.location.mapDeferred"),
+        suggested: t("complaintNew.location.suggested"),
+        fromLandRecord: t("complaintNew.location.fromLandRecord"),
+        fromLandRecordPlot: t("complaintNew.location.fromLandRecordPlot"),
+        foreignZone: (zone: string) => t("complaintNew.location.foreignZone", { zone }),
+      },
+
+      map: {
+        title: t("complaintNew.map.title"),
+        canvas: t("complaintNew.map.canvas"),
+        pin: t("complaintNew.map.pin"),
+        movePin: t("complaintNew.map.movePin"),
+        none: t("complaintNew.map.none"),
+        hint: t("complaintNew.map.hint"),
+        unavailable: t("complaintNew.map.unavailable"),
+      },
+
+      parcelRow: {
+        hint: t("complaintNew.parcelRow.hint"),
+        village: field("parcelRow.village", { hint: true }),
+        parcelId: field("parcelRow.parcelId", { hint: true }),
+      },
+
+      more: {
+        title: t("complaintNew.more.title"),
+        hint: t("complaintNew.more.hint"),
+      },
+
+      complaintDate: field("complaintDate", { hint: true }),
+
+      evidence: {
+        label: t("complaintNew.evidence.label"),
+        hint: t("complaintNew.evidence.hint", {
+          mb: MAX_EVIDENCE_BYTES / (1024 * 1024),
+          max: MAX_EVIDENCE_FILES,
+        }),
+        add: t("complaintNew.evidence.add"),
+        addLabel: t("complaintNew.evidence.addLabel"),
+        drop: t("complaintNew.evidence.drop"),
+        dropHint: t("complaintNew.evidence.dropHint"),
+        remove: (name: string) => t("complaintNew.evidence.remove", { name }),
+        fromDetection: t("complaintNew.evidence.fromDetection"),
+        detectionLoading: t("complaintNew.evidence.detectionLoading"),
+        detectionFailed: t("complaintNew.evidence.detectionFailed"),
+        rejected: (reason: EvidenceRejection, name: string) =>
+          t(`complaintNew.evidence.rejected.${reason}`, {
+            name,
+            mb: MAX_EVIDENCE_BYTES / (1024 * 1024),
+            max: MAX_EVIDENCE_FILES,
+          }),
+        full: t("complaintNew.evidence.full", { max: MAX_EVIDENCE_FILES }),
+      },
+
+      filed: {
+        title: (ref: string) => t("complaintNew.filed.title", { ref }),
+        uploading: (done: number, total: number) =>
+          t("complaintNew.filed.uploading", { done, total }),
+        failed: (count: number) => t("complaintNew.filed.failed", { count }),
+        saved: t("complaintNew.filed.saved"),
+        retry: t("complaintNew.filed.retry"),
+        open: t("complaintNew.filed.open"),
       },
 
       type: {
@@ -208,22 +381,17 @@ export function useComplaintNewLabels(): ComplaintNewLabels {
         unavailable: t("complaintNew.type.unavailable"),
         loading: t("complaintNew.type.loading"),
         clear: t("complaintNew.type.clear"),
+        suggested: t("complaintNew.type.suggested"),
         other: field("type.other"),
       },
 
       property: {
         legend: t("complaintNew.property.legend"),
-        ownerName: field("property.ownerName"),
-        ownerPhone: field("property.ownerPhone"),
-        propertyType: field("property.propertyType"),
-        floors: field("property.floors"),
         address: field("property.address"),
         landmark: field("property.landmark"),
-        policeStation: field("property.policeStation"),
         district: field("property.district"),
         pinCode: field("property.pinCode"),
         state: field("property.state"),
-        country: field("property.country"),
       },
 
       parcel: {

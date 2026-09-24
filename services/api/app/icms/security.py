@@ -26,6 +26,7 @@ from .workflow import Role
 
 __all__ = [
     "ICMS_ROLES",
+    "icms_roles",
     "ZoneScope",
     "require_icms_user",
     "require_permission",
@@ -34,14 +35,19 @@ __all__ = [
     "zone_scope",
 ]
 
-# The four roles the realm declares (infra/keycloak/realm-ada.json). Role.PUBLIC
-# is workflow-only — unauthenticated intake — and is deliberately not here.
+# The four roles the realm was seeded with (infra/keycloak/realm-ada.json).
+# `icms_roles()` is what the checks read; this is only the seed it grows from.
 ICMS_ROLES: frozenset[str] = frozenset({
     Role.SUPER_ADMIN,
     Role.PCS_NODAL_OFFICER,
     Role.FIELD_SURVEYOR,
     Role.ADA_PROJECT_LEAD,
 })
+
+
+def icms_roles() -> frozenset[str]:
+    """Every active role in `icms_role`, so a role created from Administration counts."""
+    return (frozenset(policy.snapshot().grants) | ICMS_ROLES) - {str(Role.PUBLIC)}
 
 
 # 403 and not 401: `require_user` answers 401 when the token is unusable, which
@@ -75,7 +81,7 @@ def require_permission(*codes: str):
         current = policy.snapshot()
         if required & current.permitted(user.roles):
             return user
-        allowed = current.roles_holding(required) & ICMS_ROLES
+        allowed = current.roles_holding(required) & icms_roles()
         raise ApiError(
             403,
             "role_not_permitted",
@@ -88,7 +94,17 @@ def require_permission(*codes: str):
 
 # Any officer of the authority. A form that cannot load its dropdowns is a form
 # nobody fills, and this is the gate on the endpoints a transition governs.
-require_icms_user = require_role(*sorted(ICMS_ROLES))
+def require_icms_user(user: Principal = Depends(require_user)) -> Principal:
+    """Admits a caller holding any active ICMS role, created ones included."""
+    allowed = icms_roles()
+    if not (allowed & user.roles):
+        raise ApiError(
+            403,
+            "role_not_permitted",
+            f"this endpoint requires one of: {', '.join(sorted(allowed))}",
+            allowed=allowed,
+        )
+    return user
 
 # Kept for callers that guard on the role itself rather than on a permission.
 require_super_admin = require_role(Role.SUPER_ADMIN)
@@ -150,4 +166,4 @@ def zone_scope(
 
 def held_roles(user: Principal) -> Iterable[str]:
     """The ICMS roles in a token, for an event row's `actor_role`."""
-    return sorted(frozenset(user.roles) & ICMS_ROLES)
+    return sorted(frozenset(user.roles) & icms_roles())

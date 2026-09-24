@@ -617,3 +617,248 @@ class TestTheRoundGallery:
 
     def test_no_token_is_refused(self, anonymous_client, inspection_loop):
         assert anonymous_client.get(EVIDENCE).status_code == 401
+
+
+def gps_jpeg(lat: float | None = None, lon: float | None = None) -> bytes:
+    """A real, decodable JPEG, with an EXIF GPS IFD when a position is given."""
+    import io
+    from fractions import Fraction
+
+    from PIL import Image
+
+    def dms(value: float):
+        value = abs(value)
+        degrees = int(value)
+        minutes = int((value - degrees) * 60)
+        seconds = Fraction((value - degrees - minutes / 60) * 3600).limit_denominator(10000)
+        return (Fraction(degrees), Fraction(minutes), seconds)
+
+    image = Image.new("RGB", (320, 240), (90, 120, 150))
+    exif = Image.Exif()
+    if lat is not None and lon is not None:
+        exif[0x8825] = {
+            1: "N" if lat >= 0 else "S", 2: dms(lat),
+            3: "E" if lon >= 0 else "W", 4: dms(lon),
+        }
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    return buffer.getvalue()
+
+
+def photo(data: bytes) -> dict:
+    return {"file": ("site.jpg", data, "image/jpeg")}
+
+
+def stored_row(db, evidence_id: int):
+    from ada_core.models_icms import Evidence
+    from sqlalchemy import select
+
+    return db.execute(select(Evidence).where(Evidence.id == evidence_id)).scalar_one()
+
+
+class TestLocationStamp:
+    def test_exif_gps_is_read_back(self, tmp_path):
+        from app.icms.evidence_stamp import exif_gps
+
+        path = tmp_path / "gps.jpg"
+        path.write_bytes(gps_jpeg(27.005, 78.005))
+        lat, lon = exif_gps(path)
+
+        assert lat == pytest.approx(27.005, abs=1e-6)
+        assert lon == pytest.approx(78.005, abs=1e-6)
+
+    def test_southern_and_western_references_are_negative(self, tmp_path):
+        from app.icms.evidence_stamp import exif_gps
+
+        path = tmp_path / "sw.jpg"
+        path.write_bytes(gps_jpeg(-33.86, -70.65))
+
+        assert exif_gps(path) == (pytest.approx(-33.86, abs=1e-6),
+                                  pytest.approx(-70.65, abs=1e-6))
+
+    def test_a_matching_exif_fix_is_not_flagged(self, icms_client, inspection_loop, db):
+        response = upload(icms_client.sign_in(SURVEYOR), files=photo(gps_jpeg(27.005, 78.005)))
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["geotag_flagged"] is False
+        assert body["exif_lat"] == pytest.approx(27.005, abs=1e-6)
+        assert stored_row(db, body["id"]).geotag_flagged is False
+
+    def test_a_photo_with_no_exif_gps_is_flagged(self, icms_client, inspection_loop, db):
+        body = upload(icms_client.sign_in(SURVEYOR), files=photo(gps_jpeg())).json()
+
+        assert body["geotag_flagged"] is True
+        assert (body["exif_lat"], body["exif_lon"]) == (None, None)
+        assert stored_row(db, body["id"]).geotag_flagged is True
+
+    def test_exif_more_than_25_m_off_is_flagged(self, icms_client, inspection_loop, db):
+        # 0.0005° of latitude is about 55 m.
+        body = upload(icms_client.sign_in(SURVEYOR),
+                      files=photo(gps_jpeg(27.0055, 78.005))).json()
+
+        assert body["geotag_flagged"] is True
+        assert stored_row(db, body["id"]).geotag_flagged is True
+
+    def test_the_event_carries_the_same_flag(self, icms_client, inspection_loop, events, db):
+        from ada_core.models_icms import Case
+        from sqlalchemy import select
+
+        upload(icms_client.sign_in(SURVEYOR), files=photo(gps_jpeg()))
+        case_id = db.execute(
+            select(Case.id).where(Case.case_ref == "CMP-2026-0006")).scalar_one()
+
+        assert events(case_id)[-1]["payload"]["geotag_flagged"] is True
+
+    def test_a_stamped_copy_is_stored_and_the_original_is_untouched(
+        self, icms_client, inspection_loop, db
+    ):
+        import hashlib
+
+        from app.config import settings
+
+        original = gps_jpeg(27.005, 78.005)
+        client = icms_client.sign_in(SURVEYOR)
+        body = upload(client, files=photo(original)).json()
+        row = stored_row(db, body["id"])
+
+        assert body["sha256"] == hashlib.sha256(original).hexdigest()
+        assert (settings.icms_evidence_dir / row.storage_path).read_bytes() == original
+        stamped = settings.icms_evidence_dir / row.stamped_storage_key
+        assert stamped.is_file()
+        assert stamped.read_bytes() != original
+
+        assert body["stamped_url"] == f"{ICMS}/evidence/{body['id']}/stamped"
+        download = client.get(body["stamped_url"])
+        assert download.status_code == 200
+        assert download.headers["content-type"] == "image/jpeg"
+        assert download.content == stamped.read_bytes()
+
+        import io
+
+        from PIL import Image
+        width, height = Image.open(io.BytesIO(download.content)).size
+        assert width == 320 and height > 240
+
+    def test_an_undecodable_photo_has_no_stamp_and_still_lands(
+        self, icms_client, inspection_loop
+    ):
+        client = icms_client.sign_in(SURVEYOR)
+        body = upload(client).json()
+
+        assert body["stamped_url"] is None
+        missing = client.get(f"{ICMS}/evidence/{body['id']}/stamped")
+        assert missing.status_code == 404
+        assert error_of(missing)["code"] == "evidence_not_stamped"
+
+    def test_a_stamp_failure_never_fails_the_upload(
+        self, icms_client, inspection_loop, monkeypatch
+    ):
+        from app.icms import inspections
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(inspections, "write_stamped", boom)
+        response = upload(icms_client.sign_in(SURVEYOR), files=photo(gps_jpeg(27.005, 78.005)))
+
+        assert response.status_code == 201, response.text
+        assert response.json()["stamped_url"] is None
+
+    def test_distance_to_site_is_measured_from_the_case_point(
+        self, icms_client, inspection_loop, db
+    ):
+        import json
+
+        from ada_core.models_icms import Case
+        from sqlalchemy import update
+
+        db.execute(update(Case).where(Case.case_ref == "CMP-2026-0006").values(
+            location=json.dumps({"type": "Point", "coordinates": [78.005, 27.0055]})))
+        db.commit()
+
+        body = upload(icms_client.sign_in(SURVEYOR),
+                      files=photo(gps_jpeg(27.005, 78.005))).json()
+
+        assert body["distance_to_site_m"] == pytest.approx(55.6, abs=0.5)
+
+    def test_no_case_point_means_no_distance(self, icms_client, inspection_loop):
+        body = upload(icms_client.sign_in(SURVEYOR),
+                      files=photo(gps_jpeg(27.005, 78.005))).json()
+
+        assert body["distance_to_site_m"] is None
+
+
+def sideways_jpeg(fmt: str = "JPEG", lat: float = 27.005, lon: float = 78.005) -> bytes:
+    """An iPhone-style capture: landscape pixels, red left half, Orientation 6, GPS."""
+    import io
+    from fractions import Fraction
+
+    from PIL import Image, ImageDraw
+
+    if fmt == "HEIF":
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    image = Image.new("RGB", (320, 240), (20, 40, 220))
+    ImageDraw.Draw(image).rectangle((0, 0, 159, 239), fill=(220, 20, 20))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    exif[0x8825] = {1: "N", 2: (Fraction(int(lat)), Fraction(0), Fraction(round((lat % 1) * 3600, 4))),
+                    3: "E", 4: (Fraction(int(lon)), Fraction(0), Fraction(round((lon % 1) * 3600, 4)))}
+    buffer = io.BytesIO()
+    image.save(buffer, format=fmt, exif=exif.tobytes())
+    return buffer.getvalue()
+
+
+class TestIphonePhotos:
+    def test_an_orientation_6_photo_is_stamped_upright(self, icms_client, inspection_loop, db):
+        from PIL import Image
+
+        from app.config import settings
+
+        body = upload(icms_client.sign_in(SURVEYOR), files=photo(sideways_jpeg())).json()
+        stamped = Image.open(settings.icms_evidence_dir / stored_row(db, body["id"]).stamped_storage_key)
+
+        width, height = stamped.size
+        assert width == 240 and height > 320
+        # Rotated 90° clockwise: the red left edge is now the top, the bar is below the blue.
+        top, bottom = stamped.getpixel((120, 10)), stamped.getpixel((120, 310))
+        assert top[0] > 150 and top[2] < 100
+        assert bottom[2] > 150 and bottom[0] < 100
+
+    def test_a_heic_photo_is_stored_as_an_upright_jpeg(self, icms_client, inspection_loop, db):
+        import hashlib
+
+        from PIL import Image
+
+        from app.config import settings
+
+        heic = sideways_jpeg("HEIF")
+        assert heic[4:12] == b"ftypheic"
+        response = upload(icms_client.sign_in(SURVEYOR),
+                          files={"file": ("IMG_0001.HEIC", heic, "image/heic")})
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        row = stored_row(db, body["id"])
+        stored = settings.icms_evidence_dir / row.storage_path
+        data = stored.read_bytes()
+        assert data[:3] == b"\xff\xd8\xff"
+        assert row.storage_path.endswith(".jpg")
+        assert row.content_type == "image/jpeg"
+        assert row.original_filename == "IMG_0001.jpg"
+        assert body["sha256"] == hashlib.sha256(data).hexdigest()
+        image = Image.open(stored)
+        assert image.size == (240, 320)
+        assert image.getexif().get(0x0112) == 1
+        assert body["exif_lat"] == pytest.approx(27.005, abs=1e-4)
+        assert body["geotag_flagged"] is False
+        assert body["stamped_url"] is not None
+
+    def test_an_undecodable_heic_is_a_415(self, icms_client, inspection_loop, db):
+        junk = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic" + b"\x00" * 64
+        response = upload(icms_client.sign_in(SURVEYOR),
+                          files={"file": ("IMG_0002.heic", junk, "image/heic")})
+
+        assert response.status_code == 415, response.text
+        assert error_of(response)["code"] == "unsupported_image_format"

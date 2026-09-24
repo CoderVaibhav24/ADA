@@ -353,6 +353,13 @@
             "title": "Created At",
             "type": "string"
           },
+          "data": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Data",
+            "type": "object"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -504,7 +511,7 @@
         ],
         "properties": {
           "channels": {
-            "description": "Where to deliver. One or several — the caller chooses, and there is no default: a call that does not say where a message should go is not finished. Deliverable in this release: email, push.",
+            "description": "Where to deliver. One or several — the caller chooses, and there is no default: a call that does not say where a message should go is not finished. Deliverable in this release: email, inapp, push.",
             "items": {
               "type": "string"
             },
@@ -604,7 +611,7 @@
             "type": "string"
           },
           "channel": {
-            "description": "Deliverable in this release: email, push",
+            "description": "Deliverable in this release: email, inapp, push",
             "title": "Channel",
             "type": "string"
           },
@@ -990,6 +997,25 @@
               ],
               "description": "Filter by project key, e.g. 'ada'",
               "title": "Project"
+            }
+          },
+          {
+            "description": "Render title/body in this locale, e.g. 'hi'",
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Render title/body in this locale, e.g. 'hi'",
+              "title": "Locale"
             }
           }
         ],

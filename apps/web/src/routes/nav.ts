@@ -22,7 +22,7 @@ import { ROUTES } from "./paths.ts";
  *
  * `/administration/users` is a path under `/administration`, so one entry could
  * cover both. They are two anyway, because they are gated on DIFFERENT
- * permissions: `policy.read` and `user.read`. A grouped entry has to be gated
+ * permissions: `administration.access` and `officers.access`. A grouped entry has to be gated
  * on one of them, which either hides Officers from somebody holding `user.read`
  * alone or draws a group whose only child they may not open. Two entries let
  * `navForPermissions` answer each question with the code the server actually
@@ -38,8 +38,8 @@ export type NavId =
   | "notices"
   | "reports"
   | "administration"
-  | "users"
-  | "logout";
+  | "users";
+  // | "logout";
 
 type NavBase = {
   id: NavId;
@@ -47,14 +47,14 @@ type NavBase = {
   /** Figma rules a line above Logout, separating navigation from the session. */
   separatorBefore?: boolean;
   /**
-   * A permission code from `GET /api/icms/me/capabilities`. Absent means every
-   * signed-in officer sees the entry.
+   * The screen's `*.access` code from `GET /api/icms/me/capabilities`. Every
+   * entry has one; `RequirePermission` checks the same code on the route.
    *
    * Advisory, like everything built from capabilities: hiding the entry hides a
    * door, it does not lock one — ada-api refuses the request underneath either
-   * way. The literal mirrors `POLICY_READ` in `@/api/icms/policy`; it is not
-   * imported from there because nav.test.ts runs this module under Node's type
-   * stripping, and that import chain reaches `fetch` and oidc.
+   * way. The literals mirror the `*_ACCESS` constants in `@/api/icms/*`; they are
+   * not imported from there because nav.test.ts runs this module under Node's
+   * type stripping, and that import chain reaches `fetch` and oidc.
    */
   requiresPermission?: string;
 };
@@ -76,55 +76,71 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     id: "dashboard",
     path: ROUTES.dashboard,
     icon: "nav.dashboard",
-    // Mirrors `DASHBOARD_READ` in `@/api/icms/dashboard`, and is a literal here
-    // for the same reason `policy.read` below is: nav.test.ts runs this module
-    // under Node's type stripping, and that import chain reaches `fetch`.
-    //
-    // The seed does NOT grant this to the Field Surveyor, so the entry is
-    // absent for them today rather than leading to a refusal. That is a policy
-    // row an admin can change at runtime, not a fact about the role.
-    requiresPermission: "dashboard.read",
+    requiresPermission: "dashboard.access",
   },
   {
     kind: "link",
     id: "changeDetection",
     path: ROUTES.changeDetection,
     icon: "nav.changeDetection",
+    requiresPermission: "change_detection.access",
   },
   {
     kind: "link",
     id: "complaintNew",
     path: ROUTES.complaintNew,
     icon: "nav.createComplaint",
+    requiresPermission: "complaint_create.access",
   },
-  { kind: "link", id: "complaints", path: ROUTES.complaints, icon: "nav.complaints" },
-  { kind: "link", id: "inspections", path: ROUTES.inspections, icon: "nav.inspection" },
-  { kind: "link", id: "notices", path: ROUTES.notices, icon: "nav.notice" },
-  { kind: "link", id: "reports", path: ROUTES.reports, icon: "nav.report" },
+  {
+    kind: "link",
+    id: "complaints",
+    path: ROUTES.complaints,
+    icon: "nav.complaints",
+    requiresPermission: "complaints.access",
+  },
+  {
+    kind: "link",
+    id: "inspections",
+    path: ROUTES.inspections,
+    icon: "nav.inspection",
+    requiresPermission: "inspections.access",
+  },
+  {
+    kind: "link",
+    id: "notices",
+    path: ROUTES.notices,
+    icon: "nav.notice",
+    requiresPermission: "notices.access",
+  },
+  {
+    kind: "link",
+    id: "reports",
+    path: ROUTES.reports,
+    icon: "nav.report",
+    requiresPermission: "reports.access",
+  },
   {
     kind: "link",
     id: "administration",
     path: ROUTES.administration,
     icon: "user.role",
-    requiresPermission: "policy.read",
+    requiresPermission: "administration.access",
   },
   {
     kind: "link",
     id: "users",
     path: ROUTES.administrationUsers,
     icon: "user.group",
-    // Mirrors `USER_READ` in `@/api/icms/users`, and is a literal here for the
-    // same reason `policy.read` above is: nav.test.ts runs this module under
-    // Node's type stripping, and that import chain reaches `fetch` and oidc.
-    requiresPermission: "user.read",
+    requiresPermission: "officers.access",
   },
-  {
-    kind: "action",
-    id: "logout",
-    action: "logout",
-    icon: "nav.logout",
-    separatorBefore: true,
-  },
+  // {
+  //   kind: "action",
+  //   id: "logout",
+  //   action: "logout",
+  //   icon: "nav.logout",
+  //   separatorBefore: true,
+  // },
 ];
 
 export function isNavLink(item: NavItem): item is NavLink {
@@ -155,9 +171,9 @@ export function activeNavId(pathname: string): NavId | null {
  * roles holding `policy.read` are editable from the Role grants screen, so a
  * rail keyed to `super-admin` would go wrong the first time someone uses it.
  *
- * `permissions` is `GET /me/capabilities` -> `permissions`. An entry with no
- * `requiresPermission` always survives, so passing an empty array (capabilities
- * still loading, or the call refused) hides only the gated entries.
+ * `permissions` is `GET /me/capabilities` -> `permissions`. Every rail entry is
+ * gated, so an empty array (capabilities loading or refused) yields an empty
+ * rail; the layout draws a loading state for the first case.
  */
 export function navForPermissions(
   items: readonly NavItem[],
@@ -168,6 +184,16 @@ export function navForPermissions(
       item.requiresPermission === undefined ||
       permissions.includes(item.requiresPermission),
   );
+}
+
+// Where "/" lands after sign-in: the Dashboard when the officer may open it, else their first rail entry, else null.
+export function homePathFor(permissions: readonly string[]): string | null {
+  const dashboard = PRIMARY_NAV.find((item) => item.id === "dashboard");
+  if (dashboard?.requiresPermission && permissions.includes(dashboard.requiresPermission)) {
+    return ROUTES.dashboard;
+  }
+  const first = navForPermissions(PRIMARY_NAV, permissions).find(isNavLink);
+  return first?.path ?? null;
 }
 
 export function isBleedPath(pathname: string): boolean {

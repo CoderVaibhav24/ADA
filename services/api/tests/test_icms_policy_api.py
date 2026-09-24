@@ -211,7 +211,7 @@ class TestRoleGrants:
         )
 
         assert db.execute(select(PolicyRevision.revision)).scalar_one() == 1
-        assert policy.snapshot().permitted([SUPER_ADMIN]) == frozenset(policy.PERMISSIONS)
+        assert policy.snapshot().permitted([SUPER_ADMIN]) == policy.DEFAULT_GRANTS[SUPER_ADMIN]
 
 
 class TestPermissions:
@@ -254,22 +254,47 @@ class TestTransitions:
 
         assert len(rows) == 18
         assert rows[0]["action_cd"] == "raise"
+        assert rows[2]["permission_cd"] == "case.assign"
         assert sorted(rows[2]["roles"]) == [NODAL]
+        assert SUPER_ADMIN not in {role for row in rows for role in row["roles"]}
 
-    def test_editing_the_roles_changes_who_may_move_a_case(
+    def test_the_roles_are_derived_from_the_grants(self, icms_client, policy_tables):
+        client = icms_client.sign_in(SUPER_ADMIN)
+        client.put(f"{ADMIN}/roles/{LEAD}/permissions", json={"permission_cds": [
+            *policy.snapshot().permitted([LEAD]), "case.assign"]})
+
+        rows = client.get(f"{ADMIN}/transitions").json()
+        assign = next(r for r in rows if r["action_cd"] == "assign")
+        assert sorted(assign["roles"]) == sorted([NODAL, LEAD])
+
+    def test_editing_the_permission_changes_who_may_move_a_case(
         self, icms_client, cases, policy_tables
     ):
         body = {"assignee_user_id": SURVEYOR_B_ID}
         assert icms_client.sign_in(LEAD).post(
             "/api/icms/cases/CMP-2026-0001/assign", json=body).status_code == 403
 
-        icms_client.sign_in(SUPER_ADMIN).patch(
+        response = icms_client.sign_in(SUPER_ADMIN).patch(
+            f"{ADMIN}/transitions/{transition_id(icms_client, 'assign', 'raised')}",
+            json={"permission_cd": "case.confirm"},
+        )
+        assert response.status_code == 200
+        assert response.json()["permission_cd"] == "case.confirm"
+        assert response.json()["roles"] == [LEAD]
+
+        assert icms_client.sign_in(NODAL).post(
+            "/api/icms/cases/CMP-2026-0001/assign", json=body).status_code == 403
+        assert icms_client.sign_in(LEAD).post(
+            "/api/icms/cases/CMP-2026-0001/assign", json=body).status_code == 200
+
+    def test_roles_can_no_longer_be_written_on_a_transition(self, icms_client, policy_tables):
+        response = icms_client.sign_in(SUPER_ADMIN).patch(
             f"{ADMIN}/transitions/{transition_id(icms_client, 'assign', 'raised')}",
             json={"roles": [NODAL, LEAD]},
         )
 
-        assert icms_client.sign_in(LEAD).post(
-            "/api/icms/cases/CMP-2026-0001/assign", json=body).status_code == 200
+        assert response.status_code == 422
+        assert error_of(response)["code"] == "validation_failed"
 
     def test_deactivating_a_row_removes_the_action_from_capabilities(
         self, icms_client, policy_tables
@@ -282,16 +307,19 @@ class TestTransitions:
 
         assert "assign" not in {row["action"] for row in body["actions"]}
 
-    def test_an_unknown_role_is_refused_with_the_legal_ones(
+    def test_an_unknown_permission_is_refused_with_the_legal_ones(
         self, icms_client, policy_tables
     ):
         response = icms_client.sign_in(SUPER_ADMIN).patch(
             f"{ADMIN}/transitions/{transition_id(icms_client, 'assign', 'raised')}",
-            json={"roles": ["mayor"]},
+            json={"permission_cd": "case.teleport"},
         )
 
         assert response.status_code == 422
-        assert error_of(response)["code"] == "unknown_role"
+        error = error_of(response)
+        assert error["code"] == "unknown_permission"
+        assert error["field"] == "permission_cd"
+        assert "case.assign" in error["allowed"]
 
     def test_the_action_and_the_statuses_are_not_editable(self, icms_client, policy_tables):
         """Which roles may act is operational. Which state an action leads to is
@@ -376,3 +404,45 @@ class TestDecisionOrder:
         assert set(holder.json()["allowed_actions"]) == {
             "check_in", "add_evidence", "record_findings", "submit"}
         assert other.status_code == 404
+
+
+class TestCreateRole:
+    def test_a_created_role_is_a_realm_role_with_its_grants(
+        self, icms_client, policy_tables, keycloak
+    ):
+        response = icms_client.sign_in(SUPER_ADMIN).post(f"{ADMIN}/roles", json={
+            "role_cd": "zone-inspector", "label": "Zone Inspector",
+            "permission_cds": ["dashboard.access", "dashboard.read"],
+        })
+        assert response.status_code == 201
+        assert response.json()["permission_cds"] == ["dashboard.access", "dashboard.read"]
+        assert any(r["name"] == "zone-inspector" for r in keycloak.roles)
+        assert policy.snapshot().permitted(["zone-inspector"]) == {
+            "dashboard.access", "dashboard.read",
+        }
+
+    def test_the_new_role_is_assignable_and_admitted(self, icms_client, policy_tables):
+        from app.icms.security import icms_roles
+
+        icms_client.sign_in(SUPER_ADMIN).post(f"{ADMIN}/roles", json={
+            "role_cd": "zone-inspector", "label": "Zone Inspector",
+        })
+        assert "zone-inspector" in icms_roles()
+
+    def test_an_existing_role_is_refused(self, icms_client, policy_tables):
+        response = icms_client.sign_in(SUPER_ADMIN).post(f"{ADMIN}/roles", json={
+            "role_cd": "field-surveyor", "label": "Duplicate",
+        })
+        assert error_of(response)["code"] == "role_exists"
+
+    def test_a_reserved_name_is_refused(self, icms_client, policy_tables):
+        response = icms_client.sign_in(SUPER_ADMIN).post(f"{ADMIN}/roles", json={
+            "role_cd": "public", "label": "Public",
+        })
+        assert error_of(response)["code"] == "role_code_reserved"
+
+    def test_only_policy_managers_create_roles(self, icms_client, policy_tables):
+        response = icms_client.sign_in(NODAL).post(f"{ADMIN}/roles", json={
+            "role_cd": "zone-inspector", "label": "Zone Inspector",
+        })
+        assert response.status_code == 403

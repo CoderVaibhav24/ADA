@@ -61,6 +61,13 @@ def _imagery_checks():
     return require_permission("imagery.read"), require_permission("imagery.write")
 
 
+@cache
+def _imagery_run_check():
+    from .icms.security import require_permission
+
+    return require_permission("imagery.run")
+
+
 def require_imagery(
     request: Request, user: Principal = Depends(require_user),
 ) -> Principal:
@@ -68,3 +75,8 @@ def require_imagery(
     read, write = _imagery_checks()
     check = read if request.method in _READ_METHODS else write
     return check(user)
+
+
+def require_imagery_run(user: Principal = Depends(require_user)) -> Principal:
+    """imagery.run: starting a change-detection analysis."""
+    return _imagery_run_check()(user)

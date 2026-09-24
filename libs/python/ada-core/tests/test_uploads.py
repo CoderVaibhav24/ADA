@@ -36,6 +36,28 @@ def mp4(brand: bytes = b"isom", body: bytes = b"\x00" * 64) -> bytes:
     return box + body
 
 
+def webp(chunk: bytes = b"VP8X", width: int = 800, height: int = 600) -> bytes:
+    if chunk == b"VP8X":
+        payload = (b"\x00" * 4 + (width - 1).to_bytes(3, "little")
+                   + (height - 1).to_bytes(3, "little"))
+    elif chunk == b"VP8L":
+        bits = (width - 1) | ((height - 1) << 14)
+        payload = b"\x2f" + bits.to_bytes(4, "little") + b"\x00"
+    else:
+        payload = (b"\x00" * 3 + b"\x9d\x01\x2a" + width.to_bytes(2, "little")
+                   + height.to_bytes(2, "little"))
+    body = b"WEBP" + chunk + len(payload).to_bytes(4, "little") + payload
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+COMPLAINT_PHOTO = UploadRules(
+    kind="complaint_photo",
+    mime_types=("image/jpeg", "image/png", "image/webp"),
+    extensions=(".jpg", ".jpeg", ".png", ".webp"),
+    max_bytes=15 * 1024 * 1024,
+    max_pixels=40_000_000,
+)
+
 PHOTO = UploadRules(
     kind="photo",
     mime_types=("image/jpeg", "image/png", "image/heic"),
@@ -68,6 +90,7 @@ def check(data: bytes, rules: UploadRules = PHOTO, **kw):
     (mp4(b"qt  "), "video/quicktime"),
     (mp4(b"heic"), "image/heic"),
     (mp4(b"mif1"), "image/heic"),
+    (webp(), "image/webp"),
 ])
 def test_the_format_is_read_off_the_bytes(data, expected):
     assert sniff(data) == expected
@@ -84,6 +107,24 @@ def test_dimensions_come_out_of_the_header():
     assert dimensions("image/png", png(1920, 1080)) == (1920, 1080)
     assert dimensions("image/jpeg", jpeg(4032, 3024)) == (4032, 3024)
     assert dimensions("application/pdf", pdf()) is None
+
+
+@pytest.mark.parametrize("chunk", [b"VP8X", b"VP8L", b"VP8 "])
+def test_webp_dimensions_come_out_of_each_chunk_form(chunk):
+    assert dimensions("image/webp", webp(chunk, 1920, 1080)) == (1920, 1080)
+
+
+def test_a_webp_passes_a_policy_that_admits_it_and_not_the_photo_policy():
+    assert check(webp(), COMPLAINT_PHOTO, filename="a.webp").media_type == "image/webp"
+    assert check(webp(), PHOTO).code == "unsupported_media_type"
+
+
+def test_a_truncated_webp_is_refused():
+    assert check(webp()[:-4], COMPLAINT_PHOTO).code == "corrupt_file"
+
+
+def test_a_webp_above_the_pixel_ceiling_is_refused():
+    assert check(webp(width=10000, height=10000), COMPLAINT_PHOTO).code == "image_too_large"
 
 
 # --- what gets refused -----------------------------------------------------

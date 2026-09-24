@@ -58,7 +58,7 @@ class TestTheShapeOfTheMatrix:
         transitions = [op for op in OPERATIONS
                        if op.path.startswith(f"{ICMS}/cases") and op.method != "GET"]
 
-        assert len(transitions) == 8
+        assert len(transitions) == 11
         for op in transitions:
             assert SUPER_ADMIN not in op.roles, f"{op.id} should not admit Super Admin"
             assert op.send(icms_client, role=SUPER_ADMIN).status_code == 403
@@ -67,7 +67,7 @@ class TestTheShapeOfTheMatrix:
         """The other half of the split: no transitions, but nothing hidden either."""
         body = icms_client.sign_in(SUPER_ADMIN).get(f"{ICMS}/cases").json()
 
-        assert body["total"] == 11, "Super Admin is unrestricted and sees RURAL too"
+        assert body["total"] == 12, "Super Admin is unrestricted and sees RURAL too"
 
     def test_only_super_admin_administers_zones_and_policy(self):
         administration = [
@@ -94,6 +94,8 @@ class TestTheShapeOfTheMatrix:
             f"GET {ICMS}/zones/TAJ",
             f"GET {ICMS}/cases",
             f"GET {ICMS}/cases/CMP-2026-0006",
+            f"GET {ICMS}/cases/CMP-2026-0006/evidence",
+            f"GET {ICMS}/cases/CMP-2026-0006/evidence/2/content",
             f"GET {ICMS}/me/capabilities",
             # Batch 3's reads. `inspection.read` and `evidence.read` are granted
             # to all four roles: a verifier who cannot see the photograph cannot
@@ -102,5 +104,6 @@ class TestTheShapeOfTheMatrix:
             f"GET {ICMS}/inspections/INS-2026-0001",
             f"GET {ICMS}/inspections/INS-2026-0001/evidence",
             f"GET {ICMS}/evidence/1/content",
+            f"GET {ICMS}/evidence/1/stamped",
             f"GET {ICMS}/cases/CMP-2026-0008/resurvey-requests",
         }

@@ -118,6 +118,28 @@ def test_features_come_back_as_a_feature_collection(client, finished_job):
     feature = body["features"][0]
     assert feature["id"] == polygon.id
     assert feature["properties"]["status"] == "illegal"
+    assert feature["properties"]["case_ref"] is None
+    assert feature["properties"]["case_status"] is None
+
+
+def test_a_feature_carries_its_newest_complaint_and_stage(client, finished_job, db):
+    from ada_core.models_icms import Case, Zone
+
+    job, polygon = finished_job
+    zone = Zone(zone_cd="TAJ", name="Taj Ganj")
+    db.add(zone)
+    db.commit()
+    db.add_all([
+        Case(case_ref="CMP-2026-0001", zone_id=zone.id, source="detection",
+             status="rejected", stage_no=1, created_by="officer", detection_id=polygon.id),
+        Case(case_ref="CMP-2026-0002", zone_id=zone.id, source="detection",
+             status="under_inspection", stage_no=3, created_by="officer",
+             detection_id=polygon.id),
+    ])
+    db.commit()
+    props = client.get(f"/api/analyses/{job.id}/features").json()["features"][0]["properties"]
+    assert props["case_ref"] == "CMP-2026-0002"
+    assert props["case_status"] == "under_inspection"
 
 
 @pytest.fixture
@@ -327,3 +349,21 @@ def test_the_geojson_report_is_downloadable(client, finished_job):
     response = client.get(f"/api/analyses/{job.id}/report.geojson")
     assert response.status_code == 200
     assert response.json()["type"] == "FeatureCollection"
+
+
+def test_a_reviewed_feature_names_its_reviewer(client, finished_job, db, keycloak):
+    from app.icms.actors import actor_directory
+    from app.main import app
+
+    from .conftest import SURVEYOR_ID
+
+    job, polygon = finished_job
+    polygon.review_status = "confirmed"
+    polygon.reviewed_by = SURVEYOR_ID
+    db.commit()
+    app.dependency_overrides[actor_directory] = lambda: keycloak
+
+    props = client.get(f"/api/analyses/{job.id}/features").json()["features"][0]["properties"]
+
+    assert props["reviewed_by"] == SURVEYOR_ID
+    assert props["reviewed_by_name"] == "Field Surveyor"

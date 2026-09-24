@@ -377,6 +377,7 @@ class TestTheShapeOfTheTable:
         """The table above restates the policy, so it is checked against it: a
         row admitting a role the transition does not would make this whole file
         agree with the wrong answer."""
+        from app.icms import policy
         from app.icms import workflow as wf
 
         for move in MOVES:
@@ -386,9 +387,9 @@ class TestTheShapeOfTheTable:
                 t for t in wf.transitions_for(wf.Status(move.source))
                 if str(t.action) == move.action
             )
-            assert {str(role) for role in transition.roles} == set(move.allowed), (
-                f"{move.action}: the policy admits "
-                f"{sorted(str(r) for r in transition.roles)}"
+            holders = policy.snapshot().roles_holding({transition.permission})
+            assert holders == set(move.allowed), (
+                f"{move.action}: the policy admits {sorted(holders)}"
             )
 
     def test_the_assignee_only_moves_are_the_ones_the_policy_marks(self):

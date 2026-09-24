@@ -5,20 +5,10 @@ import type { DashboardTrend, TrendPoint } from "@/api/icms/dashboard";
 import { Button } from "@/components/ui/button";
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -30,58 +20,24 @@ import {
 import { useFormats } from "@/i18n";
 import type { DashboardLabels } from "./labels";
 import { Panel } from "./Panel";
-import {
-  PERIODS,
-  axisMax,
-  labelledIndexes,
-  niceTicks,
-  trendTotals,
-  type PeriodId,
-} from "./trendModel";
+import { axisMax, labelledIndexes, niceTicks, trendTotals, type PeriodId } from "./trendModel";
 
-/**
- * `GET /dashboard/trend` — cases raised per IST bucket, and the cohort of those
- * that have since closed.
- *
- * ## The second series is the thing this panel exists to get right
- *
- * `resolved` is not "cases closed on that date". It is: of the cases RAISED in
- * this bucket, how many have since reached `closed` or `rejected`. Four
- * surfaces say so, because a chart is read faster than it is read carefully:
- *
- *   1. the legend names it "Of those, since closed or rejected";
- *   2. the sentence above the plot totals the window in words;
- *   3. the note under the plot states the cohort rule outright;
- *   4. the tooltip spells the whole sentence per bucket, above the two figures.
- *
- * The bare word "resolved" reaches no user-facing string in either language.
- *
- * ## The period control is here, not in a page-level filter row
- *
- * Figma puts three dropdowns in a toolbar above the tiles (`134:2338`). Only
- * this endpoint takes a parameter — summary, by-type and by-zone take none — so
- * a page-level filter row would imply it filtered panels it cannot reach. It
- * sits on the panel it actually governs.
- *
- * ## Nothing is re-bucketed
- *
- * The server returns every bucket in the window, empty ones as zeroes, already
- * floored to IST days / Mondays / month starts. The series is plotted exactly
- * as it arrived; `labelledIndexes` only chooses which of those buckets carry an
- * x-axis label, and the y-axis top tick is the domain top, so no mark and no
- * label falls outside the plot.
- */
+// `GET /dashboard/trend`: cases raised per IST bucket and the cohort of those since closed.
+// The second series is a cohort, not "closed that day"; legend, tooltip and footnote say so.
 
-/* A stable identity for "no points yet". `trend?.points ?? []` would mint a
-   fresh array on every render and defeat every useMemo below it. */
+/* Stable "no points yet", so the memos below do not recompute every render. */
 const NO_POINTS: readonly TrendPoint[] = [];
+
+const SERIES = [
+  { key: "raised", color: "var(--color-chart-2)" },
+  { key: "resolved", color: "var(--color-chart-3)" },
+] as const;
 
 export type TrendPanelProps = {
   trend: DashboardTrend | undefined;
   pending: boolean;
   error: Error | null;
   period: PeriodId;
-  onPeriodChange: (next: PeriodId) => void;
   labels: DashboardLabels;
   onRetry: () => void;
   className?: string;
@@ -92,7 +48,6 @@ export function TrendPanel({
   pending,
   error,
   period,
-  onPeriodChange,
   labels,
   onRetry,
   className,
@@ -126,69 +81,40 @@ export function TrendPanel({
   );
 
   const config = {
-    raised: { label: labels.trend.series.raised, color: "var(--color-chart-1)" },
-    resolved: { label: labels.trend.series.resolved, color: "var(--color-chart-3)" },
+    raised: { label: labels.trend.series.raised, color: SERIES[0].color },
+    resolved: { label: labels.trend.series.resolved, color: SERIES[1].color },
   } satisfies ChartConfig;
-
-  const periodSelect = (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <Label htmlFor="trend-period">{labels.trend.periodLabel}</Label>
-      <Select
-        value={period}
-        onValueChange={(next) => {
-          onPeriodChange(next as PeriodId);
-        }}
-      >
-        <SelectTrigger id="trend-period" className="w-56">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {PERIODS.map((option) => (
-            <SelectItem key={option.id} value={option.id}>
-              {labels.trend.period(option.id)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
 
   return (
     <Panel
       id="dashboard-trend"
       className={className}
       title={labels.trend.title}
-      action={periodSelect}
+      badge={{ text: labels.trend.periodShort(period), tone: "success" }}
       pending={pending}
       error={error}
       empty={trend !== undefined && points.length === 0}
       emptyText={labels.trend.empty}
-      footnote={labels.trend.bucketNote(bucket)}
+      footnote={labels.trend.cohortNote}
       labels={labels.panel}
       onRetry={onRetry}
     >
       <div className="flex min-w-0 flex-col gap-3">
-        <p className="text-sm text-fg-muted text-pretty">
-          {trend ? `${labels.trend.window(date(trend.start), date(trend.end))} ` : ""}
-          {labels.trend.totals(number(totals.raised), number(totals.resolved))}
-        </p>
-
-        {/* An all-zero window is a real answer, not a missing one — and the
-            server sent every bucket, so nothing here is a gap. */}
+        {/* An all-zero window is a real answer: the server sent every bucket. */}
         {totals.raised === 0 && (
-          <p className="rounded-md border border-line-subtle bg-surface-2 px-3 py-2 text-sm text-fg-muted text-pretty">
-            {labels.trend.allZero}
-          </p>
+          <p className="text-xs text-fg-muted text-pretty">{labels.trend.allZero}</p>
         )}
 
-        <p className="text-2xs text-fg-faint">{labels.trend.axis}</p>
-        <ChartContainer config={config} className="aspect-auto h-64 w-full">
+        <ChartContainer
+          config={config}
+          className="aspect-auto h-52 w-full [&_.recharts-cartesian-axis-tick_text]:fill-fg-muted [&_.recharts-cartesian-axis-tick_text]:font-mono [&_.recharts-cartesian-axis-tick_text]:text-[11px]"
+        >
           <LineChart
             accessibilityLayer
             data={points}
-            margin={{ top: 8, right: 16, bottom: 0, left: 0 }}
+            margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
           >
-            <CartesianGrid vertical={false} />
+            <CartesianGrid strokeDasharray="4 4" />
             <XAxis
               dataKey="period"
               ticks={xTicks}
@@ -205,7 +131,7 @@ export function TrendPanel({
               allowDecimals={false}
               tickLine={false}
               axisLine={false}
-              width={48}
+              width={40}
               tickMargin={8}
             />
             <ChartTooltip
@@ -227,33 +153,35 @@ export function TrendPanel({
                 />
               }
             />
-            <ChartLegend content={<ChartLegendContent className="flex-wrap" />} />
-            <Line
-              dataKey="raised"
-              type="monotone"
-              stroke="var(--color-raised)"
-              strokeWidth={2}
-              dot={points.length <= 14}
-            />
-            <Line
-              dataKey="resolved"
-              type="monotone"
-              stroke="var(--color-resolved)"
-              strokeWidth={2}
-              strokeDasharray="5 3"
-              dot={points.length <= 14}
-            />
+            {SERIES.map((series) => (
+              <Line
+                key={series.key}
+                dataKey={series.key}
+                type="monotone"
+                stroke={`var(--color-${series.key})`}
+                strokeWidth={2}
+                dot={false}
+              />
+            ))}
           </LineChart>
         </ChartContainer>
 
-        <p className="max-w-prose text-xs text-fg-muted text-pretty">
-          {labels.trend.cohortNote}
-        </p>
-
-        <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <ul className="flex flex-wrap items-center gap-x-5 gap-y-1">
+            {SERIES.map((series) => (
+              <li key={series.key} className="flex items-center gap-2 text-xs text-fg-muted">
+                <span
+                  aria-hidden
+                  className="size-2.5 shrink-0 rounded-sm"
+                  style={{ background: series.color }}
+                />
+                {config[series.key].label}
+              </li>
+            ))}
+          </ul>
           <Button
-            variant="outline"
-            size="sm"
+            variant="ghost"
+            size="xs"
             aria-expanded={tableOpen}
             aria-controls="trend-figures"
             onClick={() => {
@@ -264,8 +192,7 @@ export function TrendPanel({
           </Button>
         </div>
 
-        {/* The chart's text equivalent: for anyone who cannot read the plot, and
-            for anyone who wants the figure rather than the shape. */}
+        {/* The chart's text equivalent. */}
         {tableOpen && (
           <div id="trend-figures" className="min-w-0 overflow-x-auto">
             <Table>

@@ -17,7 +17,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { formatNumber, useLanguage } from "@/i18n";
-import type { AmendField } from "./ComplaintDetailModel";
+import type { AmendField, EndingAction } from "./ComplaintDetailModel";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -49,6 +49,9 @@ export const FIELD_KEYS = [
   "created_by",
   "updated_at",
   "closed_at",
+  "closed_by",
+  "outcome_cd",
+  "outcome_reason",
   "parcel_id",
   "current_round",
   "location",
@@ -117,6 +120,7 @@ export type ComplaintDetailLabels = {
     parcel: string;
     complainant: string;
     owner: string;
+    survey: string;
     assignment: string;
     rounds: string;
     evidence: string;
@@ -133,6 +137,7 @@ export type ComplaintDetailLabels = {
     noDetail: string;
     noComplainant: string;
     noOwner: string;
+    surveyRound: (n: number) => string;
     noParcel: string;
     source: (code: string) => string;
   };
@@ -176,10 +181,16 @@ export type ComplaintDetailLabels = {
     reassignTitle: string;
     body: string;
     reassignBody: string;
+    roleLabel: string;
+    rolePlaceholder: string;
+    roleHint: string;
     assigneeLabel: string;
     assigneePlaceholder: string;
     assigneeHint: string;
     assigneeRequired: string;
+    assigneesLoading: string;
+    assigneesError: string;
+    noCandidates: string;
     noteLabel: string;
     notePlaceholder: string;
     reasonLabel: string;
@@ -191,6 +202,20 @@ export type ComplaintDetailLabels = {
     notInZoneBody: string;
     doneTitle: string;
     done: (userId: string) => string;
+  };
+
+  end: {
+    title: (action: EndingAction) => string;
+    body: (action: EndingAction) => string;
+    codeLabel: (action: EndingAction) => string;
+    codePlaceholder: string;
+    /** The `case_reject_reason` / `case_close_outcome` code, in words. */
+    code: (action: EndingAction, code: string) => string;
+    remarksLabel: string;
+    remarksPlaceholder: string;
+    remarksRequired: (min: number) => string;
+    remarksOptional: string;
+    doneTitle: (action: EndingAction) => string;
   };
 
   amend: {
@@ -262,6 +287,7 @@ export function useComplaintDetailLabels(): ComplaintDetailLabels {
         parcel: t("complaintDetail.panels.parcel"),
         complainant: t("complaintDetail.panels.complainant"),
         owner: t("complaintDetail.panels.owner"),
+        survey: t("complaintDetail.panels.survey"),
         assignment: t("complaintDetail.panels.assignment"),
         rounds: t("complaintDetail.panels.rounds"),
         evidence: t("complaintDetail.panels.evidence"),
@@ -279,6 +305,8 @@ export function useComplaintDetailLabels(): ComplaintDetailLabels {
         noDetail: t("complaintDetail.values.noDetail"),
         noComplainant: t("complaintDetail.values.noComplainant"),
         noOwner: t("complaintDetail.values.noOwner"),
+        surveyRound: (value: number) =>
+          t("complaintDetail.values.surveyRound", { n: n(value) }),
         noParcel: t("complaintDetail.values.noParcel"),
         source: (code: string) =>
           t(`complaintDetail.values.source.${code}`, { defaultValue: code }),
@@ -323,10 +351,16 @@ export function useComplaintDetailLabels(): ComplaintDetailLabels {
         reassignTitle: t("complaintDetail.assign.reassignTitle"),
         body: t("complaintDetail.assign.body"),
         reassignBody: t("complaintDetail.assign.reassignBody"),
+        roleLabel: t("complaintDetail.assign.roleLabel"),
+        rolePlaceholder: t("complaintDetail.assign.rolePlaceholder"),
+        roleHint: t("complaintDetail.assign.roleHint"),
         assigneeLabel: t("complaintDetail.assign.assigneeLabel"),
         assigneePlaceholder: t("complaintDetail.assign.assigneePlaceholder"),
         assigneeHint: t("complaintDetail.assign.assigneeHint"),
         assigneeRequired: t("complaintDetail.assign.assigneeRequired"),
+        assigneesLoading: t("complaintDetail.assign.assigneesLoading"),
+        assigneesError: t("complaintDetail.assign.assigneesError"),
+        noCandidates: t("complaintDetail.assign.noCandidates"),
         noteLabel: t("complaintDetail.assign.noteLabel"),
         notePlaceholder: t("complaintDetail.assign.notePlaceholder"),
         reasonLabel: t("complaintDetail.assign.reasonLabel"),
@@ -338,6 +372,21 @@ export function useComplaintDetailLabels(): ComplaintDetailLabels {
         notInZoneBody: t("complaintDetail.assign.notInZoneBody"),
         doneTitle: t("complaintDetail.assign.doneTitle"),
         done: (userId: string) => t("complaintDetail.assign.done", { userId }),
+      },
+
+      end: {
+        title: (action: EndingAction) => t(`complaintDetail.end.${action}.title`),
+        body: (action: EndingAction) => t(`complaintDetail.end.${action}.body`),
+        codeLabel: (action: EndingAction) => t(`complaintDetail.end.${action}.codeLabel`),
+        codePlaceholder: t("complaintDetail.end.codePlaceholder"),
+        code: (action: EndingAction, code: string) =>
+          t(`complaintDetail.end.${action}.codes.${code}`, { defaultValue: code }),
+        remarksLabel: t("complaintDetail.end.remarksLabel"),
+        remarksPlaceholder: t("complaintDetail.end.remarksPlaceholder"),
+        remarksRequired: (min: number) =>
+          t("complaintDetail.end.remarksRequired", { n: n(min) }),
+        remarksOptional: t("complaintDetail.end.remarksOptional"),
+        doneTitle: (action: EndingAction) => t(`complaintDetail.end.${action}.doneTitle`),
       },
 
       amend: {

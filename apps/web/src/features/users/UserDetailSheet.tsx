@@ -28,7 +28,6 @@
 import { useRef, useState } from "react";
 import { IcmsApiError } from "@/api/icms/http";
 import {
-  ASSIGNABLE_ROLES,
   EMAIL_PATTERN,
   MIN_PASSWORD_LENGTH,
   USER_NOT_FOUND,
@@ -40,6 +39,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -48,7 +54,7 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { useFormats } from "@/i18n";
+import { useFormats, useLanguage } from "@/i18n";
 import { Icon } from "@/lib/icons";
 import type { UserLabels } from "./labels";
 import { displayName } from "./officer";
@@ -63,7 +69,17 @@ import {
   UserSaved,
   type PasswordValidity,
 } from "./parts";
-import { useResetPassword, useSetUserRoles, useUpdateUser, useUserDetail } from "./useUsers";
+import {
+  useActiveZones,
+  useAssignZone,
+  useAssignableRoles,
+  useOfficerZones,
+  useRevokeZone,
+  useResetPassword,
+  useSetUserRoles,
+  useUpdateUser,
+  useUserDetail,
+} from "./useUsers";
 
 const SUPER_ADMIN = "super-admin";
 
@@ -71,13 +87,23 @@ export default function UserDetailSheet({
   userId,
   onClose,
   labels,
-  canManage,
+  canUpdate,
+  canDisable,
+  canSetRoles,
+  canResetPassword,
+  canReadZones,
+  canManageZones,
   selfUserId,
 }: {
   userId: string | null;
   onClose: () => void;
   labels: UserLabels;
-  canManage: boolean;
+  canUpdate: boolean;
+  canDisable: boolean;
+  canSetRoles: boolean;
+  canResetPassword: boolean;
+  canReadZones: boolean;
+  canManageZones: boolean;
   selfUserId: string | null;
 }) {
   const { data, status, error, refetch } = useUserDetail(userId);
@@ -139,7 +165,14 @@ export default function UserDetailSheet({
             key={data.id}
             detail={data}
             labels={labels}
-            canManage={canManage}
+            gate={{
+              canUpdate,
+              canDisable,
+              canSetRoles,
+              canResetPassword,
+              canReadZones,
+              canManageZones,
+            }}
             isSelf={data.id === selfUserId}
           />
         )}
@@ -148,15 +181,24 @@ export default function UserDetailSheet({
   );
 }
 
+type OfficerWriteGate = {
+  canUpdate: boolean;
+  canDisable: boolean;
+  canSetRoles: boolean;
+  canResetPassword: boolean;
+  canReadZones: boolean;
+  canManageZones: boolean;
+};
+
 function OfficerBody({
   detail,
   labels,
-  canManage,
+  gate,
   isSelf,
 }: {
   detail: UserDetail;
   labels: UserLabels;
-  canManage: boolean;
+  gate: OfficerWriteGate;
   isSelf: boolean;
 }) {
   const formats = useFormats();
@@ -190,11 +232,24 @@ function OfficerBody({
         <IdentitySection
           detail={detail}
           labels={labels}
-          canManage={canManage}
+          canUpdate={gate.canUpdate}
+          canDisable={gate.canDisable}
           isSelf={isSelf}
         />
-        <RolesSection detail={detail} labels={labels} canManage={canManage} isSelf={isSelf} />
-        <PasswordSection detail={detail} labels={labels} canManage={canManage} />
+        <RolesSection
+          detail={detail}
+          labels={labels}
+          canSetRoles={gate.canSetRoles}
+          isSelf={isSelf}
+        />
+        {gate.canReadZones && (
+          <ZonesSection detail={detail} labels={labels} canManage={gate.canManageZones} />
+        )}
+        <PasswordSection
+          detail={detail}
+          labels={labels}
+          canResetPassword={gate.canResetPassword}
+        />
       </div>
     </>
   );
@@ -230,15 +285,18 @@ type IdentityDraft = {
   enabled?: boolean;
 };
 
+// Names and email need user.update; the enabled switch needs user.disable.
 function IdentitySection({
   detail,
   labels,
-  canManage,
+  canUpdate,
+  canDisable,
   isSelf,
 }: {
   detail: UserDetail;
   labels: UserLabels;
-  canManage: boolean;
+  canUpdate: boolean;
+  canDisable: boolean;
   isSelf: boolean;
 }) {
   const update = useUpdateUser();
@@ -263,11 +321,14 @@ function IdentitySection({
     enabled !== detail.enabled;
 
   const failure = update.error instanceof IcmsApiError ? update.error : null;
-  const busy = !canManage || update.isPending;
+  const busy = !canUpdate || update.isPending;
+  const switchBusy = !canDisable || update.isPending;
+  const canSave = (canUpdate || canDisable) && !update.isPending;
 
   const save = () => {
     const address = email.trim().toLowerCase();
-    if (!EMAIL_PATTERN.test(address)) {
+    // Without user.update the email cannot be edited, so it is not validated.
+    if (canUpdate && !EMAIL_PATTERN.test(address)) {
       setEmailError(address === "" ? text.emailRequired : labels.create.emailInvalid);
       return;
     }
@@ -276,10 +337,12 @@ function IdentitySection({
     // Only the keys that actually moved: `UserUpdate` refuses an empty patch,
     // and a key sent unchanged is a write nobody asked for.
     const patch: UserUpdate = {};
-    if (firstName !== serverFirst) patch.first_name = firstName.trim() || null;
-    if (lastName !== serverLast) patch.last_name = lastName.trim() || null;
-    if (address !== serverEmail) patch.email = address;
-    if (enabled !== detail.enabled) patch.enabled = enabled;
+    if (canUpdate) {
+      if (firstName !== serverFirst) patch.first_name = firstName.trim() || null;
+      if (lastName !== serverLast) patch.last_name = lastName.trim() || null;
+      if (address !== serverEmail) patch.email = address;
+    }
+    if (canDisable && enabled !== detail.enabled) patch.enabled = enabled;
 
     update.mutate(
       { userId: detail.id, patch },
@@ -367,7 +430,7 @@ function IdentitySection({
           <Switch
             id={`enabled-${detail.id}`}
             checked={enabled}
-            disabled={busy}
+            disabled={switchBusy}
             aria-describedby={`enabled-${detail.id}-state`}
             onCheckedChange={(next) => {
               setDraft((current) => ({ ...current, enabled: next }));
@@ -393,7 +456,7 @@ function IdentitySection({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy || !dirty} onClick={save}>
+        <Button disabled={!canSave || !dirty} onClick={save}>
           <Icon
             name={update.isPending ? "feedback.loading" : "action.save"}
             spin={update.isPending}
@@ -420,15 +483,16 @@ function IdentitySection({
 function RolesSection({
   detail,
   labels,
-  canManage,
+  canSetRoles,
   isSelf,
 }: {
   detail: UserDetail;
   labels: UserLabels;
-  canManage: boolean;
+  canSetRoles: boolean;
   isSelf: boolean;
 }) {
   const save = useSetUserRoles();
+  const assignableRoles = useAssignableRoles().data ?? [];
   const [draft, setDraft] = useState<readonly string[] | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -486,11 +550,11 @@ function RolesSection({
       )}
 
       <RoleSetEditor
-        roles={ASSIGNABLE_ROLES}
+        roles={assignableRoles}
         selected={selected}
         onToggle={toggle}
         labels={labels}
-        disabled={!canManage || save.isPending}
+        disabled={!canSetRoles || save.isPending}
         officerName={officer}
         legend={text.title}
         hint={text.fullSetNote}
@@ -544,7 +608,7 @@ function RolesSection({
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          disabled={!canManage || !dirty || save.isPending}
+          disabled={!canSetRoles || !dirty || save.isPending}
           onClick={() => {
             save.mutate(
               { userId: detail.id, realmRoles: selected },
@@ -573,13 +637,14 @@ function RolesSection({
         >
           {text.discard}
         </Button>
-        {!canManage && <span className="text-2xs text-fg-faint">{text.denied}</span>}
+        {!canSetRoles && <span className="text-2xs text-fg-faint">{text.denied}</span>}
       </div>
     </section>
   );
 }
 
-function PasswordSection({
+// Many-to-many: each row is one open assignment; add and remove are separate writes.
+function ZonesSection({
   detail,
   labels,
   canManage,
@@ -587,6 +652,154 @@ function PasswordSection({
   detail: UserDetail;
   labels: UserLabels;
   canManage: boolean;
+}) {
+  const { language } = useLanguage();
+  const assigned = useOfficerZones(detail.id, true);
+  const zones = useActiveZones(canManage);
+  const assign = useAssignZone();
+  const revoke = useRevokeZone();
+  const [pick, setPick] = useState("");
+
+  const text = labels.zones;
+  const held = assigned.data ?? [];
+  const heldCodes = new Set(held.map((row) => row.zone_cd));
+  const options = (zones.data ?? []).filter((zone) => !heldCodes.has(zone.zone_cd));
+  const busy = assign.isPending || revoke.isPending;
+  const failure =
+    assign.error instanceof IcmsApiError
+      ? assign.error
+      : revoke.error instanceof IcmsApiError
+        ? revoke.error
+        : null;
+  const zoneName = (zoneCd: string, fallback: string) => {
+    const zone = zones.data?.find((row) => row.zone_cd === zoneCd);
+    if (!zone) return fallback;
+    return language === "hi-IN" ? (zone.name_hi ?? zone.name) : zone.name;
+  };
+
+  return (
+    <section className="flex flex-col gap-4 rounded-lg border border-line-subtle bg-surface-1 p-4">
+      <header className="flex flex-col gap-1">
+        <h3 className="font-display text-base font-semibold text-fg-strong">{text.title}</h3>
+        <p className="text-2xs text-fg-muted text-pretty">{text.subtitle}</p>
+      </header>
+
+      {failure && (
+        <UserRefusal
+          labels={labels}
+          title={labels.error.refusedTitle}
+          body={failure.message}
+          requestId={failure.requestId}
+        />
+      )}
+
+      {assigned.status === "pending" && <Skeleton className="h-10 w-full" />}
+      {assigned.status === "error" && (
+        <UserLoadError
+          error={assigned.error}
+          labels={labels}
+          onRetry={() => {
+            void assigned.refetch();
+          }}
+        />
+      )}
+      {assigned.status === "success" &&
+        (held.length === 0 ? (
+          <p className="text-2xs text-fg-faint text-pretty">{text.none}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {held.map((row) => (
+              <li
+                key={row.zone_cd}
+                className="flex items-center justify-between gap-2 rounded-md border border-line-subtle bg-surface-2 px-3 py-2"
+              >
+                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{row.zone_cd}</Badge>
+                  <span className="truncate text-sm text-fg-base">
+                    {zoneName(row.zone_cd, row.zone_name)}
+                  </span>
+                </span>
+                {canManage && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    aria-label={text.removeLabel(row.zone_cd)}
+                    onClick={() => {
+                      revoke.mutate({ userId: detail.id, zoneCd: row.zone_cd });
+                    }}
+                  >
+                    <Icon name="action.delete" className="size-4" />
+                    {text.remove}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        ))}
+
+      {canManage ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Label htmlFor={`zone-add-${detail.id}`}>{text.addLabel}</Label>
+            <Select value={pick} onValueChange={setPick} disabled={busy || options.length === 0}>
+              <SelectTrigger id={`zone-add-${detail.id}`} className="w-full">
+                <SelectValue
+                  placeholder={
+                    zones.status === "pending"
+                      ? text.loadingZones
+                      : options.length === 0
+                        ? text.noneLeft
+                        : text.addPlaceholder
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((zone) => (
+                  <SelectItem key={zone.zone_cd} value={zone.zone_cd}>
+                    {zone.zone_cd} —{" "}
+                    {language === "hi-IN" ? (zone.name_hi ?? zone.name) : zone.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            disabled={pick === "" || busy}
+            onClick={() => {
+              assign.mutate(
+                { userId: detail.id, zoneCd: pick },
+                {
+                  onSuccess: () => {
+                    setPick("");
+                  },
+                },
+              );
+            }}
+          >
+            <Icon
+              name={assign.isPending ? "feedback.loading" : "action.add"}
+              spin={assign.isPending}
+              className="size-4"
+            />
+            {assign.isPending ? text.adding : text.add}
+          </Button>
+        </div>
+      ) : (
+        <span className="text-2xs text-fg-faint">{text.denied}</span>
+      )}
+    </section>
+  );
+}
+
+function PasswordSection({
+  detail,
+  labels,
+  canResetPassword,
+}: {
+  detail: UserDetail;
+  labels: UserLabels;
+  canResetPassword: boolean;
 }) {
   const formats = useFormats();
   const reset = useResetPassword();
@@ -666,7 +879,7 @@ function PasswordSection({
         mismatchMessage={text.mismatch}
         validity={validity}
         onValidityChange={setValidity}
-        disabled={!canManage || reset.pending}
+        disabled={!canResetPassword || reset.pending}
       />
 
       {localError !== null && (
@@ -680,7 +893,7 @@ function PasswordSection({
           <Switch
             id={`temporary-${detail.id}`}
             checked={temporary}
-            disabled={!canManage || reset.pending}
+            disabled={!canResetPassword || reset.pending}
             aria-describedby={`temporary-${detail.id}-state`}
             onCheckedChange={setTemporary}
           />
@@ -694,7 +907,7 @@ function PasswordSection({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" disabled={!canManage || reset.pending} onClick={submit}>
+        <Button variant="outline" disabled={!canResetPassword || reset.pending} onClick={submit}>
           <Icon
             name={reset.pending ? "feedback.loading" : "user.password"}
             spin={reset.pending}
@@ -702,7 +915,7 @@ function PasswordSection({
           />
           {reset.pending ? text.submitting : text.submit}
         </Button>
-        {!canManage && <span className="text-2xs text-fg-faint">{text.denied}</span>}
+        {!canResetPassword && <span className="text-2xs text-fg-faint">{text.denied}</span>}
       </div>
     </section>
   );

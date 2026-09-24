@@ -19,6 +19,8 @@ import type { CaseDetail, CasePage, CaseRow, Schemas } from './types';
  * handset — a page is not the register, and a count computed from one is wrong.
  */
 export type ResurveyRequest = Schemas['ResurveyRequestOut'];
+export type CaseEvidence = Schemas['CaseEvidenceOut'];
+export type CaseAssignment = Schemas['CaseAssignmentOut'];
 export type { CaseDetail, CasePage, CaseRow };
 
 export type CaseListFilter = {
@@ -39,6 +41,7 @@ export const caseKeys = {
   first: (filter: CaseListFilter) => ['icms', 'cases', 'first', filter] as const,
   detail: (caseRef: string) => ['icms', 'cases', 'detail', caseRef] as const,
   resurvey: (caseRef: string) => ['icms', 'cases', 'resurvey', caseRef] as const,
+  evidence: (caseRef: string) => ['icms', 'cases', 'evidence', caseRef] as const,
 };
 
 // One page of the register under a filter.
@@ -110,6 +113,30 @@ export function useCaseDetail(caseRef: string): UseQueryResult<CaseDetail, Error
   return useQuery({
     queryKey: caseKeys.detail(caseRef),
     queryFn: ({ signal }) => fetchCaseDetail(caseRef, signal),
+    enabled: caseRef !== '',
+  });
+}
+
+// The case detail only if it is already cached (opened before); never fetches. Lists use it for distance.
+export function useCachedCaseDetail(caseRef: string): CaseDetail | undefined {
+  return useQuery({
+    queryKey: caseKeys.detail(caseRef),
+    queryFn: ({ signal }) => fetchCaseDetail(caseRef, signal),
+    enabled: false,
+  }).data;
+}
+
+// The files that came with the complaint (`GET /api/icms/cases/{ref}/evidence`).
+export function useCaseEvidence(caseRef: string): UseQueryResult<CaseEvidence[], Error> {
+  return useQuery({
+    queryKey: caseKeys.evidence(caseRef),
+    queryFn: async ({ signal }) =>
+      (
+        await apiRequest<Schemas['CaseEvidenceList']>(
+          `/api/icms/cases/${encodeURIComponent(caseRef)}/evidence`,
+          { signal },
+        )
+      ).items,
     enabled: caseRef !== '',
   });
 }

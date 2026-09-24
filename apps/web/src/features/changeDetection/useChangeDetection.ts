@@ -19,16 +19,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
-import { api, ApiError } from "@/api/client";
-import type { ReviewStatus } from "@/api/types";
+import { api, ApiError, getRuntime, restoreRaster as requestRestore } from "@/api/client";
+import { fetchCapabilities, type Capabilities } from "@/api/icms/policy";
+import type { AnalysisMode, Id, Raster, ReviewStatus } from "@/api/types";
 import { useStore } from "@/state/store";
+import type { MlRuntime } from "@/upload/types";
 
 import {
   boundDetections,
   comparableAnalyses,
   DETECTION_PAGE,
   filterDetections,
+  isRetryingRun,
+  runErrorText,
   sid,
   sortDetections,
   toComparisonPair,
@@ -48,6 +53,63 @@ export type LoadFailure = {
 
 /** Poll cadence while a run is queued or running, matching the console's. */
 const ANALYSIS_POLL_MS = 2000;
+/** Poll cadence while any flight is still being ingested. */
+const RASTER_POLL_MS = 2000;
+/** Server-side states that move on their own; another tab's "uploading" row is not one of them. */
+const POLLED_STATUSES: ReadonlySet<Raster["status"]> = new Set([
+  "processing",
+  "restoring",
+  "failed_retryable",
+]);
+
+export const IMAGERY_WRITE = "imagery.write";
+export const IMAGERY_RUN = "imagery.run";
+
+// Advisory like every capability gate: it hides the button, and ada-api still enforces the permission.
+function useHasPermission(code: string): boolean {
+  const { data } = useQuery<Capabilities, Error>({
+    queryKey: ["icms", "capabilities"],
+    queryFn: ({ signal }) => fetchCapabilities(signal),
+    staleTime: 30_000,
+  });
+  return (data?.permissions ?? []).includes(code);
+}
+
+// ml-worker's tier for the run-button chip; a failed probe hides the chip rather than alarming anyone.
+export function useRuntime(): MlRuntime | null {
+  const { data } = useQuery<MlRuntime, Error>({
+    queryKey: ["ml", "runtime"],
+    queryFn: () => getRuntime(),
+    staleTime: 60_000,
+    retry: false,
+  });
+  return data ?? null;
+}
+
+// Covers a reload and a closed tab while chunks are in flight, as NoticeCreate does for a dirty form.
+export function useBeforeUnload(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [active]);
+}
+
+/** Upload and Delete of flights. */
+export function useCanWriteImagery(): boolean {
+  return useHasPermission(IMAGERY_WRITE);
+}
+
+/** Starting a change-detection run. */
+export function useCanRunImagery(): boolean {
+  return useHasPermission(IMAGERY_RUN);
+}
 
 function toFailure(cause: unknown, fallback: string): LoadFailure {
   if (cause instanceof ApiError) {
@@ -76,7 +138,13 @@ export type ChangeDetection = {
   pair: ComparisonPair | null;
   /** A run that has not finished — the map is empty and the screen says why. */
   pendingRun: { stage: string | null; percent: number } | null;
+  /** Any run still queued or running, whether or not another is on screen. */
+  activeRun: { stage: string | null; percent: number } | null;
+  /** Starts a run of T1 against T2; the screen switches to it once it finishes. */
+  startRun: (t1: Id, t2: Id, mode: AnalysisMode) => Promise<void>;
   failedRun: string | null;
+  /** A failed run ml-worker will requeue ("retryable:"); shown as retrying, not failed. */
+  retryingRun: string | null;
 
   /* ---- detections ---- */
   rows: DetectionRow[];
@@ -88,6 +156,8 @@ export type ChangeDetection = {
 
   /* ---- selection ---- */
   selected: DetectionRow | null;
+  /** Any row of the run by key, whether or not the search filter shows it. */
+  findRow: (key: string) => DetectionRow | null;
   select: (key: string | null) => void;
 
   /* ---- review ---- */
@@ -96,6 +166,18 @@ export type ChangeDetection = {
   reviewError: LoadFailure | null;
 
   /* ---- status ---- */
+  /* ---- imagery ---- */
+  /** Re-reads flights and runs without the full-screen reload. */
+  refreshImagery: () => Promise<void>;
+  /** Puts a just-uploaded flight in the store at once, so its row and the polling start now. */
+  adoptUpload: (raster: Raster) => void;
+  /** Removes the flight and every run built on it, then clears a selection that used it. */
+  deleteRaster: (id: Id) => Promise<void>;
+  /** Asks for an archived flight back from cold storage; the row turns to restoring. */
+  restoreRaster: (id: Id) => Promise<void>;
+  /** The last flight poll failed; the next tick retries. */
+  rasterPollFailed: boolean;
+
   status: LoadStatus;
   error: LoadFailure | null;
   reload: () => void;
@@ -104,7 +186,8 @@ export type ChangeDetection = {
   reloadDetections: () => void;
 };
 
-export function useChangeDetection(): ChangeDetection {
+// ownUploadId is this tab's running upload, the only "uploading" row worth polling for.
+export function useChangeDetection(ownUploadId: string | null = null): ChangeDetection {
   const projects = useStore((s) => s.projects);
   const projectsLoaded = useStore((s) => s.projectsLoaded);
   const projectId = useStore((s) => s.currentProjectId);
@@ -130,6 +213,7 @@ export function useChangeDetection(): ChangeDetection {
 
   const [reviewing, setReviewing] = useState(false);
   const [reviewError, setReviewError] = useState<LoadFailure | null>(null);
+  const [rasterPollFailed, setRasterPollFailed] = useState(false);
 
   // A monotonic guard instead of AbortSignal: `api/client.ts` takes no signal,
   // so a superseded load is ignored on arrival rather than cancelled in flight.
@@ -191,7 +275,7 @@ export function useChangeDetection(): ChangeDetection {
   // Comma-joined so the dependency is a primitive; a fresh array every render
   // would restart the interval on every render.
   const activeRunIds = analyses
-    .filter((a) => a.status === "queued" || a.status === "running")
+    .filter((a) => a.status === "queued" || a.status === "running" || isRetryingRun(a))
     .map((a) => sid(a.id))
     .join(",");
 
@@ -211,6 +295,55 @@ export function useChangeDetection(): ChangeDetection {
     }, ANALYSIS_POLL_MS);
     return () => window.clearInterval(timer);
   }, [projectId, activeRunIds]);
+
+  const processingRasterIds = rasters
+    .filter(
+      (r) =>
+        POLLED_STATUSES.has(r.status) ||
+        (r.status === "uploading" && ownUploadId !== null && sid(r.id) === ownUploadId),
+    )
+    .map((r) => sid(r.id))
+    .join(",");
+
+  useEffect(() => {
+    if (!projectId || processingRasterIds === "") return;
+    const timer = window.setInterval(() => {
+      void api
+        .listRasters(projectId)
+        .then((list) => {
+          setRasterPollFailed(false);
+          if (useStore.getState().currentProjectId === projectId) {
+            useStore.getState().setRasters(list);
+          }
+        })
+        .catch(() => setRasterPollFailed(true));
+    }, RASTER_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [projectId, processingRasterIds]);
+
+  const refreshImagery = useCallback(async () => {
+    if (!projectId) return;
+    const [nextRasters, nextAnalyses] = await Promise.all([
+      api.listRasters(projectId),
+      api.listAnalyses(projectId),
+    ]);
+    const store = useStore.getState();
+    if (store.currentProjectId !== projectId) return;
+    store.setRasters(nextRasters);
+    store.setAnalyses(nextAnalyses);
+  }, [projectId]);
+
+  const adoptUpload = useCallback(
+    (raster: Raster) => {
+      const store = useStore.getState();
+      if (sid(raster.project_id) !== store.currentProjectId) return;
+      if (!store.rasters.some((r) => sid(r.id) === sid(raster.id))) {
+        store.setRasters([...store.rasters, raster]);
+      }
+      void refreshImagery().catch(() => setRasterPollFailed(true));
+    },
+    [refreshImagery],
+  );
 
   /* ------------------------------------------------------------- which run */
 
@@ -280,6 +413,11 @@ export function useChangeDetection(): ChangeDetection {
     () => allRows.find((row) => row.key === selectedKey) ?? null,
     [allRows, selectedKey],
   );
+  const rowsByKey = useMemo(
+    () => new Map(allRows.map((row) => [row.key, row])),
+    [allRows],
+  );
+  const findRow = useCallback((key: string) => rowsByKey.get(key) ?? null, [rowsByKey]);
 
   /* --------------------------------------------------------------- review */
 
@@ -322,6 +460,51 @@ export function useChangeDetection(): ChangeDetection {
     setSelectedKey(null);
   }, []);
 
+  const startRun = useCallback(
+    async (t1: Id, t2: Id, mode: AnalysisMode) => {
+      if (!projectId) return;
+      const analysis = await api.createAnalysis(projectId, t1, t2, mode);
+      const store = useStore.getState();
+      if (store.currentProjectId !== projectId) return;
+      store.upsertAnalysis(analysis);
+      // Not drawable until done; runId falls back to the newest finished run meanwhile.
+      setChosenRunId(sid(analysis.id));
+      setSelectedKey(null);
+    },
+    [projectId],
+  );
+
+  const pairIds = [pair?.reference?.id, pair?.current?.id].filter(Boolean).join(",");
+
+  const deleteRaster = useCallback(
+    async (id: Id) => {
+      await api.deleteRaster(id);
+      const gone = sid(id);
+      if (pairIds.split(",").includes(gone)) {
+        setChosenRunId(null);
+        setSelectedKey(null);
+      }
+      // Dropped locally first, so a failed refetch cannot leave the deleted flight on screen.
+      const store = useStore.getState();
+      store.setRasters(store.rasters.filter((r) => sid(r.id) !== gone));
+      store.setAnalyses(
+        store.analyses.filter(
+          (a) => sid(a.raster_t1_id) !== gone && sid(a.raster_t2_id) !== gone,
+        ),
+      );
+      await refreshImagery().catch(() => setRasterPollFailed(true));
+    },
+    [pairIds, refreshImagery],
+  );
+
+  const restoreRaster = useCallback(
+    async (id: Id) => {
+      await requestRestore(id);
+      await refreshImagery().catch(() => setRasterPollFailed(true));
+    },
+    [refreshImagery],
+  );
+
   const reload = useCallback(() => {
     setError(null);
     setLoaded(null);
@@ -363,7 +546,8 @@ export function useChangeDetection(): ChangeDetection {
   // in; an empty map with no explanation is the thing to avoid.
   const hasRun = runs.some((r) => sid(r.id) === runId);
   const running = analyses.find((a) => a.status === "queued" || a.status === "running");
-  const failed = analyses.find((a) => a.status === "failed");
+  const failed = analyses.find((a) => a.status === "failed" && !isRetryingRun(a));
+  const retrying = analyses.find(isRetryingRun);
 
   return {
     projects: projectOptions,
@@ -379,7 +563,13 @@ export function useChangeDetection(): ChangeDetection {
       hasRun || !running
         ? null
         : { stage: running.stage, percent: Math.round(running.progress * 100) },
-    failedRun: hasRun || running ? null : (failed?.error ?? null),
+    failedRun: hasRun || running || retrying ? null : (failed?.error ?? null),
+    retryingRun:
+      hasRun || running || !retrying ? null : runErrorText(retrying.error ?? ""),
+    activeRun: running
+      ? { stage: running.stage, percent: Math.round(running.progress * 100) }
+      : null,
+    startRun,
 
     rows,
     bounded,
@@ -389,11 +579,18 @@ export function useChangeDetection(): ChangeDetection {
     setQuery,
 
     selected,
+    findRow,
     select: setSelectedKey,
 
     review,
     reviewing,
     reviewError,
+
+    refreshImagery,
+    adoptUpload,
+    deleteRaster,
+    restoreRaster,
+    rasterPollFailed,
 
     status,
     error,

@@ -41,6 +41,10 @@ export type AppConfig = {
   readonly uploadBackoffCeilingMs: number;
   /** Cached list data older than this is shown with its age called out. */
   readonly staleAfterMs: number;
+  /** When true the server refuses a check-in outside `geofenceRadiusM` (422 `outside_geofence`). */
+  readonly geofenceEnforced: boolean;
+  /** Check-in radius around the case point, in metres; a warning only when not enforced. */
+  readonly geofenceRadiusM: number;
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -58,6 +62,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   uploadBackoffBaseMs: 5_000,
   uploadBackoffCeilingMs: 15 * 60_000,
   staleAfterMs: 30 * 60_000,
+  // Mirrors migration 0018's seed rows in icms_runtime_setting.
+  geofenceEnforced: true,
+  geofenceRadiusM: 30,
 };
 
 const CACHE_KEY = 'config:app-config';
@@ -69,6 +76,8 @@ const SERVED_KEY_MAP: Record<string, keyof AppConfig> = {
   device_timestamp_max_age_hours: 'deviceTimestampMaxAgeHours',
   minimum_photo_count: 'minimumPhotoCount',
   maximum_photo_count: 'maximumPhotoCount',
+  geofence_enforced: 'geofenceEnforced',
+  geofence_radius_m: 'geofenceRadiusM',
 };
 
 // Runtime guard. A served config that does not parse is ignored in favour of the defaults.
@@ -76,12 +85,16 @@ function isPartialAppConfig(value: unknown): value is Partial<AppConfig> {
   return value !== null && typeof value === 'object';
 }
 
-// Merges a served config over the defaults, mapping snake_case keys and keeping every value numeric.
+// Merges a served config over the defaults, mapping snake_case keys; a value must match its default's type.
 function merge(partial: Partial<AppConfig>): AppConfig {
-  const merged: Record<string, number> = { ...DEFAULT_APP_CONFIG };
+  const merged: Record<string, number | boolean> = { ...DEFAULT_APP_CONFIG };
   for (const [key, value] of Object.entries(partial)) {
     const target = SERVED_KEY_MAP[key] ?? key;
-    if (typeof value === 'number' && Number.isFinite(value) && target in DEFAULT_APP_CONFIG) {
+    if (!(target in DEFAULT_APP_CONFIG)) continue;
+    const expected = typeof DEFAULT_APP_CONFIG[target as keyof AppConfig];
+    if (expected === 'number' && typeof value === 'number' && Number.isFinite(value)) {
+      merged[target] = value;
+    } else if (expected === 'boolean' && typeof value === 'boolean') {
       merged[target] = value;
     }
   }

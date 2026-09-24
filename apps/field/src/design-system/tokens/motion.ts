@@ -11,6 +11,11 @@ export const motion = {
 
 export type MotionToken = keyof typeof motion;
 
+// The tab notch and circle's slide: settles fast with a small overshoot.
+export const spring = {
+  tabIndicator: { damping: 18, stiffness: 180, mass: 0.8 },
+} as const;
+
 // Press opacity is the one visual constant motion needs and ui-tokens.md does not name.
 export const pressedOpacity = 0.72;
 export const disabledOpacity = 0.45;

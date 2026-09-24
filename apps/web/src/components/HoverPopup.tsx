@@ -16,9 +16,12 @@ export interface HoverState {
 export default function HoverPopup({
   hover,
   containerWidth,
+  hint,
 }: {
   hover: HoverState;
   containerWidth: number;
+  /** A muted line at the foot of the card. */
+  hint?: string;
 }) {
   const { x, y, props, jobId, featureId } = hover;
   const illegal = props.status === "illegal";
@@ -112,6 +115,7 @@ export default function HoverPopup({
           }}
         />
       )}
+      {hint && <p className="hover-hint">{hint}</p>}
     </div>
   );
 }

@@ -313,7 +313,7 @@ export default function NoticesRegister() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {labels.gate.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{labels.gate.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{labels.gate.deniedBody}</p>
       </section>
     );
   }
@@ -322,28 +322,13 @@ export default function NoticesRegister() {
     // No gutter and no max-width here: AppShell's `main` supplies both, once,
     // for every screen.
     <div className="flex w-full min-w-0 flex-col gap-6">
-      {/* ---- Back ------------------------------------------------------ */}
-      <div className="flex justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
-          onClick={() => {
-            void navigate(-1);
-          }}
-        >
-          <Icon name="action.back" className="size-4" />
-          {labels.back}
-        </Button>
-      </div>
-
       {/* ---- title + primary actions ----------------------------------- */}
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
             {labels.title}
           </h1>
-          <p className="mt-1 text-sm text-fg-muted">{labels.subtitle}</p>
+          <p className="mt-1 text-sm text-fg-canvas-muted">{labels.subtitle}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -372,6 +357,17 @@ export default function NoticesRegister() {
           >
             <Icon name="notice.issue" className="size-4" />
             {labels.issue}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
+            onClick={() => {
+              void navigate(-1);
+            }}
+          >
+            <Icon name="action.back" className="size-4" />
+            {labels.back}
           </Button>
         </div>
       </header>

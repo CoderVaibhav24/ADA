@@ -112,6 +112,9 @@ export const loginLabelsEn = {
   /* The escape hatches out to Keycloak's own page. Each exists because the
      typed form genuinely cannot do the job here. */
   hostedPageCta: "Open the secure ADA sign-in page",
+  /* Shown while an account with a pending required action (new password,
+     authenticator QR, e-mail check) is handed to the matching hosted page. */
+  finishingSetup: "Finishing your account setup…",
   enrolmentCta: "Set up my authenticator",
   enrolmentHint:
     "No authenticator yet? The QR code can only be shown on the secure ADA sign-in page.",

@@ -290,6 +290,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/icms/admin/geo/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Load zones, villages, parcels and reserved areas from the authority's KML/KMZ
+         * @description docs/icms/kml-import-spec.md is the format. One transaction; rejected placemarks are
+         *     listed and skipped, and a file that is not KML 2.2 is refused whole with 422.
+         */
+        post: operations["import_boundaries_api_icms_admin_geo_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/geo/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The last twenty boundary imports, newest first */
+        get: operations["list_imports_api_icms_admin_geo_imports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/icms/admin/policy/permissions": {
         parameters: {
             query?: never;
@@ -334,7 +372,8 @@ export interface paths {
         /** The role grants — this table is the whole of RBAC */
         get: operations["list_role_grants_api_icms_admin_policy_roles_get"];
         put?: never;
-        post?: never;
+        /** Create a role: a Keycloak realm role plus its grants */
+        post: operations["create_role_api_icms_admin_policy_roles_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -388,8 +427,79 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Edit a transition's roles, payload requirements or active flag */
+        /** Edit a transition's permission, payload requirements or active flag */
         patch: operations["update_transition_api_icms_admin_policy_transitions__transition_id__patch"];
+        trace?: never;
+    };
+    "/api/icms/admin/reporting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The reporting structure: each ICMS role, its holders and their zones
+         * @description One Keycloak call per role and one query for every holder's zones.
+         */
+        get: operations["reporting_structure_api_icms_admin_reporting_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The roles an officer can be given */
+        get: operations["list_assignable_roles_api_icms_admin_roles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/runtime-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime switches held in icms_runtime_setting */
+        get: operations["list_runtime_settings_api_icms_admin_runtime_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/admin/runtime-settings/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set one runtime switch; unknown keys and wrong types are refused */
+        put: operations["put_runtime_setting_api_icms_admin_runtime_settings__key__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/icms/admin/users": {
@@ -491,7 +601,9 @@ export interface paths {
         };
         /**
          * The server-side rules a field client must not duplicate
-         * @description Readable by every ICMS role, with no extra permission and no database.
+         * @description Readable by every ICMS role, with no extra permission.
+         *
+         *     The geofence pair is read from `icms_runtime_setting`; the rest is settings.
          *
          *     The field app had a copy of the accuracy rule in its own source, and the copy
          *     went stale the moment one threshold became a gate and a flag. A client that
@@ -648,6 +760,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/icms/cases/{case_ref}/assignees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Who this case may be assigned to — the roles, then the officers
+         * @description The roles whose grants admit the assignee's first step, and the enabled
+         *     officers holding one of them with an active assignment to the case's zone —
+         *     the same two checks `POST /assign` makes, so every name offered is accepted.
+         */
+        get: operations["list_case_assignees_api_icms_cases__case_ref__assignees_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/cases/{case_ref}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close a case after its notice — ADA Project Lead
+         * @description Terminal. Legal from `notice_issued` only (409 otherwise).
+         */
+        post: operations["close_case_api_icms_cases__case_ref__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/icms/cases/{case_ref}/confirm": {
         parameters: {
             query?: never;
@@ -666,6 +820,49 @@ export interface paths {
          *     else, so the two compose in one direction only.
          */
         post: operations["confirm_case_api_icms_cases__case_ref__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/cases/{case_ref}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The photographs attached to a complaint at filing time */
+        get: operations["list_case_evidence_api_icms_cases__case_ref__evidence_get"];
+        put?: never;
+        /**
+         * Attach a photograph to a complaint while it is raised — append-only
+         * @description JPEG, PNG or WebP, judged by its bytes against the `complaint_photo` upload
+         *     policy. Admitted to the roles that may raise a case, while it is `raised`.
+         *     A replayed `Idempotency-Key` returns the first row with 200.
+         */
+        post: operations["add_case_evidence_api_icms_cases__case_ref__evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/cases/{case_ref}/evidence/{evidence_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One complaint photograph, inline
+         * @description Inline because the upload policy admits sniffed raster images only.
+         */
+        get: operations["get_case_evidence_content_api_icms_cases__case_ref__evidence__evidence_id__content_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -755,6 +952,27 @@ export interface paths {
          *     is refused rather than stored and corrected later.
          */
         post: operations["issue_notice_api_icms_cases__case_ref__notices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/cases/{case_ref}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject a raised or assigned case — PCS Nodal Officer
+         * @description Terminal. Legal from `raised` and `assigned` only (409 otherwise); releases
+         *     the survey assignment, so the case leaves the surveyor's worklist.
+         */
+        post: operations["reject_case_api_icms_cases__case_ref__reject_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -929,6 +1147,66 @@ export interface paths {
          *     rendering officer-supplied content inside the application's own origin.
          */
         get: operations["get_evidence_content_api_icms_evidence__evidence_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/evidence/{evidence_id}/stamped": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The server-stamped copy of an evidence photograph, as an attachment
+         * @description Same scope as `/content`; 404 `evidence_not_stamped` when no copy was made.
+         */
+        get: operations["get_evidence_stamped_api_icms_evidence__evidence_id__stamped_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/geo/locate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggest state, district, district LGD code and pin code for a point
+         * @description Always 200: an upstream failure is all-null with `source: "unavailable"`.
+         */
+        get: operations["locate_api_icms_geo_locate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/icms/geo/parcel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The zone, village and parcel the loaded KML layers put a point in
+         * @description Always 200: nothing loaded, or nothing under the point, is all-null with `source: "none"`.
+         */
+        get: operations["parcel_api_icms_geo_parcel_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1308,6 +1586,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ml/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ml Runtime */
+        get: operations["ml_runtime_api_ml_runtime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -1397,7 +1692,11 @@ export interface paths {
         /** List Rasters */
         get: operations["list_rasters_api_projects__project_id__rasters_get"];
         put?: never;
-        /** Upload Raster */
+        /**
+         * Upload Raster
+         * @deprecated
+         * @description Deprecated: single-request upload, kept for one release. Use the chunked POST /projects/{project_id}/uploads flow instead.
+         */
         post: operations["upload_raster_api_projects__project_id__rasters_post"];
         delete?: never;
         options?: never;
@@ -1423,6 +1722,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Open Uploads */
+        get: operations["list_open_uploads_api_projects__project_id__uploads_get"];
+        put?: never;
+        /** Open Upload */
+        post: operations["open_upload_api_projects__project_id__uploads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rasters/{raster_id}": {
         parameters: {
             query?: never;
@@ -1435,6 +1752,23 @@ export interface paths {
         post?: never;
         /** Delete Raster */
         delete: operations["delete_raster_api_rasters__raster_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rasters/{raster_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Raster */
+        post: operations["restore_raster_api_rasters__raster_id__restore_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1508,6 +1842,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/uploads/{upload_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Upload */
+        get: operations["get_upload_api_uploads__upload_id__get"];
+        put?: never;
+        post?: never;
+        /** Abort Upload */
+        delete: operations["abort_upload_api_uploads__upload_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{upload_id}/chunks/{n}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Chunk */
+        put: operations["put_chunk_api_uploads__upload_id__chunks__n__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{upload_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Upload */
+        post: operations["complete_upload_api_uploads__upload_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{upload_id}/sidecars/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Sidecar */
+        put: operations["put_sidecar_api_uploads__upload_id__sidecars__kind__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1520,6 +1923,8 @@ export interface components {
             assignee_only: boolean;
             /** Opens Round */
             opens_round: boolean;
+            /** Permission */
+            permission: string;
             /** Requires */
             requires: string[];
             /** Source Status */
@@ -1590,6 +1995,16 @@ export interface components {
              */
             device_timestamp_max_age_hours: number;
             /**
+             * Geofence Enforced
+             * @description When true a check-in farther than `geofence_radius_m` from the case location is refused 422 `outside_geofence`. Held in `icms_runtime_setting`; a Super Admin switches it.
+             */
+            geofence_enforced: boolean;
+            /**
+             * Geofence Radius M
+             * @description Check-in geofence radius around the case location, in metres. When not enforced it is only the far-from-site warning.
+             */
+            geofence_radius_m: number;
+            /**
              * Gps Accuracy Flag M
              * @description Evidence with a fix worse than this is stored and marked `geotag_flagged`. Capture it anyway — this is an annotation, not a refusal.
              */
@@ -1610,6 +2025,52 @@ export interface components {
              */
             minimum_photo_count: number;
         };
+        /** AssignableRoleOut */
+        AssignableRoleOut: {
+            /** Description */
+            description: string | null;
+            /** Label */
+            label: string;
+            /** Label Hi */
+            label_hi: string | null;
+            /** Role Cd */
+            role_cd: string;
+        };
+        /** AssigneeCandidate */
+        AssigneeCandidate: {
+            /** Name */
+            name: string | null;
+            /** Role Cds */
+            role_cds: string[];
+            /** User Id */
+            user_id: string;
+            /** Username */
+            username: string | null;
+        };
+        /** AssigneeOptions */
+        AssigneeOptions: {
+            /** Candidates */
+            candidates: components["schemas"]["AssigneeCandidate"][];
+            /** Roles */
+            roles: components["schemas"]["AssigneeRole"][];
+        };
+        /** AssigneeRole */
+        AssigneeRole: {
+            /** Label */
+            label: string;
+            /** Label Hi */
+            label_hi?: string | null;
+            /** Role Cd */
+            role_cd: string;
+        };
+        /** Body_import_boundaries_api_icms_admin_geo_import_post */
+        Body_import_boundaries_api_icms_admin_geo_import_post: {
+            /**
+             * File
+             * @description One .kml or .kmz, at most 50 MB.
+             */
+            file: string;
+        };
         /** Body_upload_raster_api_projects__project_id__rasters_post */
         Body_upload_raster_api_projects__project_id__rasters_post: {
             /** Captured At */
@@ -1624,6 +2085,57 @@ export interface components {
             prj?: string | null;
             /** Tfw */
             tfw?: string | null;
+        };
+        /** BoundaryCounts */
+        BoundaryCounts: {
+            parcels: components["schemas"]["LayerCounts"];
+            reserved: components["schemas"]["LayerCounts"];
+            villages: components["schemas"]["LayerCounts"];
+            zones: components["schemas"]["LayerCounts"];
+        };
+        /** BoundaryImportOut */
+        BoundaryImportOut: {
+            counts: components["schemas"]["BoundaryCounts"];
+            /** Dry Run */
+            dry_run: boolean;
+            /** Filename */
+            filename: string;
+            /**
+             * Import Id
+             * @description The icms_boundary_import row; null on a dry run.
+             */
+            import_id: number | null;
+            /** Rejected */
+            rejected: components["schemas"]["PlacemarkIssue"][];
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Warnings
+             * @description Loaded, but worth a look: a repaired ring, a parcel outside its village.
+             */
+            warnings: components["schemas"]["PlacemarkIssue"][];
+        };
+        /** BoundaryImportRow */
+        BoundaryImportRow: {
+            counts: components["schemas"]["BoundaryCounts"];
+            /** Filename */
+            filename: string;
+            /** Id */
+            id: number;
+            /** Imported At */
+            imported_at: string;
+            /**
+             * Imported By
+             * @description The importer's user id.
+             */
+            imported_by: string;
+            /**
+             * Imported By Name
+             * @description The importer's name as their sign-in carried it, else from Keycloak at read time; null when neither can say.
+             */
+            imported_by_name: string | null;
+            /** Sha256 */
+            sha256: string;
         };
         /** CapabilitiesOut */
         CapabilitiesOut: {
@@ -1714,6 +2226,16 @@ export interface components {
             assigned_at: string;
             /** Assigned By */
             assigned_by: string;
+            /**
+             * Assigned By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            assigned_by_name?: string | null;
+            /**
+             * Assignee Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            assignee_name?: string | null;
             /** Assignee User Id */
             assignee_user_id: string;
             /** Assignment Type */
@@ -1722,6 +2244,25 @@ export interface components {
             note?: string | null;
             /** Released At */
             released_at?: string | null;
+        };
+        /** CaseClose */
+        CaseClose: {
+            /**
+             * Idempotency Key
+             * @description A replay with the same key returns the case unchanged.
+             */
+            idempotency_key?: string | null;
+            /**
+             * Outcome Cd
+             * @description A `case_close_outcome` code.
+             * @enum {string}
+             */
+            outcome_cd: "demolished_by_owner" | "demolished_by_authority" | "regularised" | "court_case_filed" | "sealed" | "other";
+            /**
+             * Remarks
+             * @description Required, 10+ characters, when `outcome_cd` is `other`.
+             */
+            remarks?: string | null;
         };
         /** CaseConfirm */
         CaseConfirm: {
@@ -1739,6 +2280,11 @@ export interface components {
             complainant_name?: string | null;
             /** Complainant Phone */
             complainant_phone?: string | null;
+            /**
+             * Complaint Date
+             * @description The date the complaint was made, IST. Not in the future and not before 2000-01-01. Omitted, it is today.
+             */
+            complaint_date?: string | null;
             /** Complaint Type Cd */
             complaint_type_cd?: string | null;
             /**
@@ -1816,12 +2362,21 @@ export interface components {
             case_ref: string;
             /** Closed At */
             closed_at?: string | null;
+            /** Closed By */
+            closed_by?: string | null;
+            /**
+             * Closed By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            closed_by_name?: string | null;
             /** Complainant Email */
             complainant_email?: string | null;
             /** Complainant Name */
             complainant_name?: string | null;
             /** Complainant Phone */
             complainant_phone?: string | null;
+            /** Complaint Date */
+            complaint_date?: string | null;
             /** Complaint Type Cd */
             complaint_type_cd?: string | null;
             /** Complaint Type Label */
@@ -1830,6 +2385,11 @@ export interface components {
             country?: string | null;
             /** Created By */
             created_by?: string | null;
+            /**
+             * Created By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            created_by_name?: string | null;
             /** Current Round */
             current_round: number;
             /** Detail */
@@ -1861,6 +2421,20 @@ export interface components {
             measured_area_sqm?: number | null;
             /** Other Type */
             other_type?: string | null;
+            /**
+             * Outcome Cd
+             * @description Why it was rejected (`case_reject_reason`) or how it was closed (`case_close_outcome`); null while open.
+             */
+            outcome_cd?: string | null;
+            /** Outcome Label */
+            outcome_label?: string | null;
+            /** Outcome Label Hi */
+            outcome_label_hi?: string | null;
+            /**
+             * Outcome Reason
+             * @description The officer's remarks on the rejection or closure.
+             */
+            outcome_reason?: string | null;
             /** Owner Name */
             owner_name?: string | null;
             /** Owner Phone */
@@ -1899,6 +2473,55 @@ export interface components {
             zone_cd: string;
             /** Zone Name */
             zone_name: string;
+        };
+        /**
+         * CaseEvidenceCreate
+         * @description The whole multipart body of a case evidence upload, the file included.
+         */
+        CaseEvidenceCreate: {
+            /** Caption */
+            caption?: string | null;
+            /**
+             * File
+             * @description The photograph: JPEG, PNG or WebP.
+             */
+            file: string;
+            /** Latitude */
+            latitude?: number | null;
+            /** Longitude */
+            longitude?: number | null;
+        };
+        /** CaseEvidenceList */
+        CaseEvidenceList: {
+            /** Items */
+            items: components["schemas"]["CaseEvidenceOut"][];
+        };
+        /** CaseEvidenceOut */
+        CaseEvidenceOut: {
+            /** Caption */
+            caption?: string | null;
+            /** Content Type */
+            content_type?: string | null;
+            /** Content Url */
+            content_url: string;
+            /** Created At */
+            created_at: string;
+            /** Filename */
+            filename?: string | null;
+            /** Id */
+            id: number;
+            /** Latitude */
+            latitude?: number | null;
+            /** Longitude */
+            longitude?: number | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
+        };
+        /** CaseEvidenceWritten */
+        CaseEvidenceWritten: {
+            evidence: components["schemas"]["CaseEvidenceOut"];
+            /** Replayed */
+            replayed: boolean;
         };
         /** CaseFeature */
         CaseFeature: {
@@ -1960,6 +2583,25 @@ export interface components {
             /** Longitude */
             longitude: number;
         };
+        /** CaseReject */
+        CaseReject: {
+            /**
+             * Idempotency Key
+             * @description A replay with the same key returns the case unchanged.
+             */
+            idempotency_key?: string | null;
+            /**
+             * Reason Cd
+             * @description A `case_reject_reason` code.
+             * @enum {string}
+             */
+            reason_cd: "false_complaint" | "duplicate" | "outside_jurisdiction" | "no_violation_found" | "other";
+            /**
+             * Remarks
+             * @description Required, 10+ characters, when `reason_cd` is `other`.
+             */
+            remarks?: string | null;
+        };
         /** CaseRow */
         CaseRow: {
             /** Assignee User Id */
@@ -1968,6 +2610,8 @@ export interface components {
             case_ref: string;
             /** Complainant Name */
             complainant_name?: string | null;
+            /** Complaint Date */
+            complaint_date?: string | null;
             /** Complaint Type Cd */
             complaint_type_cd?: string | null;
             /** Complaint Type Label */
@@ -2040,6 +2684,16 @@ export interface components {
             /** Brightness Delta */
             brightness_delta?: number | null;
             /**
+             * Case Ref
+             * @description Newest complaint raised from this polygon, if any.
+             */
+            case_ref?: string | null;
+            /**
+             * Case Status
+             * @description That complaint's workflow status (icms_case.status).
+             */
+            case_status?: string | null;
+            /**
              * Change Type
              * @description new_construction, extension or demolition, from T1<->T2 instance geometry. Null where no instance backs the polygon.
              */
@@ -2061,6 +2715,11 @@ export interface components {
             reviewed_at?: string | null;
             /** Reviewed By */
             reviewed_by?: string | null;
+            /**
+             * Reviewed By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            reviewed_by_name?: string | null;
             /** Status */
             status?: string | null;
         } & {
@@ -2119,6 +2778,11 @@ export interface components {
             server_timestamp: string;
             /** User Id */
             user_id: string;
+            /**
+             * User Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            user_name?: string | null;
         };
         /** CodeValueOut */
         CodeValueOut: {
@@ -2229,11 +2893,26 @@ export interface components {
             content_url: string;
             /** Device Timestamp */
             device_timestamp?: string | null;
+            /**
+             * Distance To Site M
+             * @description Metres from the submitted fix to the case point; null without one.
+             */
+            distance_to_site_m?: number | null;
             /** Doc Type Cd */
             doc_type_cd?: string | null;
             /**
+             * Exif Lat
+             * @description Latitude read from EXIF GPS.
+             */
+            exif_lat?: number | null;
+            /**
+             * Exif Lon
+             * @description Longitude read from EXIF GPS.
+             */
+            exif_lon?: number | null;
+            /**
              * Geotag Flagged
-             * @description True when the capture carried no position, or one worse than the accuracy threshold. Computed at write time and stored nowhere: the threshold is server configuration a browser cannot read, so the flag has to come over the wire. The gallery shows it.
+             * @description True when the capture carried no position, one worse than the accuracy threshold, or (photos) EXIF GPS missing or farther than icms_exif_mismatch_m from the submitted fix. The EXIF part is stored at upload; the accuracy part is recomputed on read.
              * @default false
              */
             geotag_flagged: boolean;
@@ -2253,10 +2932,20 @@ export interface components {
             round_no?: number | null;
             /** Sha256 */
             sha256?: string | null;
+            /**
+             * Stamped Url
+             * @description The server-stamped JPEG (location bar added by the API), or null when none was made. The original at content_url is untouched.
+             */
+            stamped_url?: string | null;
             /** Uploaded At */
             uploaded_at: string;
             /** Uploaded By */
             uploaded_by: string;
+            /**
+             * Uploaded By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            uploaded_by_name?: string | null;
         };
         /**
          * FeatureWindow
@@ -2285,30 +2974,91 @@ export interface components {
         };
         /** FindingsPut */
         FindingsPut: {
-            /** Area Type Cd */
+            /**
+             * Area Type Cd
+             * @description An active `area_type` code value. Required at submit when encroachment_confirmed_cd is yes or partial.
+             */
             area_type_cd?: string | null;
+            /**
+             * Construction Stage Cd
+             * @description An active `construction_stage` code value. Optional.
+             */
+            construction_stage_cd?: string | null;
+            /**
+             * Encroachment Confirmed Cd
+             * @description Required at submit. no_false_positive forces recommendation_cd no_action_required and notice_required false.
+             */
+            encroachment_confirmed_cd?: ("yes" | "partial" | "no_false_positive") | null;
+            /**
+             * External Support Cd
+             * @description Single select. Required at submit when encroachment_confirmed_cd is yes or partial; police makes officer_note required.
+             */
+            external_support_cd?: ("none" | "police" | "survey_dept" | "legal") | null;
             /**
              * Findings
              * @description Replaces the round's findings outright. An empty list is a 422: a round with no finding is a round that was not carried out.
              */
             findings: string[];
-            /** Measured Area Sqm */
+            /** Floor Count */
+            floor_count?: number | null;
+            /**
+             * Length M
+             * @description Metres; the field app converts feet. Optional. With width_m and no measured_area_sqm, the area is derived as length × width.
+             */
+            length_m?: number | null;
+            /**
+             * Measured Area Sqm
+             * @description Square metres; the client converts sq ft or gaj. Required at submit when encroachment_confirmed_cd is yes or partial.
+             */
             measured_area_sqm?: number | null;
-            /** Notice Act Cd */
+            /**
+             * Notice Act Cd
+             * @description An active `act` code value. Required at submit when notice_required; cleared when notice_required is false.
+             */
             notice_act_cd?: string | null;
-            /** Notice Required */
+            /**
+             * Notice Required
+             * @description Required at submit once recommendation_cd is set; derived for no_action_required and the three notice recommendations.
+             */
             notice_required?: boolean | null;
-            /** Occupant Name */
+            /**
+             * Occupant Name
+             * @description The person found on site. Required at submit when occupant_phone is given.
+             */
             occupant_name?: string | null;
             /** Occupant Phone */
             occupant_phone?: string | null;
             /** Officer Note */
             officer_note?: string | null;
             /**
+             * Owner Name
+             * @description Who holds the property (legacy owner_name). Required at submit when owner_phone is given.
+             */
+            owner_name?: string | null;
+            /** Owner Phone */
+            owner_phone?: string | null;
+            /** Police Station */
+            police_station?: string | null;
+            /**
+             * Property Type Cd
+             * @description An active `property_type` code value.
+             */
+            property_type_cd?: string | null;
+            /**
+             * Recommendation Cd
+             * @description Required at submit. no_action_required only with no_false_positive. issue_notice, demolition_order and impose_fine set notice_required.
+             */
+            recommendation_cd?: ("issue_notice" | "file_legal_case" | "demolition_order" | "further_investigation" | "no_action_required" | "impose_fine") | null;
+            /**
              * Sections
-             * @description Replaces the cited sections when present; omit to leave them alone.
+             * @description Replaces the cited sections when present; omit to leave them alone. Each pair must be an active `section` code under its `act`. At submit a round with notice_required needs at least one under notice_act_cd.
              */
             sections?: components["schemas"]["SectionOut-Input"][] | null;
+            /**
+             * Width M
+             * @description Metres. Optional.
+             */
+            width_m?: number | null;
         };
         /** GeoPolygon */
         GeoPolygon: {
@@ -2327,7 +3077,16 @@ export interface components {
         };
         /** InspectionDetail */
         InspectionDetail: {
-            /** Area Type Cd */
+            /**
+             * Area Mismatch
+             * @description True when measured_area_sqm and length × width are both held and differ by more than 10% of length × width. Accepted, not refused.
+             * @default false
+             */
+            area_mismatch: boolean;
+            /**
+             * Area Type Cd
+             * @description May be an inactive legacy `area_type` code.
+             */
             area_type_cd?: string | null;
             /**
              * Available Actions
@@ -2345,6 +3104,13 @@ export interface components {
             case_title?: string | null;
             /** Check Ins */
             check_ins?: components["schemas"]["CheckInOut"][];
+            /** Construction Stage Cd */
+            construction_stage_cd?: string | null;
+            /**
+             * Encroachment Confirmed Cd
+             * @description Null on rounds recorded before it existed.
+             */
+            encroachment_confirmed_cd?: ("yes" | "partial" | "no_false_positive") | null;
             /** Evidence */
             evidence?: components["schemas"]["EvidenceOut"][];
             /**
@@ -2352,6 +3118,8 @@ export interface components {
              * @default 0
              */
             evidence_count: number;
+            /** External Support Cd */
+            external_support_cd?: ("none" | "police" | "survey_dept" | "legal") | null;
             /**
              * Finding Count
              * @default 0
@@ -2360,12 +3128,21 @@ export interface components {
             /** Findings */
             findings?: components["schemas"]["FindingOut"][];
             /**
+             * Findings Source
+             * @description Which client last saved the findings, from the token's azp. A web round is not held to the notice act, sections or owner at submit.
+             */
+            findings_source?: ("field" | "web") | null;
+            /** Floor Count */
+            floor_count?: number | null;
+            /**
              * Has Check In
              * @default false
              */
             has_check_in: boolean;
             /** Inspection Ref */
             inspection_ref: string;
+            /** Length M */
+            length_m?: number | null;
             location?: components["schemas"]["LatLon"] | null;
             /** Location Accuracy M */
             location_accuracy_m?: number | null;
@@ -2381,11 +3158,21 @@ export interface components {
             occupant_phone?: string | null;
             /** Officer Note */
             officer_note?: string | null;
+            /** Owner Name */
+            owner_name?: string | null;
+            /** Owner Phone */
+            owner_phone?: string | null;
+            /** Police Station */
+            police_station?: string | null;
             /**
              * Priority
              * @description The CASE's priority, carried on the round so the register can show and filter it without a second call.
              */
             priority?: string | null;
+            /** Property Type Cd */
+            property_type_cd?: string | null;
+            /** Recommendation Cd */
+            recommendation_cd?: ("issue_notice" | "file_legal_case" | "demolition_order" | "further_investigation" | "no_action_required" | "impose_fine") | null;
             /** Round No */
             round_no: number;
             /** Scheduled For */
@@ -2400,11 +3187,13 @@ export interface components {
             submitted_at?: string | null;
             /**
              * Surveyor Name
-             * @description Null: Keycloak is the user store and there is no local users table to join. Resolve it from /api/icms/admin/users.
+             * @description From Keycloak at read time; null when it cannot say, and the screen shows the id.
              */
             surveyor_name?: string | null;
             /** Surveyor User Id */
             surveyor_user_id: string;
+            /** Width M */
+            width_m?: number | null;
             /** Zone Cd */
             zone_cd?: string | null;
             /** Zone Name */
@@ -2422,16 +3211,34 @@ export interface components {
         };
         /** InspectionRoundOut */
         InspectionRoundOut: {
+            /** Floor Count */
+            floor_count?: number | null;
             /** Inspection Ref */
             inspection_ref: string;
             /** Measured Area Sqm */
             measured_area_sqm?: number | null;
+            /**
+             * Occupant Name
+             * @description Owner or occupant, as the surveyor recorded on site.
+             */
+            occupant_name?: string | null;
+            /** Occupant Phone */
+            occupant_phone?: string | null;
+            /** Police Station */
+            police_station?: string | null;
+            /** Property Type Cd */
+            property_type_cd?: string | null;
             /** Round No */
             round_no: number;
             /** Status */
             status: string;
             /** Submitted At */
             submitted_at?: string | null;
+            /**
+             * Surveyor Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            surveyor_name?: string | null;
             /** Surveyor User Id */
             surveyor_user_id: string;
         };
@@ -2478,7 +3285,7 @@ export interface components {
             submitted_at?: string | null;
             /**
              * Surveyor Name
-             * @description Null: Keycloak is the user store and there is no local users table to join. Resolve it from /api/icms/admin/users.
+             * @description From Keycloak at read time; null when it cannot say, and the screen shows the id.
              */
             surveyor_name?: string | null;
             /** Surveyor User Id */
@@ -2497,6 +3304,48 @@ export interface components {
             lat: number;
             /** Lon */
             lon: number;
+        };
+        /** LayerCounts */
+        LayerCounts: {
+            /** Deactivated */
+            deactivated: number;
+            /** Inserted */
+            inserted: number;
+            /** Rejected */
+            rejected: number;
+            /** Updated */
+            updated: number;
+        };
+        /**
+         * LocateOut
+         * @description Administrative fields suggested for a point. All null when nothing is known.
+         */
+        LocateOut: {
+            /**
+             * District
+             * @description District, in LGD's spelling when it is in UP.
+             */
+            district: string | null;
+            /**
+             * District Lgd
+             * @description LGD district code; Uttar Pradesh only.
+             */
+            district_lgd: string | null;
+            /**
+             * Pincode
+             * @description Six-digit postal code, else null.
+             */
+            pincode: string | null;
+            /**
+             * Source
+             * @description `nominatim`, `none` when no locator is configured, or `unavailable` when the lookup failed — show nothing then.
+             */
+            source: string;
+            /**
+             * State
+             * @description State name as the geocoder spells it.
+             */
+            state: string | null;
         };
         /**
          * MapWindow
@@ -2644,6 +3493,11 @@ export interface components {
             issued_at?: string | null;
             /** Issued By */
             issued_by?: string | null;
+            /**
+             * Issued By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            issued_by_name?: string | null;
             /** Issuing Authority */
             issuing_authority?: string | null;
             /** Notice Ref */
@@ -2684,6 +3538,11 @@ export interface components {
             issued_at?: string | null;
             /** Issued By */
             issued_by?: string | null;
+            /**
+             * Issued By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            issued_by_name?: string | null;
             /** Notice Ref */
             notice_ref: string;
             /**
@@ -2820,6 +3679,45 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * ParcelAtOut
+         * @description What the loaded boundary layers say about a point. All null when nothing covers it.
+         */
+        ParcelAtOut: {
+            /** Khasra No */
+            khasra_no: string | null;
+            /**
+             * Plot No
+             * @description A scheme plot's number, e.g. `4/285` or `CP-1`.
+             */
+            plot_no: string | null;
+            /**
+             * Sector
+             * @description A scheme plot's sector as the land record writes it, e.g. `SECTOR 4`.
+             */
+            sector: string | null;
+            /**
+             * Source
+             * @description `kml` when any boundary layer covers the point, else `none`.
+             * @enum {string}
+             */
+            source: "kml" | "none";
+            /** Ulpin */
+            ulpin: string | null;
+            /** Village Lgd */
+            village_lgd: string | null;
+            /** Village Name */
+            village_name: string | null;
+            /**
+             * Ward
+             * @description Always null: no ward layer is loaded yet.
+             */
+            ward: string | null;
+            /** Zone Cd */
+            zone_cd: string | null;
+            /** Zone Name */
+            zone_name: string | null;
+        };
         /** PasswordReset */
         PasswordReset: {
             /**
@@ -2862,6 +3760,33 @@ export interface components {
             permission_cd: string;
             /** Resource */
             resource: string;
+            /** Screen Cd */
+            screen_cd?: string | null;
+        };
+        /** PlacemarkIssue */
+        PlacemarkIssue: {
+            /**
+             * Folder
+             * @description The KML folder, or the unknown folder's own name.
+             */
+            folder: string;
+            /**
+             * Index
+             * @description 1-based position of the placemark within that folder.
+             */
+            index: number;
+            /**
+             * Key
+             * @description zone_cd, village_lgd, village_lgd/khasra_no, SECTOR#plot_no or feature_type:source_ref, when it could be read.
+             */
+            key: string | null;
+            /**
+             * Name
+             * @description The placemark's <name>, if it has one.
+             */
+            name: string | null;
+            /** Reasons */
+            reasons: string[];
         };
         /**
          * PolygonReview
@@ -2922,16 +3847,26 @@ export interface components {
         };
         /** RasterOut */
         RasterOut: {
+            /** Archive Bytes */
+            archive_bytes?: number | null;
             /** Bounds 4326 */
             bounds_4326: number[] | null;
             /** Captured At */
             captured_at: string | null;
+            /** Chunk Count */
+            chunk_count?: number | null;
+            /** Cold At */
+            cold_at?: string | null;
             /** Crs */
             crs: string | null;
             /** Error */
             error: string | null;
+            /** Fingerprint */
+            fingerprint?: string | null;
             /** Id */
             id: number;
+            /** Last Used At */
+            last_used_at?: string | null;
             /** Name */
             name: string;
             /**
@@ -2941,12 +3876,30 @@ export interface components {
             progress: number;
             /** Project Id */
             project_id: number;
+            /**
+             * Received Count
+             * @default 0
+             */
+            received_count: number;
+            /** Reject Reason */
+            reject_reason?: string | null;
             /** Resolution M */
             resolution_m: number | null;
+            /** Restore Eta Hours */
+            restore_eta_hours?: number | null;
+            /** Sha256 */
+            sha256?: string | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
             /** Stage */
             stage?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "uploading" | "completing" | "rejected" | "processing" | "failed_retryable" | "failed" | "ready" | "cold" | "restoring" | "expired";
+            /** Tier */
+            tier?: string | null;
             /**
              * Uploaded At
              * Format: date-time
@@ -2983,6 +3936,63 @@ export interface components {
             /** Project Id */
             project_id: number;
         };
+        /** ReportingMember */
+        ReportingMember: {
+            /** Enabled */
+            enabled: boolean;
+            /** First Name */
+            first_name?: string | null;
+            /** Id */
+            id: string;
+            /** Last Name */
+            last_name?: string | null;
+            /** Username */
+            username: string;
+            /** Zones */
+            zones: components["schemas"]["ReportingZone"][];
+        };
+        /** ReportingRole */
+        ReportingRole: {
+            /** Label */
+            label: string;
+            /** Label Hi */
+            label_hi?: string | null;
+            /**
+             * Level
+             * @description 0 is the most senior rung of the ladder.
+             */
+            level: number;
+            /** Members */
+            members: components["schemas"]["ReportingMember"][];
+            /**
+             * Reports To
+             * @description The role_cd one rung up, or null for the top and for a role created from Administration that has no place on the ladder yet.
+             */
+            reports_to: string | null;
+            /** Role Cd */
+            role_cd: string;
+        };
+        /** ReportingZone */
+        ReportingZone: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Name Hi */
+            name_hi?: string | null;
+            /** Zone Cd */
+            zone_cd: string;
+        };
+        /** RestoreOut */
+        RestoreOut: {
+            /** Eta Hours */
+            eta_hours: number;
+            /**
+             * Status
+             * @constant
+             */
+            status: "restoring";
+        };
         /** ResurveyCreate */
         ResurveyCreate: {
             /** Reason */
@@ -3008,6 +4018,11 @@ export interface components {
             decided_at?: string | null;
             /** Decided By */
             decided_by?: string | null;
+            /**
+             * Decided By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            decided_by_name?: string | null;
             /** Decision */
             decision: string;
             /** Decision Note */
@@ -3022,8 +4037,29 @@ export interface components {
             requested_at: string;
             /** Requested By */
             requested_by: string;
+            /**
+             * Requested By Name
+             * @description From Keycloak at read time; null when it cannot say.
+             */
+            requested_by_name?: string | null;
             /** Resulting Round */
             resulting_round?: number | null;
+        };
+        /** RoleCreate */
+        RoleCreate: {
+            /** Description */
+            description?: string | null;
+            /** Label */
+            label: string;
+            /** Label Hi */
+            label_hi?: string | null;
+            /** Permission Cds */
+            permission_cds?: string[];
+            /**
+             * Role Cd
+             * @description The realm role name, e.g. zone-inspector.
+             */
+            role_cd: string;
         };
         /** RoleGrantsOut */
         RoleGrantsOut: {
@@ -3051,6 +4087,34 @@ export interface components {
              * @description A previously published version to serve again.
              */
             to_version: number;
+        };
+        /** RuntimeSettingOut */
+        RuntimeSettingOut: {
+            /** Description */
+            description: string;
+            /**
+             * Is Default
+             * @description True when no row is stored and the code default applies.
+             */
+            is_default: boolean;
+            /** Key */
+            key: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "boolean" | "number";
+            /** Updated At */
+            updated_at: string | null;
+            /** Updated By */
+            updated_by: string | null;
+            /** Value */
+            value: boolean | number;
+        };
+        /** RuntimeSettingPut */
+        RuntimeSettingPut: {
+            /** Value */
+            value: boolean | number;
         };
         /** ScreenDraftIn */
         ScreenDraftIn: {
@@ -3207,9 +4271,14 @@ export interface components {
             note: string | null;
             /** Opens Round */
             opens_round: boolean;
+            /** Permission Cd */
+            permission_cd: string;
             /** Requires */
             requires: string[];
-            /** Roles */
+            /**
+             * Roles
+             * @description Derived: the active roles granted permission_cd.
+             */
             roles: string[];
             /** Sort Order */
             sort_order: number;
@@ -3228,10 +4297,10 @@ export interface components {
             assignee_only?: boolean | null;
             /** Note */
             note?: string | null;
+            /** Permission Cd */
+            permission_cd?: string | null;
             /** Requires */
             requires?: string[] | null;
-            /** Roles */
-            roles?: string[] | null;
         };
         /** TrendPoint */
         TrendPoint: {
@@ -3260,6 +4329,69 @@ export interface components {
             resolved: number;
             /** Total */
             total: number;
+        };
+        /** UploadComplete */
+        UploadComplete: {
+            /** Sha256 */
+            sha256?: string | null;
+        };
+        /** UploadCreate */
+        UploadCreate: {
+            /** Captured At */
+            captured_at?: string | null;
+            /** Crs Epsg */
+            crs_epsg?: number | null;
+            /** Fingerprint */
+            fingerprint: string;
+            /**
+             * Has Prj
+             * @default false
+             */
+            has_prj: boolean;
+            /**
+             * Has Tfw
+             * @default false
+             */
+            has_tfw: boolean;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** UploadDuplicate */
+        UploadDuplicate: {
+            /** Detail */
+            detail: string;
+            /** Existing Raster Id */
+            existing_raster_id: number;
+        };
+        /** UploadRejected */
+        UploadRejected: {
+            /** Detail */
+            detail: string;
+            /** Raster Id */
+            raster_id: number;
+        };
+        /** UploadSessionOut */
+        UploadSessionOut: {
+            /** Chunk Count */
+            chunk_count: number;
+            /** Chunk Size */
+            chunk_size: number;
+            /** Fingerprint */
+            fingerprint: string | null;
+            /** Name */
+            name: string;
+            /** Received */
+            received: number[];
+            /** Reject Reason */
+            reject_reason?: string | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Status */
+            status: string;
+            /** Upload Id */
+            upload_id: number;
         };
         /** UserCreate */
         UserCreate: {
@@ -4029,6 +5161,62 @@ export interface operations {
             };
         };
     };
+    import_boundaries_api_icms_admin_geo_import_post: {
+        parameters: {
+            query?: {
+                /** @description Validate and count; write nothing. */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_boundaries_api_icms_admin_geo_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoundaryImportOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_imports_api_icms_admin_geo_imports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoundaryImportRow"][];
+                };
+            };
+        };
+    };
     list_permissions_api_icms_admin_policy_permissions_get: {
         parameters: {
             query?: never;
@@ -4094,6 +5282,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RoleGrantsOut"][];
+                };
+            };
+        };
+    };
+    create_role_api_icms_admin_policy_roles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleGrantsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4175,6 +5396,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransitionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reporting_structure_api_icms_admin_reporting_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportingRole"][];
+                };
+            };
+        };
+    };
+    list_assignable_roles_api_icms_admin_roles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignableRoleOut"][];
+                };
+            };
+        };
+    };
+    list_runtime_settings_api_icms_admin_runtime_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSettingOut"][];
+                };
+            };
+        };
+    };
+    put_runtime_setting_api_icms_admin_runtime_settings__key__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeSettingPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSettingOut"];
                 };
             };
             /** @description Validation Error */
@@ -4650,6 +5966,74 @@ export interface operations {
             };
         };
     };
+    list_case_assignees_api_icms_cases__case_ref__assignees_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The case reference, e.g. `CMP-2026-0001`. */
+                case_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssigneeOptions"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    close_case_api_icms_cases__case_ref__close_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The case reference, e.g. `CMP-2026-0001`. */
+                case_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseClose"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     confirm_case_api_icms_cases__case_ref__confirm_post: {
         parameters: {
             query?: never;
@@ -4673,6 +6057,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_case_evidence_api_icms_cases__case_ref__evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The case reference, e.g. `CMP-2026-0001`. */
+                case_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseEvidenceList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_case_evidence_api_icms_cases__case_ref__evidence_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                /** @description The case reference, e.g. `CMP-2026-0001`. */
+                case_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["CaseEvidenceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseEvidenceWritten"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_case_evidence_content_api_icms_cases__case_ref__evidence__evidence_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The case reference, e.g. `CMP-2026-0001`. */
+                case_ref: string;
+                /** @description The evidence row's id. */
+                evidence_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                    "image/png": unknown;
+                    "image/webp": unknown;
                 };
             };
             /** @description Validation Error */
@@ -4781,6 +6271,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NoticeDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_case_api_icms_cases__case_ref__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The case reference, e.g. `CMP-2026-0001`. */
+                case_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseReject"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
                 };
             };
             /** @description Validation Error */
@@ -5017,6 +6543,106 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_evidence_stamped_api_icms_evidence__evidence_id__stamped_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The evidence row's id. */
+                evidence_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The original with the API's location bar added. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    locate_api_icms_geo_locate_get: {
+        parameters: {
+            query: {
+                /** @description Latitude, WGS 84. */
+                lat: number;
+                /** @description Longitude, WGS 84. */
+                lon: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    parcel_api_icms_geo_parcel_get: {
+        parameters: {
+            query: {
+                /** @description Latitude, WGS 84. */
+                lat: number;
+                /** @description Longitude, WGS 84. */
+                lon: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParcelAtOut"];
                 };
             };
             /** @description Validation Error */
@@ -5742,6 +7368,35 @@ export interface operations {
             };
         };
     };
+    ml_runtime_api_ml_runtime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description model service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_projects_api_projects_get: {
         parameters: {
             query?: never;
@@ -6009,13 +7664,13 @@ export interface operations {
                     "application/json": components["schemas"]["RasterOut"];
                 };
             };
-            /** @description Validation Error */
+            /** @description The file failed validation */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["UploadRejected"];
                 };
             };
         };
@@ -6086,6 +7741,102 @@ export interface operations {
             };
         };
     };
+    list_open_uploads_api_projects__project_id__uploads_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_upload_api_projects__project_id__uploads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionOut"];
+                };
+            };
+            /** @description The same file is already in the project */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadDuplicate"];
+                };
+            };
+            /** @description Larger than UPLOAD_MAX_BYTES */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many open uploads for this user */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not enough free disk for the upload and its ingest */
+            507: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     delete_raster_api_rasters__raster_id__delete: {
         parameters: {
             query?: never;
@@ -6098,13 +7849,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": unknown;
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -6114,6 +7863,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    restore_raster_api_rasters__raster_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                raster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreOut"];
+                };
+            };
+            /** @description The raster is not in the cold tier */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The cold store is not configured or unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -6235,6 +8029,236 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_upload_api_uploads__upload_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_upload_api_uploads__upload_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an open or rejected upload */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_chunk_api_uploads__upload_id__chunks__n__put: {
+        parameters: {
+            query?: never;
+            header: {
+                "Content-Range"?: string | null;
+                /** @description hex SHA-256 of the body */
+                "X-Chunk-SHA256": string;
+            };
+            path: {
+                n: number;
+                upload_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad hash, header or chunk length */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The upload is closed, or this chunk differs from the one already received */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Body larger than one chunk */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Chunk index or Content-Range out of range */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_upload_api_uploads__upload_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UploadComplete"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RasterOut"];
+                };
+            };
+            /** @description Another request is completing this upload; poll GET /uploads/{upload_id} until status leaves 'completing' */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Chunks are missing or the upload is closed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The file failed validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadRejected"];
+                };
+            };
+        };
+    };
+    put_sidecar_api_uploads__upload_id__sidecars__kind__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "tfw" | "prj";
+                upload_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The upload is no longer open */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Larger than 64 KiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -6,6 +6,8 @@ import { Alert } from 'react-native';
 import { apiRequest } from '@/services/api/client';
 import { errorText } from '@/services/api/error-text';
 import { idempotencyKeyFor, releaseIdempotencyKey } from '@/services/api/idempotency';
+import { t } from '@/services/i18n';
+import { COMPLAINT_IN_COMPLAINTS } from '@/services/navigation/complaint-route';
 
 import { isRouteName, routeParams, type RouteName } from './contract';
 import { resolvePath, safeUrl } from './paths';
@@ -36,7 +38,7 @@ const ROUTES = {
   profile: () => '/profile',
   notifications: () => '/notifications',
   complaint_detail: (params) => ({
-    pathname: '/complaint/[caseRef]',
+    pathname: COMPLAINT_IN_COMPLAINTS,
     params: { caseRef: params.caseRef ?? '' },
   }),
 } satisfies Record<RouteName, (params: Readonly<Record<string, string>>) => Href>;
@@ -44,7 +46,7 @@ const ROUTES = {
 const inFlight = new Set<string>();
 
 function warn(message: string): void {
-  console.warn(`[sdui] ${message}`);
+  if (__DEV__) console.warn(`[sdui] ${message}`);
 }
 
 function text(value: unknown, context: ActionContext): string {
@@ -68,7 +70,8 @@ function navigate(action: Record<string, unknown>, context: ActionContext): void
     if (routeParams(route).some((name) => (params[name] ?? '') === '')) {
       return warn(`route ${route} is missing a parameter`);
     }
-    router.push(ROUTES[route](params));
+    // The complaints stack's list stays underneath, so Back from a pushed complaint returns to it.
+    router.push(ROUTES[route](params), { withAnchor: route === 'complaint_detail' });
     return;
   }
   const screen = action.screen;
@@ -124,7 +127,7 @@ async function execute(path: string, body: unknown, context: ActionContext, refr
     releaseIdempotencyKey(scope);
     if (refreshAfter) context.refresh();
   } catch (error) {
-    Alert.alert('That did not go through', errorText(error).message);
+    Alert.alert(t('sdui.actionFailed'), errorText(error).message);
   } finally {
     inFlight.delete(scope);
   }
@@ -137,12 +140,12 @@ function callApi(action: Record<string, unknown>, context: ActionContext): void 
   if (!isRecord(confirm)) return warn('call_api without a confirmation');
   const title = text(confirm.title, context);
   const message = text(confirm.message, context);
-  const confirmLabel = text(confirm.confirmLabel, context) || 'Confirm';
+  const confirmLabel = text(confirm.confirmLabel, context) || t('common.confirm');
   const body = resolveBody(action.body ?? {}, context);
   const refreshAfter = action.then !== 'none';
 
   Alert.alert(title, message, [
-    { text: 'Cancel', style: 'cancel' },
+    { text: t('common.cancel'), style: 'cancel' },
     { text: confirmLabel, onPress: () => void execute(path, body, context, refreshAfter) },
   ]);
 }

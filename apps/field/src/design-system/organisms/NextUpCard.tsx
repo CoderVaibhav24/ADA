@@ -1,17 +1,18 @@
 /**
- * NextUpCard — the first case in the officer's active work, with its open action
- * (`158:3829`). The row is whatever the register returned first; nothing is picked on
- * the handset.
+ * NextUpCard — the NEXT UP block of Home (173:4641): the first case in the officer's
+ * active work, with Open Complaint. The row is whatever the register returned first;
+ * nothing is picked on the handset.
  */
 
 import { StyleSheet, View } from 'react-native';
 
 import type { CaseRow } from '@/services/api/case-reads';
+import { LABEL_DOMAINS, useCodeLabel } from '@/services/config/labels';
 import { formatAge } from '@/services/format/datetime';
+import { useT } from '@/services/i18n';
 
-import { Button, Icon, Skeleton, Text } from '../atoms';
-import { colors, layout, radius, space, type LayoutStyle } from '../tokens';
-import { CasePriorityChip, CaseStatusChip } from './ComplaintCard';
+import { Button, Glyph, Icon, Skeleton, Text } from '../atoms';
+import { colors, control, elevation, figCard, radius, space, type LayoutStyle } from '../tokens';
 
 export type NextUpCardProps = {
   /** undefined while loading; null when there is nothing waiting. */
@@ -23,96 +24,144 @@ export type NextUpCardProps = {
   style?: LayoutStyle;
 };
 
-// Four states in one frame: loading, failed, nothing waiting, and the case itself.
+// The card shell every state shares.
+function Card({ children, alert = false, style }: { children: React.ReactNode; alert?: boolean; style?: LayoutStyle }) {
+  return (
+    <View style={[styles.card, style]} accessibilityRole={alert ? 'alert' : undefined}>
+      {children}
+    </View>
+  );
+}
+
+// Heading, then one of four states: loading, failed, nothing waiting, the case.
 export function NextUpCard({ row, errorMessage, onOpen, onRetry, style }: NextUpCardProps) {
+  const t = useT();
+  const statusLabel = useCodeLabel(LABEL_DOMAINS.caseStatus);
+
+  let body: React.ReactNode;
   if (errorMessage) {
-    return (
-      <View style={[styles.card, style]} accessibilityRole="alert">
-        <Text variant="label">Next up</Text>
+    body = (
+      <Card alert>
         <View style={styles.row}>
-          <Icon name="alert" size="md" color="statusOverdue" />
-          <Text variant="body" color="ink1" style={styles.flex}>
+          <Icon name="alert" size="md" color="figDanger" />
+          <Text variant="figBody" color="white" style={styles.flex}>
             {errorMessage}
           </Text>
         </View>
         {onRetry ? (
-          <Button label="Try again" onPress={onRetry} variant="secondary" size="sm" fullWidth={false} />
+          <Button
+            label={t('common.retry')}
+            onPress={onRetry}
+            variant="figSecondary"
+            leadingIcon={<Icon name="sync" size="sm" color="white" />}
+          />
         ) : null}
-      </View>
+      </Card>
     );
-  }
-
-  if (row === undefined) {
-    return (
-      <View style={[styles.card, style]}>
-        <Text variant="label">Next up</Text>
-        <Skeleton height={layout.touchMin / 2} width="50%" />
-        <Skeleton height={layout.touchMin / 2} />
-        <Skeleton height={layout.touchMin} shape="pill" />
-      </View>
+  } else if (row === undefined) {
+    body = (
+      <Card>
+        <Skeleton height={space[4]} width="40%" tone="figControl" />
+        <Skeleton height={space[6]} width="75%" tone="figControl" />
+        <Skeleton height={space[4]} width="90%" tone="figControl" />
+        <Skeleton height={control.heightMd} shape="md" tone="figControl" />
+      </Card>
     );
-  }
-
-  if (row === null) {
-    return (
-      <View style={[styles.card, style]}>
-        <Text variant="label">Next up</Text>
-        <Text variant="body" color="ink2">
-          Nothing is waiting for you.
-        </Text>
-      </View>
-    );
-  }
-
-  const type = row.complaint_type_label ?? row.other_type ?? null;
-  const place = row.property_address ?? row.landmark ?? row.zone_name;
-  const age = formatAge(row.raised_at);
-
-  return (
-    <View style={[styles.card, style]}>
-      <View style={styles.row}>
-        <Text variant="label" style={styles.flex}>
-          Next up
-        </Text>
-        <CasePriorityChip priority={row.priority} />
-      </View>
-      <Text variant="mono" color="ink0" selectable>
-        {row.case_ref}
-      </Text>
-      {type ? <Text variant="heading">{type}</Text> : null}
-      {place ? (
+  } else if (row === null) {
+    body = (
+      <Card>
         <View style={styles.row}>
-          <Icon name="location" size="sm" color="ink2" />
-          <Text variant="body" color="ink2" style={styles.flex}>
-            {place}
+          <Icon name="success" size="md" color="figSuccess" />
+          <Text variant="figCardTitle" color="white" style={styles.flex}>
+            {t('shell.home.nothingWaiting')}
           </Text>
         </View>
-      ) : null}
-      <View style={styles.row}>
-        <CaseStatusChip status={row.status} />
-        {age ? (
-          <Text variant="caption" color="ink3">
-            {`Raised ${age}`}
+        <Text variant="figBody" color="figMuted">
+          {t('shell.home.nothingWaitingBody')}
+        </Text>
+      </Card>
+    );
+  } else {
+    const type = row.complaint_type_label ?? row.other_type ?? row.case_ref;
+    const place = row.property_address ?? row.landmark ?? row.zone_name;
+    const age = formatAge(row.raised_at);
+    const meta = [place, row.parcel_id ? t('shell.home.parcel', { id: row.parcel_id }) : null]
+      .filter((part): part is string => part !== null && part !== '')
+      .join(' · ');
+    body = (
+      <Card>
+        <View style={styles.topRow}>
+          <Text variant="figCardTime" color="figAccent" style={styles.flex} numberOfLines={1}>
+            {age ? t('shell.home.raised', { age }) : row.case_ref}
           </Text>
-        ) : null}
-      </View>
-      <Button
-        label="Open"
-        onPress={() => onOpen(row.case_ref)}
-        accessibilityLabel={`Open ${row.case_ref}`}
-        trailingIcon={<Icon name="arrowRight" size="md" color="inkOnMuted" />}
-      />
+          <View style={styles.pill}>
+            <View style={styles.pillDot} />
+            <Text variant="figPill" color="figPillInk" numberOfLines={1}>
+              {statusLabel(row.status)}
+            </Text>
+          </View>
+        </View>
+        <Text variant="figCardTitle" color="white">
+          {type}
+        </Text>
+        <View style={styles.metaRow}>
+          <View style={styles.pin}>
+            <Glyph name="pin" color="figBeige" />
+          </View>
+          <Text variant="figMeta" color="figBeige" style={styles.flex}>
+            {[row.case_ref, meta].filter((part) => part !== '').join(' · ')}
+          </Text>
+        </View>
+        <Button
+          label={t('shell.home.openComplaint')}
+          onPress={() => onOpen(row.case_ref)}
+          variant="figPrimary"
+          accessibilityLabel={t('shell.home.openComplaintA11y', { caseRef: row.case_ref })}
+          trailingIcon={<Glyph name="chevronRight" color="white" />}
+          testID="next-up-open"
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <View style={[styles.section, style]}>
+      <Text variant="figSection" color="figBeige" accessibilityRole="header" style={styles.heading}>
+        {t('shell.home.nextUp')}
+      </Text>
+      {body}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  section: { gap: figCard.headingGap },
+  heading: { paddingHorizontal: space[1] },
   card: {
-    gap: space[2],
-    padding: space[4],
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface1,
+    gap: figCard.cardGap,
+    padding: figCard.cardPad,
+    borderRadius: figCard.cardRadius,
+    borderWidth: control.hairline,
+    borderColor: colors.figCardBorder,
+    backgroundColor: colors.figCard,
+    ...elevation.figCard,
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[2] },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: figCard.pillDot,
+    paddingHorizontal: figCard.pillPadX,
+    paddingVertical: figCard.pillPadY,
+    borderRadius: radius.pill,
+    borderWidth: control.hairline,
+    borderColor: colors.figPillBorder,
+    backgroundColor: colors.figPillFill,
+    flexShrink: 1,
+  },
+  pillDot: { width: figCard.pillDot, height: figCard.pillDot, borderRadius: radius.pill, backgroundColor: colors.figPillInk },
+  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: figCard.cardGap, paddingBottom: figCard.metaPadBottom },
+  pin: { paddingTop: figCard.pinTop },
   flex: { flex: 1 },
 });

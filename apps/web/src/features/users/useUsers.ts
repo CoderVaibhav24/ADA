@@ -17,8 +17,8 @@
  *
  * ## Every write invalidates the capabilities query
  *
- * An admin can replace their OWN role set, and `super-admin` is the only role
- * holding `user.manage`. If the rail and the buttons kept rendering from a
+ * An admin can replace their OWN role set, and with it their own `user.*`
+ * codes. If the rail and the buttons kept rendering from a
  * stale capability set the screen would go on offering controls the next
  * request refuses. `/me/capabilities` is queried through
  * `features/policy/usePolicy`, not re-declared here, so both areas share one
@@ -36,8 +36,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { IcmsApiError } from "@/api/icms/http";
 import {
-  USER_MANAGE,
+  USER_CREATE,
+  USER_DISABLE,
+  USER_PASSWORD,
   USER_READ,
+  USER_ROLES,
+  USER_UPDATE,
+  type AssignableRole,
   type PasswordResetOut,
   type UserCreateInput,
   type UserDetail,
@@ -46,11 +51,21 @@ import {
   type UserUpdate,
   createUser,
   getUser,
+  listAssignableRoles,
   listUsers,
   resetPassword,
   setUserRoles,
   updateUser,
 } from "@/api/icms/users";
+import { listZones, type Zone } from "@/api/icms/reference";
+import {
+  ZONE_ASSIGNMENT_MANAGE,
+  ZONE_ASSIGNMENT_READ,
+  type ZoneAssignment,
+  assignZone,
+  listOfficerZones,
+  revokeZone,
+} from "@/api/icms/zoneAssignments";
 import { CAPABILITIES_KEY, useCapabilities } from "@/features/policy/usePolicy";
 
 const USERS_KEY = ["icms", "users"] as const;
@@ -70,7 +85,15 @@ export type UserGate = {
   loading: boolean;
   /** True only once capabilities have actually answered. Never optimistic. */
   canRead: boolean;
-  canManage: boolean;
+  canCreate: boolean;
+  /** Names and email. The enabled switch is `canDisable`. */
+  canUpdate: boolean;
+  canSetRoles: boolean;
+  canResetPassword: boolean;
+  canDisable: boolean;
+  /** Zone coverage: the list needs read or manage, the controls manage. */
+  canReadZones: boolean;
+  canManageZones: boolean;
   /** The signed-in officer's own Keycloak subject, for the self-edit warnings. */
   selfUserId: string | null;
   /** The area is unreachable and we know why — a refusal, not a network blip. */
@@ -84,7 +107,14 @@ export function useUserGate(): UserGate {
   return {
     loading: isPending,
     canRead: permissions.includes(USER_READ),
-    canManage: permissions.includes(USER_MANAGE),
+    canCreate: permissions.includes(USER_CREATE),
+    canUpdate: permissions.includes(USER_UPDATE),
+    canSetRoles: permissions.includes(USER_ROLES),
+    canResetPassword: permissions.includes(USER_PASSWORD),
+    canDisable: permissions.includes(USER_DISABLE),
+    canReadZones:
+      permissions.includes(ZONE_ASSIGNMENT_READ) || permissions.includes(ZONE_ASSIGNMENT_MANAGE),
+    canManageZones: permissions.includes(ZONE_ASSIGNMENT_MANAGE),
     selfUserId: data?.user_id ?? null,
     refused:
       error instanceof IcmsApiError && (error.status === 401 || error.status === 403)
@@ -102,6 +132,16 @@ export function useUserList(query: UserListQuery) {
     // is the screen an admin opens precisely when they suspect that happened.
     staleTime: 15_000,
     placeholderData: (previous) => previous,
+    retry: shouldRetry,
+  });
+}
+
+/** Every role an officer can be given, created roles included. */
+export function useAssignableRoles() {
+  return useQuery<AssignableRole[], Error>({
+    queryKey: ["icms", "roles"],
+    queryFn: ({ signal }) => listAssignableRoles(signal),
+    staleTime: 60_000,
     retry: shouldRetry,
   });
 }
@@ -230,4 +270,54 @@ export function useResetPassword(): Submit<[PasswordResetArgs], PasswordResetOut
     [invalidate],
   );
   return useSubmit(run, after);
+}
+
+export function officerZonesKey(userId: string): readonly unknown[] {
+  return ["icms", "zone-assignments", userId];
+}
+
+/** The officer's active zone assignments. */
+export function useOfficerZones(userId: string, enabled: boolean) {
+  return useQuery<ZoneAssignment[], Error>({
+    queryKey: officerZonesKey(userId),
+    queryFn: ({ signal }) => listOfficerZones(userId, signal),
+    enabled,
+    staleTime: 15_000,
+    retry: shouldRetry,
+  });
+}
+
+/** Active zones; same key as the complaint screens so the cache is shared. */
+export function useActiveZones(enabled: boolean) {
+  return useQuery<Zone[], Error>({
+    queryKey: ["icms", "zones"],
+    queryFn: ({ signal }) => listZones(signal),
+    enabled,
+    staleTime: 60 * 60 * 1000,
+    retry: shouldRetry,
+  });
+}
+
+// Prefix-wide: case assignee pickers and the reporting chart both read zone coverage.
+function useInvalidateCoverage(): () => Promise<void> {
+  const client = useQueryClient();
+  return useCallback(async () => {
+    await client.invalidateQueries({ queryKey: ["icms"] });
+  }, [client]);
+}
+
+export function useAssignZone() {
+  const invalidate = useInvalidateCoverage();
+  return useMutation<ZoneAssignment, Error, { userId: string; zoneCd: string }>({
+    mutationFn: ({ userId, zoneCd }) => assignZone(userId, zoneCd),
+    onSettled: () => invalidate(),
+  });
+}
+
+export function useRevokeZone() {
+  const invalidate = useInvalidateCoverage();
+  return useMutation<unknown, Error, { userId: string; zoneCd: string }>({
+    mutationFn: ({ userId, zoneCd }) => revokeZone(userId, zoneCd),
+    onSettled: () => invalidate(),
+  });
 }

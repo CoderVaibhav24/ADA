@@ -72,6 +72,15 @@ class AppConfigOut(BaseModel):
                     "nothing is stored. Evidence is append-only, so the ceiling "
                     "is final — stop the capture flow at it.",
     )
+    geofence_enforced: bool = Field(
+        description="When true a check-in farther than `geofence_radius_m` from the "
+                    "case location is refused 422 `outside_geofence`. Held in "
+                    "`icms_runtime_setting`; a Super Admin switches it.",
+    )
+    geofence_radius_m: float = Field(
+        description="Check-in geofence radius around the case location, in metres. "
+                    "When not enforced it is only the far-from-site warning.",
+    )
 
 
 class CodeValueQuery(CollectionParams):
@@ -185,3 +194,16 @@ class ZoneAssignmentRevoked(BaseModel):
     user_id: str
     revoked: bool
     revoked_at: IstDateTime | None = None
+
+
+class LocateOut(BaseModel):
+    """Administrative fields suggested for a point. All null when nothing is known."""
+
+    state: str | None = Field(description="State name as the geocoder spells it.")
+    district: str | None = Field(description="District, in LGD's spelling when it is in UP.")
+    district_lgd: str | None = Field(description="LGD district code; Uttar Pradesh only.")
+    pincode: str | None = Field(description="Six-digit postal code, else null.")
+    source: str = Field(
+        description="`nominatim`, `none` when no locator is configured, or "
+                    "`unavailable` when the lookup failed — show nothing then.",
+    )

@@ -10,7 +10,7 @@ do not appear in the change map, then normalized scene-wide.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -156,7 +156,7 @@ def predict_change_map(
         c1 = np.stack([t1[y:y + chip, x:x + chip] for y, x in batch])
         c2 = np.stack([t2[y:y + chip, x:x + chip] for y, x in batch])
         preds = backend.predict(c1, c2)
-        for (y, x), p in zip(batch, preds):
+        for (y, x), p in zip(batch, preds, strict=True):
             score[y:y + chip, x:x + chip] += p * win
             weight[y:y + chip, x:x + chip] += win
         if on_progress:
@@ -220,7 +220,7 @@ def segment_scene(
         batch = origins[i:i + batch_size]
         chips = np.stack([img[y:y + chip, x:x + chip] for y, x in batch])
         preds = backend.segment(chips)
-        for (y, x), p in zip(batch, preds):
+        for (y, x), p in zip(batch, preds, strict=True):
             score[y:y + chip, x:x + chip] += p * win
             weight[y:y + chip, x:x + chip] += win
         if on_progress:
@@ -264,7 +264,7 @@ def landcover_probs(
         preds = backend.probs(chips)                    # (n, C, chip, chip)
         if score is None:
             score = np.zeros((preds.shape[1], H, W), dtype=np.float32)
-        for (y, x), p in zip(batch, preds):
+        for (y, x), p in zip(batch, preds, strict=True):
             score[:, y:y + chip, x:x + chip] += p * win
             weight[y:y + chip, x:x + chip] += win
         if on_progress:

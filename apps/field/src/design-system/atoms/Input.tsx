@@ -11,6 +11,8 @@ import {
   type TextInputProps as RNTextInputProps,
 } from 'react-native';
 
+import { useScriptOf } from '@/services/i18n';
+
 import {
   colors,
   control,
@@ -39,6 +41,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
   ref,
 ) {
   const [focused, setFocused] = useState(false);
+  const script = useScriptOf(rest.value || rest.placeholder);
   const variant: TypographyVariant = monospace ? 'mono' : 'body';
   const border = invalid ? 'statusOverdue' : focused ? 'focus' : 'line1';
   return (
@@ -68,7 +71,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
           setFocused(false);
           onBlur?.(event);
         }}
-        style={[textStyle(variant, 'ink0'), styles.field]}
+        style={[textStyle(variant, 'ink0', script), styles.field]}
         {...rest}
       />
       {trailingIcon}

@@ -35,7 +35,7 @@
  * screen renders when the two ever disagree.
  */
 
-/** `SafeText`. Address, police station, the free-text `other_type`. */
+/** `SafeText`. Address and the free-text `other_type`. */
 export const MAX_SAFE_TEXT = 500;
 /** `SafeLongText`, which the description is. */
 export const MAX_LONG_TEXT = 5000;
@@ -45,8 +45,6 @@ export const MAX_NAME = 200;
 export const MAX_EMAIL = 254;
 /** `KhasraNo`. */
 export const MAX_KHASRA = 24;
-/** `floor_count: ge=0, le=200`. */
-export const MAX_FLOORS = 200;
 
 /** `case_schemas.SOURCES`, in the order the picker offers them. */
 export const COMPLAINT_SOURCES = ["office", "public", "field", "detection"] as const;
@@ -55,6 +53,10 @@ export type ComplaintSource = (typeof COMPLAINT_SOURCES)[number];
 /** `CASE_PRIORITIES`. The CHECK constraint is lower case; the capitals are CSS. */
 export const COMPLAINT_PRIORITIES = ["high", "medium", "low"] as const;
 export type ComplaintPriority = (typeof COMPLAINT_PRIORITIES)[number];
+
+/** The two tabs of the form: raised from a detection hand-off, or typed in by hand. */
+export const COMPLAINT_MODES = ["detection", "manual"] as const;
+export type ComplaintMode = (typeof COMPLAINT_MODES)[number];
 
 /** The `complaint_type_cd` whose presence makes `other_type` mandatory. */
 export const OTHER_TYPE_CODE = "other";
@@ -82,18 +84,12 @@ export type ComplaintFormState = {
   complainantPhone: string;
   complainantEmail: string;
 
-  ownerName: string;
-  ownerPhone: string;
-
   propertyAddress: string;
   landmark: string;
-  policeStation: string;
   pinCode: string;
   district: string;
   state: string;
   country: string;
-  propertyTypeCd: string;
-  floorCount: string;
 
   ulpin: string;
   khasraNo: string;
@@ -101,58 +97,85 @@ export type ComplaintFormState = {
   districtLgdCode: string;
 
   priority: string;
+  /** `complaint_date`, ISO yyyy-mm-dd. Blank lets the server default it. */
+  complaintDate: string;
 };
 
 export type ComplaintField = keyof ComplaintFormState;
 
-export type ComplaintFieldError = "required" | "invalid" | "tooLong" | "range";
+export type ComplaintFieldError = "required" | "invalid" | "tooLong" | "range" | "future";
 
 export type ComplaintFormErrors = Partial<Record<ComplaintField, ComplaintFieldError>>;
 
 /**
- * Screen order, which is also the order a refused submit looks for a problem.
- *
- * Moving a field on screen means moving it here, so the cursor never jumps
- * backwards past something the officer can already see is wrong.
+ * The Manual tab's screen order, which is also the order a refused submit looks
+ * for a problem. Moving a field on screen means moving it here, so the cursor
+ * never jumps backwards past something the officer can already see is wrong.
  */
 export const COMPLAINT_FIELD_ORDER: readonly ComplaintField[] = [
-  "source",
-  "detectionId",
   "complainantName",
   "complainantPhone",
   "complainantEmail",
+  "source",
+  "propertyAddress",
+  "landmark",
+  "pinCode",
+  "villageLgdCode",
+  "khasraNo",
+  "district",
+  "state",
+  "country",
+  "complaintTypeCd",
+  "otherType",
+  "detail",
+  "priority",
+  "complaintDate",
+  // The collapsed "More details" group, below the date row.
+  "ulpin",
+  "districtLgdCode",
+  // The map column, which sits after the form card in the DOM.
   "zoneCd",
   "latitude",
   "longitude",
+  // Never on screen in this tab; last so the unsaved guard still sees it.
+  "detectionId",
+];
+
+/** The "From detection" tab's screen order; the locked origin block leads. */
+export const DETECTION_FIELD_ORDER: readonly ComplaintField[] = [
+  "detectionId",
   "complaintTypeCd",
   "otherType",
-  "ownerName",
-  "ownerPhone",
-  "propertyTypeCd",
-  "floorCount",
-  "propertyAddress",
-  "landmark",
-  "policeStation",
-  "district",
-  "pinCode",
-  "state",
-  "country",
-  "ulpin",
-  "khasraNo",
-  "villageLgdCode",
-  "districtLgdCode",
   "detail",
   "priority",
+  "complaintDate",
+  "villageLgdCode",
+  "khasraNo",
+  "district",
+  "state",
+  "pinCode",
+  "ulpin",
+  "districtLgdCode",
+  "zoneCd",
+  "latitude",
+  "longitude",
 ];
+
+/** Fields that live in the collapsed "More details" group, in both tabs. */
+export const MORE_DETAIL_FIELDS: readonly ComplaintField[] = ["ulpin", "districtLgdCode"];
 
 /** The DOM id of one field's control, so a refusal can move the focus to it. */
 export function fieldId(field: ComplaintField): string {
   return `complaint-${field}`;
 }
 
-/** The first field in screen order that a refused submit should focus, if any. */
-export function firstProblem(errors: ComplaintFormErrors): ComplaintField | null {
-  for (const field of COMPLAINT_FIELD_ORDER) {
+/** The first field in the tab's screen order that a refused submit should focus, if any. */
+export function firstProblem(
+  errors: ComplaintFormErrors,
+  mode: ComplaintMode = "manual",
+): ComplaintField | null {
+  const order = mode === "detection" ? DETECTION_FIELD_ORDER : COMPLAINT_FIELD_ORDER;
+  for (const field of order) {
     if (errors[field] !== undefined) return field;
   }
   return null;
@@ -173,6 +196,8 @@ export type DetectionSeed = {
   lat: number | null;
   lon: number | null;
   status: "change" | "illegal" | null;
+  /** The ML worker's `change_type`, or null when the model named none. */
+  changeType: string | null;
 };
 
 /** The request body, as `CaseCreate` spells it on the wire. Assignable to it. */
@@ -189,6 +214,7 @@ export type ComplaintBody = {
   complainant_name?: string;
   complainant_phone?: string;
   complainant_email?: string;
+  /** Collected by the surveyor on site; never sent from this form. */
   owner_name?: string;
   owner_phone?: string;
   property_address?: string;
@@ -204,11 +230,30 @@ export type ComplaintBody = {
   village_lgd_code?: string;
   district_lgd_code?: string;
   priority?: ComplaintPriority;
+  complaint_date?: string;
   idempotency_key?: string;
 };
 
-/** A manual complaint: blank, source `office`, country India, priority medium. */
-export function blankComplaintForm(): ComplaintFormState {
+/** Today's date in the browser's own time zone, as yyyy-mm-dd. */
+export function localToday(now: Date = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${String(now.getFullYear())}-${month}-${day}`;
+}
+
+/** A real calendar date written as yyyy-mm-dd; "2026-02-30" is not one. */
+export function isIsoDate(raw: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (match === null) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+/** A manual complaint: blank, source `office`, country India, priority medium, dated today. */
+export function blankComplaintForm(today: string = localToday()): ComplaintFormState {
   return {
     source: "office",
     detectionId: "",
@@ -221,24 +266,20 @@ export function blankComplaintForm(): ComplaintFormState {
     complainantName: "",
     complainantPhone: "",
     complainantEmail: "",
-    ownerName: "",
-    ownerPhone: "",
     propertyAddress: "",
     landmark: "",
-    policeStation: "",
     pinCode: "",
     district: "",
     state: "",
     // `CaseCreate.country` defaults to "India"; showing it beats a blank box
     // the officer has to guess the convention for.
     country: "India",
-    propertyTypeCd: "",
-    floorCount: "",
     ulpin: "",
     khasraNo: "",
     villageLgdCode: "",
     districtLgdCode: "",
     priority: "medium",
+    complaintDate: today,
   };
 }
 
@@ -248,27 +289,149 @@ function coordinate(value: number | null): string {
 }
 
 /**
- * The form a detection hands over: source, polygon, point and a description.
+ * `complaint_type_cd` for a detection that overlaps a red zone: building inside
+ * one is what an encroachment is.
+ */
+export const RED_ZONE_TYPE_CODE = "encroachment";
+
+/** `complaint_type_cd` suggested by each `change_type`; codes from migration 0001's seed. */
+export const CHANGE_TYPE_CODES: Readonly<Record<string, string>> = {
+  new_construction: "unauthorised_construction",
+  extension: "deviation_from_plan",
+  demolition: OTHER_TYPE_CODE,
+};
+
+/** The type a detection suggests: a red-zone overlap first, then the change type, else blank. */
+export function suggestedTypeCode(seed: Pick<DetectionSeed, "status" | "changeType">): string {
+  if (seed.status === "illegal") return RED_ZONE_TYPE_CODE;
+  if (seed.changeType === null) return "";
+  return CHANGE_TYPE_CODES[seed.changeType] ?? "";
+}
+
+/**
+ * The form a detection hands over: source, polygon, point, a description and
+ * the type the detection suggests.
  *
- * Only the four fields the hand-off can actually fill are filled. The area, the
+ * Only the fields the hand-off can actually fill are filled. The area, the
  * confidence and the detection's own reference have no column on `CaseCreate` —
  * they are facts about the detection, not about the case — so they are shown on
  * the screen as the case's origin and composed into `detailText` by the caller,
- * which owns the officer's language. Everything else stays blank and is the
- * officer's to enter, exactly as a manual complaint would be.
+ * which owns the officer's language. The type is a suggestion the officer can
+ * change or clear; everything else stays blank and is the officer's to enter.
  */
 export function seedComplaintForm(
   seed: DetectionSeed,
   detailText: string,
+  today: string = localToday(),
 ): ComplaintFormState {
   return {
-    ...blankComplaintForm(),
+    ...blankComplaintForm(today),
     source: "detection",
     detectionId: seed.polygonId,
     latitude: coordinate(seed.lat),
     longitude: coordinate(seed.lon),
+    complaintTypeCd: suggestedTypeCode(seed),
     detail: detailText,
   };
+}
+
+/** The signed-in officer as complainant; a blank value is one the profile lacks or fails validation. */
+export type OfficerContact = { name: string; phone: string; email: string };
+
+/** Name, phone and email from the ID token's claims, each blanked unless the server would accept it. */
+export function officerContact(
+  profile: Readonly<Record<string, unknown>> | null | undefined,
+): OfficerContact {
+  const claim = (key: string): string => {
+    const value = profile?.[key];
+    return typeof value === "string" ? normaliseText(value) : "";
+  };
+
+  // Same claim order as the header's `profileName`, less its email local-part
+  // fallback: an address fragment is not a complainant's name.
+  const preferred = claim("preferred_username");
+  const joined = normaliseText(`${claim("given_name")} ${claim("family_name")}`);
+  const rawName =
+    claim("name") || joined || (preferred.includes("@") ? "" : preferred);
+  const name = placeError(rawName, false) === undefined ? rawName : "";
+
+  const rawPhone = claim("phone_number") || claim("phoneNumber");
+  const phone = rawPhone !== "" && isPhoneValid(rawPhone) ? normalisePhone(rawPhone) : "";
+
+  const rawEmail = claim("email");
+  const email = rawEmail !== "" && isEmailValid(rawEmail) ? rawEmail.toLowerCase() : "";
+
+  return { name, phone, email };
+}
+
+/** The officer written in as complainant; a phone already typed is kept, a blank one filled. */
+export function withOfficer(state: ComplaintFormState, officer: OfficerContact): ComplaintFormState {
+  return {
+    ...state,
+    complainantName: officer.name || state.complainantName,
+    complainantEmail: officer.email || state.complainantEmail,
+    complainantPhone: state.complainantPhone.trim() === "" ? officer.phone : state.complainantPhone,
+  };
+}
+
+/** Complainant fields shown read-only: the ones the officer's profile actually filled. */
+export function lockedByProfile(officer: OfficerContact | null): ReadonlySet<ComplaintField> {
+  const locked = new Set<ComplaintField>();
+  if (officer?.name) locked.add("complainantName");
+  if (officer?.email) locked.add("complainantEmail");
+  return locked;
+}
+
+/** A `?mode=` value when it names a tab. */
+export function isComplaintMode(value: string | null): value is ComplaintMode {
+  return (COMPLAINT_MODES as readonly (string | null)[]).includes(value);
+}
+
+/** The tab a visit opens on: the query string's when it names one, else detection only with a hand-off. */
+export function initialMode(raw: string | null, hasHandoff: boolean): ComplaintMode {
+  if (isComplaintMode(raw)) return raw;
+  return hasHandoff ? "detection" : "manual";
+}
+
+/**
+ * The state a tab submits, derived from the one shared state.
+ *
+ * Both tabs edit the same state so switching loses nothing typed; what each
+ * tab does not show is blanked here rather than in the state. Detection pins
+ * its source and makes the officer the complainant; Manual never carries a
+ * polygon id, which on any other source is a 422.
+ */
+export function forMode(
+  state: ComplaintFormState,
+  mode: ComplaintMode,
+  officer: OfficerContact | null = null,
+): ComplaintFormState {
+  if (mode === "detection") {
+    return {
+      ...state,
+      source: "detection",
+      complainantName: officer?.name ?? "",
+      complainantEmail: officer?.email ?? "",
+      complainantPhone: "",
+      propertyAddress: "",
+      landmark: "",
+    };
+  }
+  return {
+    ...state,
+    source: state.source === "detection" ? "office" : state.source,
+    detectionId: "",
+  };
+}
+
+/** "Lead: fact, fact." — the facts a detection has, the missing ones left out. */
+export function detectionSentence(
+  lead: string,
+  facts: readonly (string | null)[],
+  end: string,
+): string {
+  const known = facts.filter((fact): fact is string => fact !== null && fact !== "");
+  return known.length === 0 ? `${lead}${end}` : `${lead}: ${known.join(", ")}${end}`;
 }
 
 /* ---- normalisation and field rules --------------------------------------- */
@@ -342,14 +505,6 @@ export function parseCoordinate(raw: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** `floor_count`: a whole number, or null when the box is empty or not one. */
-export function parseFloors(raw: string): number | null {
-  const value = raw.trim();
-  if (value === "") return null;
-  if (!/^\d+$/.test(value)) return null;
-  return Number(value);
-}
-
 /** True when the officer has started giving a point — either half of it. */
 export function hasLocation(state: ComplaintFormState): boolean {
   return state.latitude.trim() !== "" || state.longitude.trim() !== "";
@@ -367,6 +522,10 @@ export function hasLocation(state: ComplaintFormState): boolean {
      - **Complainant name and contact are required only when a person
        complained.** A detection-sourced case has no complainant: the model
        raised it. Requiring a name there would be requiring an invented one.
+
+   Owner name and number, property type, floors and police station are not on
+   this form at all: the surveyor collects them on site. Address and landmark
+   belong to the Manual tab only, so a detection case needs neither.
    ---------------------------------------------------------------------- */
 
 // One rule for every short place name: present, inside `PlaceName`, no markup.
@@ -378,7 +537,11 @@ function placeError(raw: string, required: boolean): ComplaintFieldError | undef
   return undefined;
 }
 
-export function validateComplaintForm(state: ComplaintFormState): ComplaintFormErrors {
+/** `today` is injectable so the "not in the future" rule is testable. */
+export function validateComplaintForm(
+  state: ComplaintFormState,
+  today: string = localToday(),
+): ComplaintFormErrors {
   const errors: ComplaintFormErrors = {};
   const byDetection = state.source === "detection";
 
@@ -400,12 +563,6 @@ export function validateComplaintForm(state: ComplaintFormState): ComplaintFormE
 
   if (state.complainantEmail.trim() !== "" && !isEmailValid(state.complainantEmail)) {
     errors.complainantEmail = "invalid";
-  }
-
-  const owner = placeError(state.ownerName, false);
-  if (owner) errors.ownerName = owner;
-  if (state.ownerPhone.trim() !== "" && !isPhoneValid(state.ownerPhone)) {
-    errors.ownerPhone = "invalid";
   }
 
   // `_locatable_and_coherent`: neither is a 422 before the request is worth
@@ -440,25 +597,18 @@ export function validateComplaintForm(state: ComplaintFormState): ComplaintFormE
     else if (hasMarkup(address)) errors.propertyAddress = "invalid";
   }
 
-  const landmark = placeError(state.landmark, true);
+  const landmark = placeError(state.landmark, !byDetection);
   if (landmark) errors.landmark = landmark;
-  const station = placeError(state.policeStation, false);
-  if (station) errors.policeStation = station;
   const district = placeError(state.district, true);
   if (district) errors.district = district;
   const region = placeError(state.state, true);
   if (region) errors.state = region;
-  const country = placeError(state.country, true);
+  // Not on screen: seeded "India", so only a hand-edited state can fail it.
+  const country = placeError(state.country, false);
   if (country) errors.country = country;
 
   if (state.pinCode.trim() !== "" && !isPinValid(state.pinCode)) {
     errors.pinCode = "invalid";
-  }
-
-  if (state.floorCount.trim() !== "") {
-    const floors = parseFloors(state.floorCount);
-    if (floors === null) errors.floorCount = "invalid";
-    else if (floors > MAX_FLOORS) errors.floorCount = "range";
   }
 
   if (state.ulpin.trim() !== "" && !isUlpinValid(state.ulpin)) errors.ulpin = "invalid";
@@ -484,7 +634,26 @@ export function validateComplaintForm(state: ComplaintFormState): ComplaintFormE
     errors.priority = "invalid";
   }
 
+  // ISO strings compare correctly as strings, so no Date arithmetic is needed.
+  const dated = state.complaintDate.trim();
+  if (dated !== "") {
+    if (!isIsoDate(dated)) errors.complaintDate = "invalid";
+    else if (dated > today) errors.complaintDate = "future";
+  }
+
   return errors;
+}
+
+/** The fields `validateComplaintForm` would call "required" for this state. */
+export function requiredFields(state: ComplaintFormState): ReadonlySet<ComplaintField> {
+  const required = new Set<ComplaintField>(["source", "district", "state", "detail"]);
+  if (state.source !== "detection") {
+    required.add("complainantName");
+    required.add("complainantPhone");
+    required.add("landmark");
+  }
+  if (state.complaintTypeCd === OTHER_TYPE_CODE) required.add("otherType");
+  return required;
 }
 
 export function hasErrors(errors: ComplaintFormErrors): boolean {
@@ -510,7 +679,6 @@ function textOrOmit(raw: string): string | undefined {
 export function toComplaintBody(state: ComplaintFormState, key: string): ComplaintBody {
   const lat = parseCoordinate(state.latitude);
   const lon = parseCoordinate(state.longitude);
-  const floors = parseFloors(state.floorCount);
   const byDetection = state.source === "detection";
   const detectionId = Number(state.detectionId.trim());
 
@@ -540,17 +708,11 @@ export function toComplaintBody(state: ComplaintFormState, key: string): Complai
     body.complainant_email = state.complainantEmail.trim().toLowerCase();
   }
 
-  body.owner_name = textOrOmit(state.ownerName);
-  if (state.ownerPhone.trim() !== "") body.owner_phone = normalisePhone(state.ownerPhone);
-
   body.property_address = textOrOmit(state.propertyAddress);
   body.landmark = textOrOmit(state.landmark);
-  body.police_station = textOrOmit(state.policeStation);
   if (state.pinCode.trim() !== "") body.pin_code = state.pinCode.trim();
   body.district = textOrOmit(state.district);
   body.state = textOrOmit(state.state);
-  if (state.propertyTypeCd !== "") body.property_type_cd = state.propertyTypeCd;
-  if (floors !== null) body.floor_count = floors;
 
   if (state.ulpin.trim() !== "") body.ulpin = state.ulpin.trim().toUpperCase();
   if (state.khasraNo.trim() !== "") body.khasra_no = normaliseKhasra(state.khasraNo);
@@ -564,6 +726,8 @@ export function toComplaintBody(state: ComplaintFormState, key: string): Complai
   if ((COMPLAINT_PRIORITIES as readonly string[]).includes(state.priority)) {
     body.priority = state.priority as ComplaintPriority;
   }
+
+  if (isIsoDate(state.complaintDate.trim())) body.complaint_date = state.complaintDate.trim();
 
   return body;
 }

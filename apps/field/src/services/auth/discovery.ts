@@ -66,8 +66,13 @@ export async function resolveIssuer(): Promise<string> {
 }
 
 // Keycloak's token endpoint for an issuer; used for the password grant and every refresh.
-function tokenEndpointFor(issuer: string): string {
+export function tokenEndpointFor(issuer: string): string {
   return `${issuer.replace(/\/+$/, '')}/protocol/openid-connect/token`;
+}
+
+// Keycloak's end-session endpoint for an issuer (its discovery `end_session_endpoint`), same fixed layout.
+export function logoutEndpointFor(issuer: string): string {
+  return `${issuer.replace(/\/+$/, '')}/protocol/openid-connect/logout`;
 }
 
 // The token endpoint, from the API's issuer or the cached one when the API is unreachable.

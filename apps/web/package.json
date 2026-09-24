@@ -16,11 +16,13 @@
   "dependencies": {
     "@ada/api-types": "*",
     "@ada/shared": "*",
+    "@dagrejs/dagre": "^3.1.1",
     "@hookform/resolvers": "^5.9.1",
     "@iconify/react": "^6.0.2",
     "@tanstack/react-query": "^5.103.2",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.13",
+    "@xyflow/react": "^12.11.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

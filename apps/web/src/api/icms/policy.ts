@@ -31,11 +31,13 @@ export type PolicyPermission = components["schemas"]["PermissionOut"];
 export type RoleGrants = components["schemas"]["RoleGrantsOut"];
 export type PolicyTransition = components["schemas"]["TransitionOut"];
 export type TransitionPatch = components["schemas"]["TransitionUpdate"];
+export type RoleCreateInput = components["schemas"]["RoleCreate"];
 
 /** The backstop poll interval in `PolicyWatcher`. The worst case, not the usual one. */
 export const POLICY_PROPAGATION_SECONDS = 15;
 
-/** The two codes that gate this whole area. Read from capabilities, enforced server-side. */
+/** The codes that gate this whole area. Read from capabilities, enforced server-side. */
+export const ADMINISTRATION_ACCESS = "administration.access";
 export const POLICY_READ = "policy.read";
 export const POLICY_MANAGE = "policy.manage";
 
@@ -45,6 +47,8 @@ export const POLICY_MANAGE = "policy.manage";
  */
 export const POLICY_LOCKOUT = "policy_lockout";
 export const PERMISSION_IS_SYSTEM = "permission_is_system";
+/** 422 on PATCH /transitions/{id}: `permission_cd` names no catalogue row. */
+export const UNKNOWN_PERMISSION = "unknown_permission";
 
 const BASE = "/api/icms/admin/policy";
 
@@ -115,6 +119,12 @@ export async function putRoleGrants(
   return narrowObject<RoleGrants>(body, "permission_cds", "role grants");
 }
 
+/** Creates the Keycloak realm role and its row; 409 `role_exists` if the code is taken. */
+export async function createRole(input: RoleCreateInput): Promise<RoleGrants> {
+  const body = await icmsRequest(`${BASE}/roles`, { method: "POST", body: input });
+  return narrowObject<RoleGrants>(body, "permission_cds", "role");
+}
+
 /** 204. Refused 409 `permission_is_system` for every seeded code, which is all of them. */
 export async function deletePermission(permissionCd: string): Promise<void> {
   await icmsRequest(`${BASE}/permissions/${encodeURIComponent(permissionCd)}`, {
@@ -122,7 +132,7 @@ export async function deletePermission(permissionCd: string): Promise<void> {
   });
 }
 
-/** Only roles, requires, assignee_only, active and note. The rest is not editable. */
+/** Only permission_cd, requires, assignee_only, active and note. Sending `roles` is refused 422. */
 export async function patchTransition(
   id: number,
   patch: TransitionPatch,

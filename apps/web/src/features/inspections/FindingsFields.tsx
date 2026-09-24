@@ -10,6 +10,7 @@
  * the differences are deliberate:
  *
  *   - **the findings list and the cited sections are not on the frame at all.**
+ *     Sections sit under the notice's act, inside the notice group.
  *     `FindingsPut.findings` is a list with `min_length=1` and
  *     `icms_inspection_section` is a table; one "Inspection Remarks" box cannot
  *     carry either. The frame's remarks box is `officer_note`, the free-text
@@ -26,8 +27,8 @@
  */
 
 import type { ReactNode } from "react";
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -52,6 +53,9 @@ import {
   removeFinding,
   removeSection,
   setFindingText,
+  setNoticeAct,
+  setNoticeRequired,
+  sideArea,
   type FindingsFormErrors,
   type FindingsFormState,
 } from "./findingsForm";
@@ -230,163 +234,175 @@ export function FindingsList({ labels, state, onChange, disabled, errors }: Fiel
   );
 }
 
-export type SectionsEditorProps = FieldGroupProps & {
-  acts: Vocabulary;
+type SectionsPickerProps = {
+  labels: FindingsLabels;
+  state: FindingsFormState;
+  onChange: (next: FindingsFormState) => void;
+  disabled: boolean;
   sections: Vocabulary;
 };
 
-/**
- * The statutory sections the round cites.
- *
- * Two dependent pickers: `icms_code_value.parent_code` is what ties a section
- * to its act, so choosing an act narrows the second list. The pair is added to
- * a list rather than edited in place, because the server stores a set — sorted
- * and de-duplicated — not a row the form owns a slot in.
- */
-export function SectionsEditor({
-  labels,
-  state,
-  onChange,
-  disabled,
-  acts,
-  sections,
-}: SectionsEditorProps) {
-  const [actCd, setActCd] = useState("");
-  const [sectionCd, setSectionCd] = useState("");
-  const [duplicate, setDuplicate] = useState(false);
+// Sections of the notice's act only, via `parent_code`; ticking one cites it.
+function SectionsPicker({ labels, state, onChange, disabled, sections }: SectionsPickerProps) {
+  const actCd = state.noticeActCd;
+  const forAct = sections.options.filter((option) => option.parent === actCd);
 
-  // A section with no parent belongs to no particular act, so it stays on offer
-  // rather than disappearing because the vocabulary is only half filled in.
-  const forAct = sections.options.filter(
-    (option) => option.parent === null || option.parent === actCd,
-  );
-  const vocabularyMissing = acts.unavailable || sections.unavailable;
-
-  const add = () => {
-    if (actCd === "" || sectionCd === "") return;
-    if (hasSection(state, actCd, sectionCd)) {
-      setDuplicate(true);
-      return;
-    }
-    setDuplicate(false);
-    setSectionCd("");
-    onChange(addSection(state, actCd, sectionCd));
-  };
+  let body: ReactNode;
+  if (actCd === "") body = <Hint id="sections-hint">{labels.sections.chooseAct}</Hint>;
+  else if (sections.unavailable) body = <Hint id="sections-hint">{labels.sections.unavailable}</Hint>;
+  else if (!sections.loading && forAct.length === 0)
+    body = <Hint id="sections-hint">{labels.sections.noneForAct}</Hint>;
+  else
+    body = (
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {forAct.map((option) => {
+          const id = `section-${option.value}`;
+          const checked = hasSection(state, actCd, option.value);
+          return (
+            <li key={option.value} className="flex items-start gap-2">
+              <Checkbox
+                id={id}
+                checked={checked}
+                disabled={disabled || sections.loading}
+                onCheckedChange={(next) => {
+                  onChange(
+                    next === true
+                      ? addSection(state, actCd, option.value)
+                      : removeSection(state, actCd, option.value),
+                  );
+                }}
+              />
+              <Label htmlFor={id} className="text-sm font-normal break-words">
+                {option.label}
+              </Label>
+            </li>
+          );
+        })}
+      </ul>
+    );
 
   return (
-    <Panel title={labels.sections.label} hint={labels.sections.hint}>
-      {state.sections.length === 0 ? (
-        <p className="text-xs text-fg-faint">{labels.sections.none}</p>
-      ) : (
-        <ul className="flex flex-wrap gap-2">
-          {state.sections.map((item) => (
-            <li
-              key={`${item.actCd}/${item.sectionCd}`}
-              className="flex items-center gap-1 rounded-full border border-line-subtle bg-surface-2 py-1 ps-3 pe-1 text-xs text-fg-base"
-            >
-              <span className="break-words">
-                {acts.label(item.actCd)} · {sections.label(item.sectionCd)}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                disabled={disabled}
-                aria-label={labels.sections.remove(
-                  acts.label(item.actCd),
-                  sections.label(item.sectionCd),
-                )}
-                onClick={() => {
-                  onChange(removeSection(state, item.actCd, item.sectionCd));
-                }}
-              >
-                <Icon name="action.close" className="size-3.5" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {vocabularyMissing ? (
-        // Not a dead dropdown: the vocabulary is a seeding gap, and the officer
-        // is told so rather than left clicking an empty list.
-        <p role="status" className="max-w-prose text-xs text-fg-muted text-pretty">
-          {labels.sections.unavailable}
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex min-w-[12rem] flex-1 flex-col gap-1.5">
-            <Label htmlFor="section-act">{labels.sections.actLabel}</Label>
-            <Select
-              value={actCd === "" ? undefined : actCd}
-              disabled={disabled || acts.loading}
-              onValueChange={(next) => {
-                setActCd(next);
-                setSectionCd("");
-                setDuplicate(false);
-              }}
-            >
-              <SelectTrigger id="section-act" className="w-full">
-                <SelectValue placeholder={labels.sections.actPlaceholder} />
-              </SelectTrigger>
-              <SelectContent>
-                {acts.options.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex min-w-[10rem] flex-1 flex-col gap-1.5">
-            <Label htmlFor="section-code">{labels.sections.sectionLabel}</Label>
-            <Select
-              value={sectionCd === "" ? undefined : sectionCd}
-              disabled={disabled || actCd === "" || sections.loading}
-              onValueChange={(next) => {
-                setSectionCd(next);
-                setDuplicate(false);
-              }}
-            >
-              <SelectTrigger id="section-code" className="w-full">
-                <SelectValue placeholder={labels.sections.sectionPlaceholder} />
-              </SelectTrigger>
-              <SelectContent>
-                {forAct.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-9"
-            disabled={disabled || actCd === "" || sectionCd === ""}
-            onClick={add}
-          >
-            <Icon name="action.add" className="size-4" />
-            {labels.sections.add}
-          </Button>
-        </div>
-      )}
-
-      {duplicate && <FieldError id="section-duplicate">{labels.sections.duplicate}</FieldError>}
-    </Panel>
+    <fieldset className="flex flex-col gap-2">
+      <legend className="mb-1 text-sm font-medium text-fg-base">{labels.sections.label}</legend>
+      {body}
+    </fieldset>
   );
 }
 
 export type ObservationFieldsProps = FieldGroupProps & {
   areaTypes: Vocabulary;
+  constructionStages: Vocabulary;
   acts: Vocabulary;
+  sections: Vocabulary;
 };
 
-/** Occupant, measurement, notice and the officer's note — the frame's own fields. */
+type CodeSelectProps = {
+  id: string;
+  label: string;
+  placeholder: string;
+  value: string;
+  vocabulary: Vocabulary;
+  disabled: boolean;
+  onValueChange: (next: string) => void;
+};
+
+// One `icms_code_value` domain as a dropdown.
+function CodeSelect({ id, label, placeholder, value, vocabulary, disabled, onValueChange }: CodeSelectProps) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Select
+        value={value === "" ? undefined : value}
+        disabled={disabled || vocabulary.loading || vocabulary.unavailable}
+        onValueChange={onValueChange}
+      >
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {vocabulary.options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+type NumberFieldProps = {
+  id: string;
+  label: string;
+  value: string;
+  disabled: boolean;
+  error?: string;
+  onValueChange: (next: string) => void;
+};
+
+// A decimal typed as text, with its error said in words.
+function NumberField({ id, label, value, disabled, error, onValueChange }: NumberFieldProps) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="text"
+        inputMode="decimal"
+        value={value}
+        disabled={disabled}
+        autoComplete="off"
+        className="tabular"
+        aria-invalid={error !== undefined}
+        aria-describedby={error === undefined ? undefined : `${id}-error`}
+        onChange={(event) => {
+          onValueChange(event.target.value);
+        }}
+      />
+      {error !== undefined && <FieldError id={`${id}-error`}>{error}</FieldError>}
+    </div>
+  );
+}
+
+type PhoneFieldProps = {
+  id: string;
+  label: string;
+  hint: string;
+  invalidText: string;
+  value: string;
+  disabled: boolean;
+  invalid: boolean;
+  onValueChange: (next: string) => void;
+};
+
+// An Indian mobile number; blank is allowed.
+function PhoneField({ id, label, hint, invalidText, value, disabled, invalid, onValueChange }: PhoneFieldProps) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="tel"
+        inputMode="numeric"
+        value={value}
+        disabled={disabled}
+        autoComplete="off"
+        aria-invalid={invalid}
+        aria-describedby={invalid ? `${id}-error` : `${id}-hint`}
+        onChange={(event) => {
+          onValueChange(event.target.value);
+        }}
+      />
+      {invalid ? (
+        <FieldError id={`${id}-error`}>{invalidText}</FieldError>
+      ) : (
+        <Hint id={`${id}-hint`}>{hint}</Hint>
+      )}
+    </div>
+  );
+}
+
+/** Occupant, owner, measurement, notice and the officer's note — none of them mandatory. */
 export function ObservationFields({
   labels,
   state,
@@ -394,8 +410,12 @@ export function ObservationFields({
   disabled,
   errors,
   areaTypes,
+  constructionStages,
   acts,
+  sections,
 }: ObservationFieldsProps) {
+  const derived = state.measuredArea.trim() === "" ? sideArea(state) : null;
+
   return (
     <Panel title={labels.occupant.legend}>
       {/* Two columns from `sm` up, one below it: on a 360px phone a two-column
@@ -415,72 +435,108 @@ export function ObservationFields({
           />
         </div>
 
+        <PhoneField
+          id="occupant-phone"
+          label={labels.occupant.phoneLabel}
+          hint={labels.occupant.phoneHint}
+          invalidText={labels.occupant.phoneInvalid}
+          value={state.occupantPhone}
+          disabled={disabled}
+          invalid={errors.phone !== undefined}
+          onValueChange={(next) => {
+            onChange({ ...state, occupantPhone: next });
+          }}
+        />
+
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="occupant-phone">{labels.occupant.phoneLabel}</Label>
+          <Label htmlFor="owner-name">{labels.owner.nameLabel}</Label>
           <Input
-            id="occupant-phone"
-            type="tel"
-            inputMode="numeric"
-            value={state.occupantPhone}
+            id="owner-name"
+            value={state.ownerName}
+            maxLength={MAX_NAME}
             disabled={disabled}
             autoComplete="off"
-            aria-invalid={errors.phone !== undefined}
-            aria-describedby={
-              errors.phone === undefined ? "occupant-phone-hint" : "occupant-phone-error"
-            }
             onChange={(event) => {
-              onChange({ ...state, occupantPhone: event.target.value });
+              onChange({ ...state, ownerName: event.target.value });
             }}
           />
-          {errors.phone === undefined ? (
-            <Hint id="occupant-phone-hint">{labels.occupant.phoneHint}</Hint>
-          ) : (
-            <FieldError id="occupant-phone-error">{labels.occupant.phoneInvalid}</FieldError>
-          )}
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="area-type">{labels.measurement.areaTypeLabel}</Label>
-          <Select
-            value={state.areaTypeCd === "" ? undefined : state.areaTypeCd}
-            disabled={disabled || areaTypes.loading || areaTypes.unavailable}
-            onValueChange={(next) => {
-              onChange({ ...state, areaTypeCd: next });
-            }}
-          >
-            <SelectTrigger id="area-type" className="w-full">
-              <SelectValue placeholder={labels.measurement.areaTypePlaceholder} />
-            </SelectTrigger>
-            <SelectContent>
-              {areaTypes.options.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <PhoneField
+          id="owner-phone"
+          label={labels.owner.phoneLabel}
+          hint={labels.occupant.phoneHint}
+          invalidText={labels.occupant.phoneInvalid}
+          value={state.ownerPhone}
+          disabled={disabled}
+          invalid={errors.ownerPhone !== undefined}
+          onValueChange={(next) => {
+            onChange({ ...state, ownerPhone: next });
+          }}
+        />
+      </div>
 
+      <div className="grid gap-4 border-t border-line-subtle pt-4 sm:grid-cols-2">
+        <CodeSelect
+          id="area-type"
+          label={labels.measurement.areaTypeLabel}
+          placeholder={labels.measurement.areaTypePlaceholder}
+          value={state.areaTypeCd}
+          vocabulary={areaTypes}
+          disabled={disabled}
+          onValueChange={(next) => {
+            onChange({ ...state, areaTypeCd: next });
+          }}
+        />
+
+        <CodeSelect
+          id="construction-stage"
+          label={labels.measurement.stageLabel}
+          placeholder={labels.measurement.areaTypePlaceholder}
+          value={state.constructionStageCd}
+          vocabulary={constructionStages}
+          disabled={disabled}
+          onValueChange={(next) => {
+            onChange({ ...state, constructionStageCd: next });
+          }}
+        />
+
+        <NumberField
+          id="length-m"
+          label={labels.measurement.lengthLabel}
+          value={state.lengthM}
+          disabled={disabled}
+          error={errors.length === undefined ? undefined : labels.measurement.sideInvalid}
+          onValueChange={(next) => {
+            onChange({ ...state, lengthM: next });
+          }}
+        />
+
+        <NumberField
+          id="width-m"
+          label={labels.measurement.widthLabel}
+          value={state.widthM}
+          disabled={disabled}
+          error={errors.width === undefined ? undefined : labels.measurement.sideInvalid}
+          onValueChange={(next) => {
+            onChange({ ...state, widthM: next });
+          }}
+        />
+
+        {/* Square metres, because `measured_area_sqm` is the column. */}
         <div className="flex flex-col gap-1.5">
-          {/* Square metres, because `measured_area_sqm` is the column. The unit
-              is in the label rather than in a suffix, so it is read out too. */}
-          <Label htmlFor="measured-area">{labels.measurement.areaLabel}</Label>
-          <Input
+          <NumberField
             id="measured-area"
-            type="text"
-            inputMode="decimal"
+            label={labels.measurement.areaLabel}
             value={state.measuredArea}
             disabled={disabled}
-            autoComplete="off"
-            className="tabular"
-            aria-invalid={errors.area !== undefined}
-            aria-describedby={errors.area === undefined ? undefined : "measured-area-error"}
-            onChange={(event) => {
-              onChange({ ...state, measuredArea: event.target.value });
+            error={errors.area === undefined ? undefined : labels.measurement.areaInvalid}
+            onValueChange={(next) => {
+              onChange({ ...state, measuredArea: next });
             }}
           />
-          {errors.area !== undefined && (
-            <FieldError id="measured-area-error">{labels.measurement.areaInvalid}</FieldError>
+          {derived !== null && errors.area === undefined && (
+            <Hint id="measured-area-derived">{labels.measurement.derivedArea(String(derived))}</Hint>
           )}
         </div>
       </div>
@@ -493,52 +549,51 @@ export function ObservationFields({
             checked={state.noticeRequired}
             disabled={disabled}
             onCheckedChange={(checked) => {
-              onChange({ ...state, noticeRequired: checked });
+              onChange(setNoticeRequired(state, checked));
             }}
           />
           <Label htmlFor="notice-required">{labels.notice.requiredLabel}</Label>
         </div>
 
-        {/* The act matters only once a notice is required, and it is required
-            then: `notice_act_cd` with no notice is a value nothing reads. */}
+        {/* Act and sections only with a notice: the server refuses an act without one. */}
         {state.noticeRequired && (
-          <div className="flex max-w-md flex-col gap-1.5">
-            <Label htmlFor="notice-act">{labels.notice.actLabel}</Label>
-            {acts.unavailable ? (
-              <p role="status" className="max-w-prose text-xs text-fg-muted text-pretty">
-                {labels.sections.unavailable}
-              </p>
-            ) : (
-              <Select
-                value={state.noticeActCd === "" ? undefined : state.noticeActCd}
-                disabled={disabled || acts.loading}
-                onValueChange={(next) => {
-                  onChange({ ...state, noticeActCd: next });
-                }}
-              >
-                <SelectTrigger
-                  id="notice-act"
-                  className="w-full"
-                  aria-invalid={errors.noticeAct !== undefined}
-                  aria-describedby={
-                    errors.noticeAct === undefined ? undefined : "notice-act-error"
-                  }
+          <>
+            <div className="flex max-w-md flex-col gap-1.5">
+              <Label htmlFor="notice-act">{labels.notice.actLabel}</Label>
+              {acts.unavailable ? (
+                <p role="status" className="max-w-prose text-xs text-fg-muted text-pretty">
+                  {labels.sections.unavailable}
+                </p>
+              ) : (
+                <Select
+                  value={state.noticeActCd === "" ? undefined : state.noticeActCd}
+                  disabled={disabled || acts.loading}
+                  onValueChange={(next) => {
+                    onChange(setNoticeAct(state, next));
+                  }}
                 >
-                  <SelectValue placeholder={labels.notice.actPlaceholder} />
-                </SelectTrigger>
-                <SelectContent>
-                  {acts.options.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {errors.noticeAct !== undefined && (
-              <FieldError id="notice-act-error">{labels.notice.actRequired}</FieldError>
-            )}
-          </div>
+                  <SelectTrigger id="notice-act" className="w-full">
+                    <SelectValue placeholder={labels.notice.actPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {acts.options.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <SectionsPicker
+              labels={labels}
+              state={state}
+              onChange={onChange}
+              disabled={disabled}
+              sections={sections}
+            />
+          </>
         )}
       </fieldset>
 

@@ -46,22 +46,29 @@ export function StateMessage({
       style={[styles.frame, style]}
       accessibilityRole={tone === 'empty' ? undefined : 'alert'}
     >
-      <Icon name={glyph[tone]} size="xl" color={tone === 'error' ? 'statusOverdue' : 'ink2'} />
-      <Text variant="subheading" color="ink0" align="center">
+      <Icon name={glyph[tone]} size="xl" color={tone === 'error' ? 'figDanger' : 'figBeige'} />
+      <Text variant="figCardTitle" color="white" align="center">
         {title}
       </Text>
       {message ? (
-        <Text variant="body" color="ink2" align="center">
+        <Text variant="figBody" color="figChevron" align="center">
           {message}
         </Text>
       ) : null}
       {reference ? (
-        <Text variant="mono" color="ink3" align="center" selectable>
+        <Text variant="mono" color="figMuted" align="center" selectable>
           {reference}
         </Text>
       ) : null}
       {actionLabel && onAction ? (
-        <Button label={actionLabel} onPress={onAction} variant="secondary" fullWidth={false} />
+        <Button
+          label={actionLabel}
+          onPress={onAction}
+          variant="figSecondary"
+          fullWidth={false}
+          style={styles.action}
+          leadingIcon={<Icon name={tone === 'empty' ? 'forward' : 'sync'} size="sm" color="white" />}
+        />
       ) : null}
     </View>
   );
@@ -75,4 +82,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: space[4],
     paddingVertical: space[6],
   },
+  action: { alignSelf: 'center' },
 });

@@ -1,23 +1,31 @@
 /**
- * TabBarItem — icon, label and the raised hexagon that marks the active tab.
- * One component with a state, not four components (ui-registry.md §2). The hexagon is a
- * react-native-svg polygon rather than an image asset, so it costs no bytes at any density.
+ * TabBarItem — one slot of the notched glass tab bar. Inactive: a muted outline glyph.
+ * Active: the glyph has risen into the bar's floating circle, so the slot shows only its label.
  */
 
 import { Pressable, StyleSheet, View } from 'react-native';
-import Svg, { Polygon } from 'react-native-svg';
+import Animated, {
+  FadeOut,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  type EntryExitAnimationFunction,
+} from 'react-native-reanimated';
 
-import { Badge, Icon, Text, type IconName } from '../atoms';
-import {
-  colors,
-  indicator,
-  layout,
-  space,
-  type LayoutStyle,
-} from '../tokens';
+import { useT } from '@/services/i18n';
+
+import { Badge, Glyph, Icon, Text, type GlyphName, type IconName } from '../atoms';
+import { layout, motion, pressedOpacity, shell, space, spring, type LayoutStyle } from '../tokens';
 
 export type TabBarItemProps = {
-  icon: IconName;
+  /** Lucide fallback, for a tab without a drawn glyph. */
+  icon?: IconName;
+  /** The drawn glyph; wins over `icon`. */
+  glyph?: GlyphName;
+  /** Drawn width of the glyph (tokens `shell.tabGlyph*`). */
+  glyphWidth?: number;
   label: string;
   active: boolean;
   onPress: () => void;
@@ -27,41 +35,71 @@ export type TabBarItemProps = {
   style?: LayoutStyle;
 };
 
-// A pointy-top hexagon in a 100x100 box, so it scales with the token without new points.
-const HEXAGON_POINTS = '50,2 95,26 95,74 50,98 5,74 5,26';
+// The label fades in while rising `shell.tabLabelRise` into place.
+const labelEntering: EntryExitAnimationFunction = () => {
+  'worklet';
+  return {
+    initialValues: { opacity: 0, transform: [{ translateY: shell.tabLabelRise }] },
+    animations: {
+      opacity: withTiming(1, { duration: motion.fast }),
+      transform: [{ translateY: withTiming(0, { duration: motion.fast }) }],
+    },
+  };
+};
+const labelExiting = FadeOut.duration(motion.fast);
 
-// Active raises the hexagon behind the glyph; inactive is a plain icon and label.
-export function TabBarItem({ icon, label, active, onPress, badgeCount, testID, style }: TabBarItemProps) {
+// The band under the notch: from the dip's bottom (circle centre + notch radius, below the bar top) to the bar's bottom.
+const LABEL_BAND = shell.tabBarBody - (shell.tabCircle / 2 - shell.tabCircleOverhang + shell.tabNotchRadius);
+
+// Press-scale for the slot; off under reduce motion, where the press dims instead.
+function usePressMotion() {
+  const reduceMotion = useReducedMotion();
+  const press = useSharedValue(1);
+  const pressStyle = useAnimatedStyle(() => ({ transform: [{ scale: press.value }] }));
+  const onPressIn = () => {
+    if (!reduceMotion) press.set(withTiming(shell.tabPressScale, { duration: motion.fast }));
+  };
+  const onPressOut = () => {
+    if (!reduceMotion) press.set(withSpring(1, spring.tabIndicator));
+  };
+  return { reduceMotion, pressStyle, onPressIn, onPressOut };
+}
+
+// A flexible slot the height of the bar; the badge stays top-right of the slot whether or not it is active.
+export function TabBarItem({ icon, glyph, glyphWidth, label, active, onPress, badgeCount, testID, style }: TabBarItemProps) {
+  const t = useT();
+  const { reduceMotion, pressStyle, onPressIn, onPressOut } = usePressMotion();
+  const hasBadge = badgeCount !== undefined && badgeCount > 0;
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       accessibilityRole="tab"
       accessibilityLabel={label}
+      accessibilityHint={active ? undefined : t('shell.tabs.a11y', { label })}
       accessibilityState={{ selected: active }}
-      style={[styles.item, style]}
+      style={({ pressed }) => [styles.item, { opacity: pressed && reduceMotion ? pressedOpacity : 1 }, style]}
     >
-      <View style={styles.glyphWell}>
+      <Animated.View style={[styles.content, pressStyle]}>
         {active ? (
-          <Svg
-            width={indicator.hexagon}
-            height={indicator.hexagon}
-            viewBox="0 0 100 100"
-            style={StyleSheet.absoluteFill}
-          >
-            <Polygon points={HEXAGON_POINTS} fill={colors.brand} />
-          </Svg>
-        ) : null}
-        <Icon name={icon} size="lg" color={active ? 'inkOnMuted' : 'ink2'} />
-        {badgeCount !== undefined && badgeCount > 0 ? (
+          <Animated.View entering={labelEntering} exiting={labelExiting} style={styles.label}>
+            <Text variant="figTabLabel" color="ink1" align="center" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+              {label}
+            </Text>
+          </Animated.View>
+        ) : glyph ? (
+          <Glyph name={glyph} width={glyphWidth} color="ink2" />
+        ) : (
+          <Icon name={icon ?? 'home'} size="lg" color="ink2" />
+        )}
+        {hasBadge ? (
           <View style={styles.badge}>
-            <Badge count={badgeCount} accessibilityLabel={`${badgeCount} unread in ${label}`} />
+            <Badge count={badgeCount} accessibilityLabel={t('tabs.badgeA11y', { count: badgeCount, label })} />
           </View>
         ) : null}
-      </View>
-      <Text variant="caption" color={active ? 'brand' : 'ink2'} numberOfLines={1}>
-        {label}
-      </Text>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -69,18 +107,18 @@ export function TabBarItem({ icon, label, active, onPress, badgeCount, testID, s
 const styles = StyleSheet.create({
   item: {
     flex: 1,
-    minWidth: layout.touchMin,
+    alignSelf: 'stretch',
     minHeight: layout.touchMin,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: space[1],
-    paddingVertical: space[1],
   },
-  glyphWell: {
-    width: indicator.hexagon,
-    height: indicator.hexagon,
-    alignItems: 'center',
+  content: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  label: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: LABEL_BAND,
     justifyContent: 'center',
+    paddingHorizontal: space[1],
   },
-  badge: { position: 'absolute', top: space[2], right: space[2] },
+  badge: { position: 'absolute', top: space[1], right: space[1] },
 });

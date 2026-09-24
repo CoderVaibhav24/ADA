@@ -49,12 +49,16 @@ from typing import Annotated
 from ada_core.database import get_db
 from ada_core.validation import CaseRef, InspectionRef
 from ada_platform import Principal
-from fastapi import APIRouter, Depends, Form, Path, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Path, Query, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from ..clients.keycloak import KeycloakAdmin
+from ..config import settings
 from ..errors import ApiError
 from ..icms import inspections as repo
+from ..icms import notifier
+from ..icms.actors import actor_directory, fill_actor_names
 from ..icms.collection import Page
 from ..icms.inspection_schemas import (
     CheckInCreate,
@@ -83,25 +87,34 @@ InspectionRefPath = Annotated[
     InspectionRef, Path(description="The inspection reference, e.g. `INS-2026-0001`.")
 ]
 
+RESURVEY_NAMES = {"requested_by": "requested_by_name", "decided_by": "decided_by_name"}
+
 
 def _detail_or_404(
-    db: Session, inspection_ref: str, scope: ZoneScope, user: Principal
+    db: Session, inspection_ref: str, scope: ZoneScope, user: Principal,
+    directory: KeycloakAdmin | None,
 ) -> InspectionDetail:
     data = repo.inspection_detail(
         db, inspection_ref, scope, roles=user.roles, user_id=user.subject)
     if data is None:
         raise ApiError(404, "inspection_not_found", f"no inspection {inspection_ref}")
-    return InspectionDetail(**data)
+    detail = InspectionDetail(**data)
+    fill_actor_names(directory, [detail], {"surveyor_user_id": "surveyor_name"})
+    fill_actor_names(directory, detail.check_ins, {"user_id": "user_name"})
+    fill_actor_names(directory, detail.evidence, {"uploaded_by": "uploaded_by_name"})
+    return detail
 
 
 def _resurvey_or_404(
-    db: Session, request_id: int, scope: ZoneScope
+    db: Session, request_id: int, scope: ZoneScope, directory: KeycloakAdmin | None,
 ) -> ResurveyRequestOut:
     data = repo.resurvey_detail(db, request_id, scope)
     if data is None:
         raise ApiError(
             404, "resurvey_request_not_found", f"no re-survey request {request_id}")
-    return ResurveyRequestOut(**data)
+    out = ResurveyRequestOut(**data)
+    fill_actor_names(directory, [out], RESURVEY_NAMES)
+    return out
 
 
 # ------------------------------------------------------------------ the loop
@@ -114,8 +127,10 @@ def _resurvey_or_404(
 def open_round(
     case_ref: CaseRefPath,
     body: InspectionOpen,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> InspectionDetail:
     """Stage 3, and the only way an inspection comes into existence.
@@ -138,7 +153,9 @@ def open_round(
         db, case_ref, body, scope, actor=user.subject, roles=user.roles)
     if inspection_ref is None:
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return _detail_or_404(db, inspection_ref, scope, user)
+    notifier.round_opened(background, db, directory, inspection_ref=inspection_ref,
+                          actor=user.subject)
+    return _detail_or_404(db, inspection_ref, scope, user, directory)
 
 
 @router.post(
@@ -217,6 +234,7 @@ def record_findings(
     body: FindingsPut,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> InspectionDetail:
     """Stage 4. A PUT because it is the form's whole content, saved as often as
@@ -226,11 +244,12 @@ def record_findings(
     the form carried them, so a save from a screen without the sections field
     does not silently drop citations entered on another one.
     """
+    source = "field" if user.azp == settings.oidc_field_client_id else "web"
     if not repo.record_findings(
-        db, ref, body, scope, actor=user.subject, roles=user.roles
+        db, ref, body, scope, actor=user.subject, roles=user.roles, source=source
     ):
         raise ApiError(404, "inspection_not_found", f"no inspection {ref}")
-    return _detail_or_404(db, ref, scope, user)
+    return _detail_or_404(db, ref, scope, user, directory)
 
 
 @router.post(
@@ -241,15 +260,19 @@ def record_findings(
 def submit(
     ref: InspectionRefPath,
     body: SubmitRequest,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> InspectionDetail:
     """A round already submitted is itself the answer to submitting it again, so
     a replay returns it with 200 rather than a 409 the handset cannot act on."""
     if repo.submit(db, ref, body, scope, actor=user.subject, roles=user.roles) is None:
         raise ApiError(404, "inspection_not_found", f"no inspection {ref}")
-    return _detail_or_404(db, ref, scope, user)
+    notifier.inspection_submitted(background, db, directory, inspection_ref=ref,
+                                  actor=user.subject)
+    return _detail_or_404(db, ref, scope, user, directory)
 
 
 @router.post(
@@ -260,8 +283,10 @@ def submit(
 def verify(
     ref: InspectionRefPath,
     body: VerifyRequest,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> InspectionDetail:
     """Stage 5. The router chooses the ACTION the decision names and nothing
@@ -269,7 +294,10 @@ def verify(
     stages, and a rejection carries the reason the surveyor has to act on."""
     if not repo.verify(db, ref, body, scope, actor=user.subject, roles=user.roles):
         raise ApiError(404, "inspection_not_found", f"no inspection {ref}")
-    return _detail_or_404(db, ref, scope, user)
+    notifier.inspection_verified(background, db, directory, inspection_ref=ref,
+                                 decision=body.decision, reason=body.reason,
+                                 actor=user.subject)
+    return _detail_or_404(db, ref, scope, user, directory)
 
 
 @router.post(
@@ -281,8 +309,10 @@ def verify(
 def request_resurvey(
     case_ref: CaseRefPath,
     body: ResurveyCreate,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> ResurveyRequestOut:
     """One open request per case, enforced by a partial unique index rather than
@@ -291,7 +321,9 @@ def request_resurvey(
         db, case_ref, body, scope, actor=user.subject, roles=user.roles)
     if request_id is None:
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return _resurvey_or_404(db, request_id, scope)
+    notifier.resurvey_requested(background, db, directory, request_id=request_id,
+                                actor=user.subject)
+    return _resurvey_or_404(db, request_id, scope, directory)
 
 
 @router.post(
@@ -302,8 +334,10 @@ def request_resurvey(
 def decide_resurvey(
     request_id: Annotated[int, Path(ge=1, description="The re-survey request's id.")],
     body: ResurveyDecide,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> ResurveyRequestOut:
     """Approving runs `open_round` in the same transaction as the decision, so a
@@ -316,7 +350,9 @@ def decide_resurvey(
     ):
         raise ApiError(
             404, "resurvey_request_not_found", f"no re-survey request {request_id}")
-    return _resurvey_or_404(db, request_id, scope)
+    notifier.resurvey_decided(background, db, directory, request_id=request_id,
+                              actor=user.subject)
+    return _resurvey_or_404(db, request_id, scope, directory)
 
 
 # ----------------------------------------------------------------- the reads
@@ -329,6 +365,7 @@ def list_inspections(
     params: Annotated[InspectionQuery, Query()],
     user: Principal = Depends(require_permission("inspection.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> Page[InspectionRow]:
     """Scoped to the caller's zones, counted over the scoped selectable, paged at
@@ -336,6 +373,7 @@ def list_inspections(
     rounds and nobody else's — that narrowing is the field app's work list."""
     result = repo.register(db, params, scope, caller=user.subject, roles=user.roles)
     items = [InspectionRow(**row) for row in repo.rows_to_dicts(result)]
+    fill_actor_names(directory, items, {"surveyor_user_id": "surveyor_name"})
     return Page[InspectionRow].of(items, result)
 
 
@@ -348,9 +386,10 @@ def get_inspection(
     ref: InspectionRefPath,
     user: Principal = Depends(require_permission("inspection.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> InspectionDetail:
-    return _detail_or_404(db, ref, scope, user)
+    return _detail_or_404(db, ref, scope, user, directory)
 
 
 @router.get(
@@ -362,6 +401,7 @@ def list_evidence(
     ref: InspectionRefPath,
     user: Principal = Depends(require_permission("evidence.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> list[EvidenceOut]:
     """A Field Surveyor sees their own rounds; a colleague's round is a 404.
@@ -373,7 +413,9 @@ def list_evidence(
     rows = repo.evidence_for(db, ref, scope, roles=user.roles, user_id=user.subject)
     if rows is None:
         raise ApiError(404, "inspection_not_found", f"no inspection {ref}")
-    return [EvidenceOut(**row) for row in rows]
+    items = [EvidenceOut(**row) for row in rows]
+    fill_actor_names(directory, items, {"uploaded_by": "uploaded_by_name"})
+    return items
 
 
 @router.get(
@@ -385,6 +427,7 @@ def list_resurvey_requests(
     case_ref: CaseRefPath,
     user: Principal = Depends(require_permission("inspection.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> list[ResurveyRequestOut]:
     """The officer who decides a re-survey is not the one who asked for it, so
@@ -396,7 +439,9 @@ def list_resurvey_requests(
     rows = repo.resurvey_requests_for(db, case_ref, scope)
     if rows is None:
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return [ResurveyRequestOut(**row) for row in rows]
+    items = [ResurveyRequestOut(**row) for row in rows]
+    fill_actor_names(directory, items, RESURVEY_NAMES)
+    return items
 
 
 @router.get(
@@ -427,4 +472,27 @@ def get_evidence_content(
         stored.path,
         media_type=stored.content_type or "application/octet-stream",
         filename=stored.filename,
+    )
+
+
+@router.get(
+    "/evidence/{evidence_id}/stamped",
+    response_class=FileResponse,
+    summary="The server-stamped copy of an evidence photograph, as an attachment",
+    responses={200: {"content": {"image/jpeg": {}},
+                     "description": "The original with the API's location bar added."}},
+)
+def get_evidence_stamped(
+    evidence_id: Annotated[int, Path(ge=1, description="The evidence row's id.")],
+    user: Principal = Depends(require_permission("evidence.read")),
+    scope: ZoneScope = Depends(zone_scope),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Same scope as `/content`; 404 `evidence_not_stamped` when no copy was made."""
+    stored = repo.evidence_content(
+        db, evidence_id, scope, roles=user.roles, user_id=user.subject, stamped=True)
+    if stored is None:
+        raise ApiError(404, "evidence_not_found", f"no evidence {evidence_id}")
+    return FileResponse(
+        stored.path, media_type="image/jpeg", filename=stored.filename,
     )

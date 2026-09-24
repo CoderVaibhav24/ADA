@@ -5,6 +5,8 @@
 
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useScriptOf } from '@/services/i18n';
+
 import {
   colors,
   control,
@@ -48,12 +50,13 @@ export function Chip({
   style,
 }: ChipProps) {
   const solid = appearance === 'solid';
+  const script = useScriptOf(label);
   const background: ColorToken = solid ? tone : appearance === 'outline' ? 'transparent' : 'surface2';
   const foreground: ColorToken = solid ? 'inkOnMuted' : tone;
   const body = (
     <>
       {dot ? <View style={[styles.dot, { backgroundColor: colors[foreground] }]} /> : null}
-      <Text numberOfLines={1} style={textStyle(size === 'sm' ? 'caption' : 'label', foreground)}>
+      <Text numberOfLines={1} style={textStyle(size === 'sm' ? 'caption' : 'label', foreground, script)}>
         {label}
       </Text>
     </>

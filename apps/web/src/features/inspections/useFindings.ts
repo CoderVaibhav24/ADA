@@ -46,6 +46,7 @@ import { listCodeValues, type CodeValue } from "@/api/icms/reference";
 export const AREA_TYPE_DOMAIN = "area_type";
 export const ACT_DOMAIN = "act";
 export const SECTION_DOMAIN = "section";
+export const CONSTRUCTION_STAGE_DOMAIN = "construction_stage";
 
 // The detail screen's key, spelled the same way on purpose. Not imported from
 // its module: that file is being written beside this one, and a shared cache

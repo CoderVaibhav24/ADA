@@ -1,29 +1,5 @@
-/**
- * The dashboard's arithmetic, kept out of the components so it can be tested.
- *
- * Every import here is `import type`, and that is load-bearing rather than
- * stylistic: `npm test` runs these modules under Node's type stripping, which
- * erases type imports but cannot resolve the `@/` alias. A value imported from
- * `@/api/icms/dashboard` would make the whole file untestable.
- *
- * ## The period whitelist is the API's range, not the design's list
- *
- * Figma's period menu (`134:2479`) offers five options: Last 7 / 30 / 90 days,
- * This Financial Year, All Time. `TrendQuery.days` is `ge=1, le=365` with no
- * since-date parameter and no unbounded mode, so the last two cannot be asked
- * for — a financial year that has run more than 365 days and "all time" are
- * both a 422, and clamping either one silently mislabels the answer. `PERIODS`
- * therefore carries the three day-windows Figma names plus a twelve-month one,
- * and each option fixes its own bucket so the chart never has to draw 365
- * points at three pixels apart.
- *
- * ## Nothing here re-buckets
- *
- * The server buckets in IST and returns every bucket in the window, empty ones
- * as zeroes. `trendTotals` sums what came back and `labelledIndexes` decides
- * which of those buckets get an x-axis label. Neither invents, merges nor drops
- * a point.
- */
+// Pure dashboard arithmetic. Type-only imports: `npm test` runs this under Node type stripping.
+// PERIODS stays inside the API's 1-365 day range; nothing here re-buckets.
 
 import type { Bucket } from "@/api/icms/dashboard";
 
@@ -79,13 +55,7 @@ function niceStep(max: number, maxSteps: number): number {
   return 10 * magnitude;
 }
 
-/**
- * Axis ticks for a count: always from 0, always ending ON the top of the scale.
- *
- * The caller sets the domain to the last tick, so every label names a value the
- * drawn axis reaches and no mark falls outside the plot. An all-zero series
- * gets `[0, 1]` — a count axis has no negative half to borrow headroom from.
- */
+/** Count-axis ticks from 0 ending on the scale top; an all-zero series gets [0, 1]. */
 export function niceTicks(max: number, maxSteps = 5): number[] {
   if (!Number.isFinite(max) || max <= 0) return [0, 1];
   const step = niceStep(max, maxSteps);
@@ -98,13 +68,7 @@ export function axisMax(ticks: readonly number[]): number {
   return ticks.length === 0 ? 1 : ticks[ticks.length - 1];
 }
 
-/**
- * Which bucket indexes get an x-axis label.
- *
- * Thirty daily buckets cannot carry thirty dates at panel width, so the labels
- * are thinned. The last bucket is labelled only when it would not collide with
- * the one before it — a label overlapping its neighbour is worse than absent.
- */
+/** Thinned x-axis label indexes; the last bucket only when it clears its neighbour. */
 export function labelledIndexes(count: number, maxLabels = 7): number[] {
   if (count <= 0) return [];
   if (count <= maxLabels) return Array.from({ length: count }, (_, index) => index);
@@ -119,12 +83,7 @@ export function labelledIndexes(count: number, maxLabels = 7): number[] {
   return chosen;
 }
 
-/**
- * A group's share of the groups that came back, to the nearest whole percent.
- *
- * `by-type` and `by-zone` are `LIMIT 100`, so the denominator is the total of
- * the rows RETURNED and not necessarily the register's total. Callers say so.
- */
+/** Whole-percent share of the rows returned (the endpoints cap at 100 groups). */
 export function shareOf(value: number, total: number): number {
   if (total <= 0) return 0;
   return Math.round((value / total) * 100);
@@ -139,4 +98,20 @@ export function groupTotal(rows: readonly Grouped[]): number {
 /** Cycles the five chart tokens so a sixth group is drawn rather than dropped. */
 export function seriesVar(index: number): string {
   return `var(--color-chart-${String((index % 5) + 1)})`;
+}
+
+const DAY_MS = 86_400_000;
+const IST_OFFSET_MS = 330 * 60_000;
+
+// IST calendar-day index of a timestamp.
+function istDay(ms: number): number {
+  return Math.floor((ms + IST_OFFSET_MS) / DAY_MS);
+}
+
+/** Whole IST calendar days from `iso` to `now`; 0 for today or a future stamp, null if unparseable. */
+export function daysAgo(iso: string, now: Date | number): number | null {
+  const then = Date.parse(iso);
+  const current = typeof now === "number" ? now : now.getTime();
+  if (Number.isNaN(then) || Number.isNaN(current)) return null;
+  return Math.max(0, istDay(current) - istDay(then));
 }

@@ -1,6 +1,19 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +48,14 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan")
 
 
+# Raster lifecycle; the sweeper deletes rows in a terminal status after 7 days.
+RASTER_STATUSES = (
+    "uploading", "completing", "rejected", "processing", "failed_retryable", "failed",
+    "ready", "cold", "restoring", "expired",
+)
+RASTER_TERMINAL_STATUSES = ("rejected", "failed", "expired")
+
+
 class Raster(Base):
     """One uploaded map (drone or satellite orthophoto). Any number per project."""
 
@@ -50,7 +71,8 @@ class Raster(Base):
     crs: Mapped[str | None] = mapped_column(String(100), nullable=True)
     bounds_4326: Mapped[dict | None] = mapped_column(Json, nullable=True)  # [w, s, e, n]
     resolution_m: Mapped[float | None] = mapped_column(Float, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="processing")  # processing|ready|failed
+    # One of RASTER_STATUSES; 'completing' is the complete-endpoint compare-and-set lock.
+    status: Mapped[str] = mapped_column(String(20), default="processing")
     # Ingest progress, mirroring what analysis_jobs already exposes. A grid tile
     # takes many minutes to ingest, and "processing" alone cannot distinguish
     # slow from stuck — which is the whole question an officer has while waiting.
@@ -58,23 +80,68 @@ class Raster(Base):
     stage: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_ist)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    received_chunks: Mapped[str | None] = mapped_column(Text, nullable=True)  # hex bitmap
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_chunk_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_progress_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=now_ist)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    archive_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archive_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    archive_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cold_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    restore_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    restore_eta_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tier: Mapped[str | None] = mapped_column(String(12), nullable=True)  # cuda|metal|cpu
 
     project: Mapped[Project] = relationship(back_populates="rasters")
 
 
+# What a KML `reserved` placemark may be (docs/icms/kml-import-spec.md).
+RESERVED_FEATURE_TYPES = ("park", "water", "road", "heritage", "scheme", "other")
+
+
 class RedZone(Base):
-    """User-defined restricted area. Any change inside it is flagged illegal."""
+    """Restricted area. Any change inside it is flagged illegal.
+
+    Drawn ones belong to a project. KML ones (`source = 'kml'`) have no project,
+    apply to every analysis, and are keyed by `import_key` so a re-import upserts.
+    """
 
     __tablename__ = "red_zones"
+    __table_args__ = (
+        CheckConstraint("source IN ('drawn', 'kml')", name="red_zones_source_ck"),
+        CheckConstraint("project_id IS NOT NULL OR source = 'kml'",
+                        name="red_zones_project_ck"),
+        Index("uq_red_zones_import_key", "import_key", unique=True,
+              postgresql_where=text("import_key IS NOT NULL"),
+              sqlite_where=text("import_key IS NOT NULL")),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    project_id: Mapped[int] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(200), default="Red zone")
     geometry: Mapped[dict] = mapped_column(Json)  # GeoJSON geometry, EPSG:4326
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_ist)
+    source: Mapped[str] = mapped_column(
+        String(10), default="drawn", server_default=text("'drawn'"))
+    feature_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    import_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    attributes: Mapped[dict | None] = mapped_column(Json, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
-    project: Mapped[Project] = relationship(back_populates="red_zones")
+    project: Mapped[Project | None] = relationship(back_populates="red_zones")
 
 
 class AnalysisJob(Base):

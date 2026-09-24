@@ -373,6 +373,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Data */
+            data?: {
+                [key: string]: string;
+            };
             /**
              * Id
              * Format: uuid
@@ -445,7 +449,7 @@ export interface components {
         NotificationCreate: {
             /**
              * Channels
-             * @description Where to deliver. One or several — the caller chooses, and there is no default: a call that does not say where a message should go is not finished. Deliverable in this release: email, push.
+             * @description Where to deliver. One or several — the caller chooses, and there is no default: a call that does not say where a message should go is not finished. Deliverable in this release: email, inapp, push.
              */
             channels: string[];
             /**
@@ -520,7 +524,7 @@ export interface components {
             body: string;
             /**
              * Channel
-             * @description Deliverable in this release: email, push
+             * @description Deliverable in this release: email, inapp, push
              */
             channel: string;
             /** Key */
@@ -731,6 +735,8 @@ export interface operations {
             query?: {
                 cursor?: string | null;
                 limit?: number;
+                /** @description Render title/body in this locale, e.g. 'hi' */
+                locale?: string | null;
                 /** @description Filter by project key, e.g. 'ada' */
                 project?: string | null;
             };

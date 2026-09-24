@@ -50,6 +50,37 @@ export const en = {
     notificationsNone: "Notifications, none unread",
     copyright: "© {{year}} Agra Development Authority",
     operatedBy: "Operated by PCSMCPL",
+    navLoading: "Loading your menu…",
+  },
+
+  notificationsPanel: {
+    title: "Notifications",
+    empty: "You have no notifications.",
+    unavailable: "Notifications are unavailable right now.",
+    loading: "Loading notifications…",
+    unread: "Unread",
+    markRead: "Mark as read",
+    markAllRead: "Mark all read",
+    types: {
+      case_raised: "New case raised",
+      inspection_submitted: "Inspection submitted",
+      resurvey_refused: "Re-survey refused",
+      case_handed_over: "Case handed over to you",
+      case_confirmed: "Case confirmed",
+      notice_issued: "Notice issued",
+      inspection_overdue: "Survey overdue",
+      verification_pending: "Verification pending",
+      resurvey_decision_pending: "Re-survey decision pending",
+      notice_compliance_due: "Notice compliance date passed",
+      other: "Notification",
+    },
+  },
+
+  routeGate: {
+    checking: "Checking your permissions…",
+    kicker: "Not permitted",
+    title: "You do not have access to this screen",
+    body: "This screen needs the {{code}} permission. If you believe you should be able to open it, ask a Super Admin to review your role.",
   },
 
   placeholderScreens: {
@@ -319,10 +350,18 @@ export const en = {
       },
       // Every number in this sentence comes from the detection itself; nothing
       // here is invented, and the officer may edit all of it.
-      seedDetail:
-        "Raised from change detection {{ref}}: about {{area}} sq.m of change, {{confidence}}% confidence. ",
+      seed: {
+        lead: "Raised from change detection {{ref}}",
+        status: {
+          change: "change detected",
+          illegal: "overlaps a red zone",
+        },
+        area: "about {{area}} sq.m of change",
+        confidence: "{{confidence}}% confidence",
+        end: ". ",
+      },
       locked:
-        "The source and the change polygon are fixed by the detection. Everything else is yours to enter.",
+        "The source and the change polygon are fixed by the detection. The pin, the description and the imagery are filled from it and can be changed; everything else is yours to enter.",
     },
 
     source: {
@@ -336,6 +375,21 @@ export const en = {
       },
     },
 
+    mode: {
+      label: "How this complaint is raised",
+      detection: "From detection",
+      manual: "Manual",
+      noHandoff: "Open from Change Detection to raise a complaint from a detection.",
+    },
+
+    officer: {
+      legend: "Raised by",
+      name: "Officer name",
+      email: "Officer email",
+      source: "Source",
+      detectionId: "Detection ID",
+    },
+
     complainant: {
       legend: "Complainant",
       hint: "Who reported it. A complaint raised from a detection has no complainant.",
@@ -346,6 +400,8 @@ export const en = {
         hint: "Indian mobile number. A country code or spacing is fine.",
       },
       email: { label: "Email", placeholder: "name@example.com" },
+      fromAccount: "From your account",
+      useMine: "Use my details",
     },
 
     location: {
@@ -364,6 +420,10 @@ export const en = {
       readout: "Lat {{lat}}, Long {{lon}}",
       readoutEmpty: "No point given — the zone above will be used.",
       clear: "Clear the point",
+      suggested: "Suggested from location",
+      fromLandRecord: "Suggested from land record",
+      fromLandRecordPlot: "Suggested from land record · plot no.",
+      foreignZone: "Point is in zone {{zone}}, which is not assigned to you.",
       mapDeferred:
         "Picking the point on a map is not built yet. Paste or type the coordinates for now.",
     },
@@ -374,6 +434,7 @@ export const en = {
       unavailable: "The complaint types could not be loaded, so this is left unset.",
       loading: "Loading complaint types",
       clear: "Clear the type",
+      suggested: "Suggested from detection",
       other: {
         label: "Describe the type",
         placeholder: "Say what kind of complaint this is",
@@ -382,17 +443,11 @@ export const en = {
 
     property: {
       legend: "Property Address",
-      ownerName: { label: "Owner Name", placeholder: "Enter owner name" },
-      ownerPhone: { label: "Owner Number", placeholder: "10-digit mobile number" },
-      propertyType: { label: "Property Type", placeholder: "Choose a property type" },
-      floors: { label: "Number of Floors", placeholder: "Enter number of floors" },
       address: { label: "Address", placeholder: "Enter address" },
       landmark: { label: "Landmark", placeholder: "Enter landmark" },
-      policeStation: { label: "Police Station", placeholder: "Enter police station" },
       district: { label: "District", placeholder: "Enter district" },
       pinCode: { label: "Pin code", placeholder: "Enter pin code" },
       state: { label: "State", placeholder: "Enter state" },
-      country: { label: "Country", placeholder: "Enter country" },
     },
 
     parcel: {
@@ -426,6 +481,74 @@ export const en = {
 
     priority: { label: "Priority", placeholder: "Choose a priority" },
 
+    map: {
+      title: "Select Location on Map",
+      canvas:
+        "Map. Click to drop the pin. With the keyboard, pan with the arrow keys, then press Pin location.",
+      pin: "Pin location",
+      movePin: "Move pin here",
+      none: "No point pinned yet",
+      hint: "Click the map or drag the pin. The coordinates can also be typed under Geographical details.",
+      unavailable:
+        "The map cannot be shown in this browser. Type the coordinates under Geographical details instead.",
+    },
+
+    parcelRow: {
+      hint: "Pinning the location on the map fills the coordinates and decides the zone. The village and parcel ID are entered from the land record.",
+      village: {
+        label: "Village",
+        placeholder: "Village LGD code",
+        hint: "The village's LGD code, up to 12 digits.",
+      },
+      parcelId: {
+        label: "Parcel ID",
+        placeholder: "Khasra no., e.g. 142/3",
+        hint: "The khasra number, unique within its village.",
+      },
+    },
+
+    more: {
+      title: "More details",
+      hint: "The ULPIN and the district LGD code.",
+    },
+
+    complaintDate: {
+      label: "Date of Complaint",
+      placeholder: "Choose a date",
+      hint: "The day the complaint was received. It cannot be in the future.",
+    },
+
+    evidence: {
+      label: "Evidence / Photographs",
+      hint: "JPEG, PNG or WebP, up to {{mb}} MB each, {{max}} photos at most. They are uploaded once the complaint is filed.",
+      add: "Add",
+      addLabel: "Add photographs",
+      drop: "Drop an image or click to browse",
+      dropHint: "JPEG, PNG or WebP",
+      remove: "Remove {{name}}",
+      fromDetection: "From detection",
+      detectionLoading: "Fetching the detection's before and after imagery…",
+      detectionFailed: "Could not fetch detection imagery — add a photo manually.",
+      rejected: {
+        type: "{{name}} was not added: only JPEG, PNG or WebP images are accepted.",
+        size: "{{name}} was not added: it is larger than {{mb}} MB.",
+        count: "{{name}} was not added: a complaint takes {{max}} photos at most.",
+      },
+      full: "{{max}} photos chosen, which is the most a complaint takes.",
+    },
+
+    filed: {
+      title: "Complaint {{ref}} filed",
+      uploading: "Uploading photographs: {{done}} of {{total}}",
+      failed_one:
+        "{{count}} photo failed to upload — add it from the complaint, or try again here.",
+      failed_other:
+        "{{count}} photos failed to upload — add them from the complaint, or try again here.",
+      saved: "The complaint itself is saved; only the photos are missing.",
+      retry: "Retry the failed uploads",
+      open: "Open the complaint",
+    },
+
     submit: "Submit Complaint",
     submitting: "Filing the complaint",
     submitConfirmTitle: "File this complaint?",
@@ -448,6 +571,7 @@ export const en = {
       invalid: "This is not in the form the record expects.",
       tooLong: "This is longer than the record allows.",
       range: "This is outside the range the record allows.",
+      future: "This date is in the future.",
     },
 
     /**
@@ -781,6 +905,11 @@ export const en = {
       none: "No occupant recorded",
     },
 
+    owner: {
+      title: "Owner",
+      none: "No owner recorded",
+    },
+
     measurement: {
       title: "Measurement",
       areaType: "Area type",
@@ -792,6 +921,13 @@ export const en = {
       no: "No",
       undecided: "Not decided",
       none: "Nothing measured yet",
+      stage: "Construction stage",
+      dimensions: "Length × width",
+      dimensionsValue: "{{length}} m × {{width}} m",
+      mismatch: "The measured area differs from length × width by more than 10%.",
+      source: "Recorded from",
+      sourceField: "Field app",
+      sourceWeb: "Web portal",
     },
 
     findings: {
@@ -911,18 +1047,11 @@ export const en = {
     },
 
     sections: {
-      label: "Sections cited",
-      hint: "The act and section the construction is being held against.",
-      actLabel: "Act",
-      actPlaceholder: "Select an act",
-      sectionLabel: "Section",
-      sectionPlaceholder: "Section",
-      add: "Add section",
-      remove: "Remove {{act}} section {{section}}",
-      duplicate: "That act and section are already cited.",
-      none: "No section cited yet.",
+      label: "Sections cited (optional)",
+      chooseAct: "Choose the act to see its sections.",
+      noneForAct: "No sections are listed under this act.",
       unavailable:
-        "The list of acts and sections is not available, so nothing new can be cited here. Anything already cited is still shown and can still be removed.",
+        "The list of acts and sections is not available, so nothing new can be cited here. Anything already cited is kept.",
     },
 
     occupant: {
@@ -933,12 +1062,22 @@ export const en = {
       phoneInvalid: "Enter a ten-digit phone number.",
     },
 
+    owner: {
+      nameLabel: "Owner name",
+      phoneLabel: "Owner phone",
+    },
+
     measurement: {
       legend: "Measurement",
       areaTypeLabel: "Area type",
       areaTypePlaceholder: "Select",
       areaLabel: "Measured area (sq.m)",
       areaInvalid: "Enter the area in square metres.",
+      stageLabel: "Construction stage",
+      lengthLabel: "Length (m)",
+      widthLabel: "Width (m)",
+      sideInvalid: "Enter metres: more than 0 and at most 10,000.",
+      derivedArea: "Length × width = {{value}} sq.m. Leave the area blank to use it.",
     },
 
     notice: {
@@ -946,7 +1085,6 @@ export const en = {
       requiredLabel: "A notice is required",
       actLabel: "Act the notice would be issued under",
       actPlaceholder: "Select an act",
-      actRequired: "Choose the act when a notice is required.",
     },
 
     note: {
@@ -1042,11 +1180,20 @@ export const en = {
       transitions: "Workflow",
     },
 
+    bands: {
+      all: "All",
+      screens: "Screens",
+      workflow: "Workflow steps",
+      data: "Data & admin",
+      filterLabel: "Show permissions for",
+      chip: "{{band}} ({{n}})",
+    },
+
     gate: {
       checking: "Checking your permissions…",
       deniedTitle: "You do not have access to administration",
       deniedBody:
-        "This area needs the policy.read permission, which only Super Admin holds today. If you should be able to open it, ask a Super Admin to grant it.",
+        "This area needs the policy.read permission. If you should be able to open it, ask a Super Admin to grant it.",
     },
 
     propagation: {
@@ -1085,21 +1232,72 @@ export const en = {
         read: "See which officers cover which zones",
         manage: "Assign and revoke zone coverage",
       },
+      dashboard: {
+        access: "Open the Dashboard screen",
+        read: "Read dashboard aggregates",
+      },
+      change_detection: { access: "Open the Change Detection screen" },
+      complaint_create: { access: "Open the Create Complaint screen" },
+      complaints: { access: "Open the Complaints register" },
+      inspections: { access: "Open the Inspections screens" },
+      notices: { access: "Open the Notices screens" },
+      reports: { access: "Open the Reports screen" },
+      administration: { access: "Open the Administration screen" },
+      officers: { access: "Open the Officers screen" },
       case: {
         read: "Read the complaints register and case detail",
         export: "Export register rows to CSV",
+        raise: "Raise a complaint",
+        assign: "Assign a case to an officer",
+        reassign: "Reassign a case to another officer",
+        reject: "Reject a case",
+        amend: "Amend a case's details",
+        hand_over: "Hand a case over for the next stage",
+        confirm: "Confirm a case",
+        close: "Close a case",
       },
-      inspection: { read: "Read inspections and findings" },
-      evidence: { read: "Read captured evidence" },
-      notice: { read: "Read the notices register and notice detail" },
-      dashboard: { read: "Read dashboard aggregates" },
+      evidence: {
+        read: "Read captured evidence",
+        write: "Upload evidence",
+      },
+      inspection: {
+        read: "Read inspections and findings",
+        open_round: "Open an inspection round",
+        check_in: "Check in at the site",
+        record_findings: "Record inspection findings",
+        submit: "Submit an inspection",
+        verify: "Verify an inspection",
+        request_resurvey: "Request a re-survey",
+        export: "Export inspections",
+      },
+      imagery: {
+        read: "View imagery and detections",
+        write: "Upload imagery and review detections",
+        export: "Export imagery and detections",
+        run: "Run change detection",
+      },
+      notice: {
+        read: "Read the notices register and notice detail",
+        issue: "Issue a notice",
+        download: "Download a notice document",
+        export: "Export notices",
+      },
+      report: {
+        read: "Read reports",
+        export: "Export reports",
+      },
       policy: {
         read: "Read the workflow table and role grants",
         manage: "Change the workflow table and role grants",
       },
       user: {
         read: "List officers",
-        manage: "Create and disable officers",
+        create: "Create officers",
+        update: "Amend officer details",
+        roles: "Change an officer's roles",
+        password: "Set an officer's password",
+        disable: "Enable and disable officers",
+        manage: "Manage officers (superseded by the five officer codes)",
       },
     },
 
@@ -1107,19 +1305,53 @@ export const en = {
       reference: "Reference data",
       zone: "Zones",
       zone_assignment: "Zone coverage",
+      dashboard: "Dashboard",
+      change_detection: "Change Detection",
+      complaint_create: "Create Complaint",
+      complaints: "Complaints",
+      inspections: "Inspections screens",
+      notices: "Notices screens",
+      reports: "Reports",
+      administration: "Administration",
+      officers: "Officers screen",
       case: "Cases",
       inspection: "Inspections",
       evidence: "Evidence",
+      imagery: "Imagery",
       notice: "Notices",
-      dashboard: "Dashboard",
+      report: "Report data",
       policy: "Policy",
       user: "Officers",
     },
 
     actionLabels: {
+      access: "Open screen",
       read: "Read",
       manage: "Manage",
       export: "Export",
+      create: "Create",
+      update: "Update",
+      roles: "Roles",
+      password: "Password",
+      disable: "Disable",
+      raise: "Raise",
+      assign: "Assign",
+      reassign: "Reassign",
+      reject: "Reject",
+      amend: "Amend",
+      hand_over: "Hand over",
+      confirm: "Confirm",
+      close: "Close",
+      open_round: "Open round",
+      check_in: "Check in",
+      record_findings: "Record findings",
+      submit: "Submit",
+      verify: "Verify",
+      request_resurvey: "Request re-survey",
+      write: "Write",
+      run: "Run",
+      issue: "Issue",
+      download: "Download",
     },
 
     permissions: {
@@ -1154,6 +1386,24 @@ export const en = {
       emptyBody: "The catalogue is empty, which means migration 0003 has not run on this database.",
     },
 
+    createRole: {
+      newRole: "New role",
+      title: "Create a role",
+      description: "The role is created in Keycloak and appears here and on the Officers screen. Tick its permissions after it is created.",
+      label: "Name",
+      labelHi: "Name in Hindi (optional)",
+      code: "Role code",
+      codeHint: "Lowercase letters, digits and hyphens. It is the Keycloak role name and cannot be changed later.",
+      copyFrom: "Start with the permissions of",
+      copyNone: "No permissions",
+      create: "Create role",
+      creating: "Creating…",
+      cancel: "Cancel",
+      failedTitle: "The role was not created",
+      labelRequired: "Enter a name of at least two characters.",
+      codeInvalid: "Use at least three lowercase letters, digits or hyphens, starting with a letter.",
+    },
+
     grants: {
       title: "Role grants",
       subtitle:
@@ -1163,6 +1413,8 @@ export const en = {
       granted: "Granted",
       notGranted: "Not granted",
       cell: "{{permission}} for {{role}}",
+      sharedScreen: "Shared by several screens",
+      screenClosedHint: "The screen is closed for this role, so these actions have no way in from the portal.",
       roleTotal: "{{n}} of {{total}}",
       changedBadge: "Changed",
 
@@ -1191,7 +1443,9 @@ export const en = {
 
       openRole: "Edit {{role}}",
       closeRole: "Done",
-      narrowHint: "One role at a time on a narrow screen. The grid returns above 768px.",
+      narrowHint: "Click a role to see its permissions, screen by screen: open the screen, then tick what the role may do on it.",
+      bandTotal: "{{band}}: {{n}} of {{total}}",
+      scrollHint: "The grid scrolls sideways. The role column stays in view.",
     },
 
     transitions: {
@@ -1204,7 +1458,7 @@ export const en = {
         action: "Step",
         from: "From",
         to: "To",
-        roles: "Who may do it",
+        permission: "Who may do it",
         requires: "Must carry",
         rules: "Rules",
         edit: "",
@@ -1212,11 +1466,12 @@ export const en = {
       stage: "Stage {{n}}",
       initialStatus: "A new case",
       assigneeOnly: "Assignee only",
-      assigneeOnlyOff: "Any holder of these roles",
+      assigneeOnlyOff: "Any holder of this permission",
       opensRound: "Opens an inspection round",
       active: "Live",
       inactive: "Switched off",
-      noRoles: "Nobody",
+      noHolders: "No active role holds this permission",
+      holdersLabel: "Held today by",
       noRequires: "Nothing",
       noteLabel: "Why this rule exists",
       noNote: "No note is recorded for this step.",
@@ -1227,7 +1482,13 @@ export const en = {
       fixedTitle: "Fixed by the product",
       fixedBody:
         "The step, both statuses and the stage number are what the product means by a stage. The server refuses to change them, so they are shown here and cannot be edited.",
-      rolesLabel: "Roles that may take this step",
+      permissionLabel: "Permission that gates this step",
+      permissionHint:
+        "Whoever holds this permission may take the step. Which roles hold it is set on the Role grants tab, not here.",
+      permissionPlaceholder: "Choose a permission",
+      holdersNow: "Roles that hold it today",
+      unknownPermission:
+        "The server does not know the permission {{code}}. Choose one from the list; the catalogue may have changed since this page loaded.",
       requiresLabel: "Fields the request must carry",
       requiresHint:
         "Presence only — the server checks the field is there, not what is in it. Lower case, digits and underscores.",
@@ -1252,22 +1513,53 @@ export const en = {
       confirmAction: "Apply change",
       confirming: "Applying…",
 
-      changeRoleAdded: "{{role}} will be able to {{action}}.",
-      changeRoleRemoved: "{{role}} will no longer be able to {{action}}.",
+      changePermission: "{{action}} will require {{permission}} ({{code}}).",
+      changeHolderAdded: "{{role}} will be able to {{action}}.",
+      changeHolderRemoved: "{{role}} will no longer be able to {{action}}.",
+      changeHoldersSame: "The same roles hold the new permission, so nobody gains or loses this step today.",
       changeAssigneeOnlyOn:
         "Only the officer the case is assigned to will be able to {{action}}.",
       changeAssigneeOnlyOff:
-        "Any officer holding one of these roles will be able to {{action}}, not only the officer the case is assigned to.",
+        "Any officer holding this permission will be able to {{action}}, not only the officer the case is assigned to.",
       changeActiveOff: "This step is switched off: nobody will be able to {{action}} at all.",
       changeActiveOn: "This step is switched back on.",
       changeRequiresAdded: "{{field}} will be required in order to {{action}}.",
       changeRequiresRemoved: "{{field}} will no longer be required in order to {{action}}.",
       changeNote: "The note explaining why this rule exists will be rewritten.",
-      nobodyWarning: "No role is selected, so nobody at all will be able to {{action}}.",
+      nobodyWarning: "No active role holds this permission, so nobody at all will be able to {{action}}.",
 
       refusedTitle: "The change was refused",
       emptyTitle: "No workflow steps",
       emptyBody: "The table is empty, which means migration 0003 has not run on this database.",
+
+      /** The flowchart drawn above the table (features/policy/WorkflowChart.tsx). */
+      flowchart: {
+        title: "Case flow",
+        hint: "Each box is a case status and each arrow a step, labelled with the roles that may take it. Click a status or an arrow to list only those steps in the table below.",
+        ariaLabel:
+          "Flowchart of the case workflow: {{statuses}} statuses and {{steps}} steps. The same steps are listed in the table below.",
+        start: "Start",
+        end: "End",
+        nobody: "Nobody",
+        legendStart: "Where a case begins",
+        legendEnd: "No step leads out",
+        legendBack: "Goes back to an earlier status",
+        legendOff: "Switched off",
+        layoutLabel: "Chart direction",
+        layoutVertical: "Top to bottom",
+        layoutHorizontal: "Left to right",
+        nodeAria: "{{status}}: {{out}} steps out, {{in}} steps in",
+        edgeAria: "{{action}}, from {{from}} to {{to}}, by {{roles}}",
+        filterNode: "Showing the {{n}} steps into or out of {{status}}.",
+        filterEdge: "Showing the {{n}} steps from {{from}} to {{to}}.",
+        showAll: "Show all steps",
+        nodeHelp: "Press Enter to list this status's steps in the table.",
+        edgeHelp: "Press Enter to list this step in the table.",
+        controls: "Chart controls",
+        zoomIn: "Zoom in",
+        zoomOut: "Zoom out",
+        fitView: "Fit the whole chart",
+      },
     },
 
     /** The verb phrase each sentence above slots in. Hindi uses its own -ने form. */
@@ -1336,7 +1628,7 @@ export const en = {
       checking: "Checking your permissions…",
       deniedTitle: "You do not have access to officer administration",
       deniedBody:
-        "This area needs the user.read permission, which only Super Admin holds today. If you should be able to open it, ask a Super Admin to grant it.",
+        "This area needs the user.read permission. If you should be able to open it, ask a Super Admin to grant it.",
     },
 
     error: {
@@ -1405,7 +1697,7 @@ export const en = {
       manage: "Manage",
       manageLabel: "Manage {{name}}",
       create: "Create officer",
-      createDenied: "Creating an officer needs the user.manage permission.",
+      createDenied: "Creating an officer needs the user.create permission.",
       emptyTitle: "No officers in this realm",
       emptyBody:
         "The identity service returned no accounts at all, which is unusual — you signed in with one. Check that the portal is pointed at the realm you expect.",
@@ -1518,7 +1810,23 @@ export const en = {
       cell: "{{role}} for {{name}}",
       savedTitle: "Roles replaced",
       savedBody: "{{name}} now holds exactly the roles ticked above.",
-      denied: "Changing roles needs the user.manage permission.",
+      denied: "Changing roles needs the user.roles permission.",
+    },
+
+    zones: {
+      title: "Zones",
+      subtitle:
+        "The zones this officer covers. A case can be assigned only to an officer covering its zone.",
+      none: "No zones assigned. This officer will not be offered when a case is assigned.",
+      remove: "Remove",
+      removeLabel: "Remove zone {{zone}}",
+      addLabel: "Add a zone",
+      addPlaceholder: "Choose a zone",
+      loadingZones: "Loading zones…",
+      noneLeft: "Every active zone is already assigned",
+      add: "Add",
+      adding: "Adding…",
+      denied: "Changing zones needs the zone_assignment.manage permission.",
     },
 
     password: {
@@ -1542,8 +1850,98 @@ export const en = {
         "Set at {{at}}. It is not shown here or anywhere else — hand it over in person, or by some channel other than this system.",
       doneTemporary: "They must choose a new one at next sign-in.",
       donePermanent: "They were NOT asked to change it at next sign-in.",
-      denied: "Setting a password needs the user.manage permission.",
+      denied: "Setting a password needs the user.password permission.",
     },
+  },
+
+  /* `reporting.*` — the Reporting tab on Administration: roles top to bottom,
+     the officers holding each, and their zones. */
+  reporting: {
+    tab: "Reporting",
+    title: "Reporting structure",
+    subtitle: "Who reports to whom, by role, most senior at the top. Each box lists the officers who hold the role and the zones assigned to them.",
+    basis: "Built from each officer's roles and zone assignments. Reporting lines between individual officers are not recorded yet.",
+    chartLabel: "Reporting structure chart, most senior role at the top. The same information follows as a list.",
+    listTitle: "Officers by role",
+    loading: "Loading the reporting structure…",
+    errorTitle: "The reporting structure could not be loaded",
+    errorBody: "Try again in a moment.",
+    retry: "Retry",
+    deniedTitle: "Officer records are not available to you",
+    deniedBody: "The reporting structure names officers, which needs the user.read permission.",
+    emptyTitle: "No roles to show",
+    emptyBody: "No active ICMS role was found.",
+    count: "{{n}} officers",
+    countOne: "1 officer",
+    noMembers: "Nobody holds this role",
+    noZones: "No zone assigned",
+    disabled: "Disabled",
+    showAll: "Show all {{n}}",
+    showFewer: "Show fewer",
+    reportsTo: "Reports to {{role}}",
+    top: "Top of the structure",
+    unplaced: "Not placed in the structure yet",
+    openOfficer: "Open {{name}}",
+  },
+
+  /* ---------------------------------------------------------------------
+     Administration → Boundaries — the KML/KMZ land-record import.
+     --------------------------------------------------------------------- */
+  boundaries: {
+    tab: "Boundaries",
+    title: "Boundaries and land records",
+    subtitle: "Upload the authority's KML or KMZ to update zones, villages, parcels and red zones. Complaints use them to suggest the zone, village, khasra and ULPIN for a pin.",
+    folders: {
+      zones: { name: "Zones", body: "Zone polygons, each with its zone code." },
+      villages: { name: "Villages", body: "Village boundaries, each with its LGD code." },
+      parcels: { name: "Parcels", body: "Land parcels, each with its khasra number and ULPIN." },
+      reserved: { name: "Red zones", body: "Reserved land where no construction is allowed." },
+    },
+    spec: "One file, with these four folders at the top level. The full format is in docs/icms/kml-import-spec.md.",
+    fileLabel: "KML or KMZ file",
+    fileHint: "Validate first: it checks every placemark and changes nothing.",
+    wrongFile: "Choose a .kml or .kmz file.",
+    chosen: "{{name}} · {{size}}",
+    validate: "Validate only",
+    import: "Import",
+    uploading: "Uploading… {{percent}}",
+    processing: "Uploaded. Reading the placemarks on the server…",
+    confirmTitle: "Import these boundaries?",
+    confirmBody: "This updates zones, villages, parcels and red zones for everyone.",
+    confirmAction: "Import",
+    cancel: "Cancel",
+    dryRunTitle: "Validation result",
+    dryRunBody: "Nothing was changed. This is what an import of this file would do.",
+    importedTitle: "Import complete",
+    importedBody: "The boundaries below are live now.",
+    countsCaption: "Placemarks per folder",
+    folder: "Folder",
+    inserted: "New",
+    updated: "Updated",
+    deactivated: "Deactivated",
+    rejected: "Rejected",
+    rejectedTitle: "Rejected placemarks ({{n}})",
+    rejectedNone: "No placemark was rejected.",
+    warningsTitle: "Loaded with warnings ({{n}})",
+    placemark: "Placemark",
+    reason: "Reason",
+    unnamed: "(no name)",
+    errorTitle: "The file was not accepted",
+    requestId: "Reference: {{id}}",
+    historyTitle: "Previous imports",
+    historySubtitle: "The last twenty, newest first.",
+    file: "File",
+    importedBy: "By",
+    importedAt: "When",
+    counts: "Result",
+    summary: "{{inserted}} new · {{updated}} updated · {{deactivated}} deactivated · {{rejected}} rejected",
+    someone: "Unknown",
+    historyLoading: "Loading previous imports…",
+    historyError: "Previous imports could not be loaded.",
+    historyEmpty: "No boundaries have been imported yet.",
+    retry: "Try again",
+    deniedTitle: "You cannot import boundaries",
+    deniedBody: "Importing boundaries needs a permission your role does not have. Ask an administrator.",
   },
 
   /* ---------------------------------------------------------------------
@@ -1576,6 +1974,107 @@ export const en = {
       unavailable: "There is nothing to export until a comparison has finished.",
     },
 
+    upload: {
+      button: "Upload imagery",
+      unavailable: "Choose a project before uploading imagery.",
+      title: "Upload drone imagery (GeoTIFF)",
+      description:
+        "The flight is added to this project and tiled on the server. Large files take a while.",
+      fileLabel: "GeoTIFF file",
+      nameLabel: "Name",
+      namePlaceholder: "e.g. Tajganj flight, March",
+      capturedAtLabel: "Capture date",
+      capturedAtPlaceholder: "Pick a date",
+      epsgLabel: "EPSG code",
+      epsgPlaceholder: "e.g. 32644",
+      epsgHint: "Only needed if the TIFF has no embedded CRS.",
+      tfwLabel: ".tfw world file",
+      prjLabel: ".prj file",
+      submit: "Upload",
+      cancel: "Cancel",
+      progress: "Uploading {{percent}}%",
+      processing: "Processing on server…",
+      failed: "The imagery could not be uploaded.",
+      serverTitle: "Processing on the server",
+      serverHint: "You can close this window. Processing continues and the flight appears under Drone imagery.",
+      ready: "Ready",
+      readyBody: "{{name}} is ready to compare.",
+      serverFailed: "The server could not process this flight.",
+      pollFailed: "Could not check on the server. Retrying.",
+      done: "Done",
+      close: "Close",
+      resumeBanner: "Resume upload of {{name}} ({{percent}}% received)",
+      resumePick: "Pick the same file to continue",
+      resume: "Resume",
+      discard: "Discard",
+      checking: "Checking the file…",
+      mismatch:
+        "This is not the file {{name}} started with: its size or content differs. Pick the original file, or discard the unfinished upload.",
+      paused: "Offline. The upload is paused and continues when the connection returns.",
+      stop: "Pause upload",
+      completionTimeout:
+        "The server is taking too long to finish this upload. Nothing is lost; resume it later from this dialog.",
+      expired: "This upload expired on the server. Start it again from the beginning.",
+      discardConfirm: "Discard this upload? The part already sent is deleted from the server.",
+      discardYes: "Discard upload",
+      keep: "Keep",
+      leaving: "The upload stops if you leave this page. You can resume it later.",
+      duplicate: "This file is already in the project as another flight.",
+      useExisting: "Use existing",
+      rejected: "The server rejected the file: {{reason}}",
+      diskFull:
+        "Not enough disk on the server for this file. Ask an administrator to free space, then try again.",
+      tooLarge: "The file is larger than the server accepts.",
+    },
+
+    flight: {
+      queued: "Queued",
+      uploading: "Uploading",
+      processing: "Processing",
+      ready: "Ready",
+      failed: "Failed",
+      failedHint: "Processing failed: {{error}}",
+      reorderHint: "Drag a row to restack — the top flight draws over the ones below it.",
+      dragHandle: "Move {{name}} up or down the draw order",
+      failedNoError: "The server did not say why.",
+      stageFallback: "queued…",
+      percent: "{{percent}}%",
+      progressLabel: "{{name}}: {{stage}}, {{percent}}% processed",
+      delete: "Delete {{name}}",
+      locate: "Zoom the map to {{name}}",
+      locateUnavailable: "This flight has no recorded extent yet.",
+      resolution: "{{value}} m/px",
+      groupCount: "{{group}} ({{n}})",
+      archived: "Archived",
+      restoring: "Restoring",
+      rejected: "Rejected",
+      retrying: "Retrying",
+      rejectedHint: "Rejected: {{reason}}",
+      retryingHint: "Processing failed. The server is retrying it.",
+      archivedHint: "Archived to cold storage. Restore it to use the original imagery.",
+      restore: "Restore",
+      restoreLabel: "Restore {{name}} from the archive",
+      restoreFailed: "The restore could not be started.",
+      restoringEta: "Restoring, ready in about {{hours}} hours",
+      restoringNoEta: "Restoring from the archive",
+      uploadPercent: "{{percent}}% received",
+    },
+
+    deleteFlight: {
+      title: "Delete the flight \u201c{{name}}\u201d?",
+      body: "The uploaded file, its map tiles and every comparison built on this flight, with all of their detections, are removed permanently. This cannot be undone.",
+      processing: "The flight is still processing. Processing stops and nothing is kept.",
+      confirm: "Delete flight",
+      cancel: "Cancel",
+      running: "Deleting…",
+      failed: "The flight could not be deleted.",
+    },
+
+    panel: {
+      hide: "Hide the side panel",
+      show: "Layers & detections",
+    },
+
     project: {
       label: "Project",
       placeholder: "Choose a project",
@@ -1599,6 +2098,45 @@ export const en = {
       pendingHint: "The map fills in as soon as the run finishes.",
       failedTitle: "The last comparison failed",
       failedBody: "{{error}}",
+      retryingTitle: "Retrying the last comparison",
+    },
+
+    runtime: {
+      label: "Model runtime: {{device}}",
+      cuda: "CUDA",
+      metal: "Metal",
+      cpu: "CPU mode",
+      cpuEta: "CPU mode: expect about {{minutes}} minutes",
+      unavailable: "Model service unavailable",
+    },
+
+    detect: {
+      before: "Before",
+      after: "After",
+      placeholder: "Choose a flight",
+      flightOption: "{{name}} · {{date}}",
+      same: "Before and after must be different flights.",
+      needTwo: "Upload two ready flights of the same area to compare them.",
+      mode: "Detection mode",
+      ai: "AI",
+      aiHint: "Full model pipeline — evidence grade, takes minutes",
+      diff: "Diff",
+      diffHint: "Classical difference — quick triage, takes seconds",
+      run: "Run detection",
+      starting: "Starting…",
+      running: "Detecting changes — {{stage}}, {{percent}}%",
+      runningTitle: "Detecting changes",
+      runningPercent: "{{percent}}%",
+      runningDetail: "Engine: {{detail}}",
+      failed: "Could not start the detection run",
+    },
+
+    swipe: {
+      label: "Swipe",
+      vertical: "Swipe left and right",
+      horizontal: "Swipe up and down",
+      handle: "Drag to compare before and after",
+      side: "{{which}} · {{name}} · {{date}}",
     },
 
     compare: {
@@ -1675,6 +2213,7 @@ export const en = {
       confidence: "{{percent}}%",
       confidenceLabel: "{{percent}}% confidence — {{band}}",
       redZone: "{{percent}}% inside a red zone",
+      linkedCase: "Complaint {{ref}}",
     },
 
     band: {
@@ -1728,6 +2267,14 @@ export const en = {
       unavailable: "Not recorded",
       viewFull: "View Full Details",
       createComplaint: "Create Complaint",
+      hoverHint: "Double-click to create a complaint",
+    },
+
+    complaintPrompt: {
+      title: "Create a complaint for {{ref}}?",
+      summary: "{{type}} · {{area}} · {{confidence}} confidence",
+      cancel: "Cancel",
+      confirm: "Create complaint",
     },
 
     preview: {
@@ -1809,6 +2356,8 @@ export const en = {
       pending: {
         assign: "Assigning…",
         reassign: "Reassigning…",
+        reject: "Rejecting…",
+        close: "Closing…",
       },
 
       advisory:
@@ -1824,6 +2373,7 @@ export const en = {
       parcel: "Parcel",
       complainant: "Complainant",
       owner: "Owner",
+      survey: "Occupant / property (from survey)",
       assignment: "Assignment",
       rounds: "Inspection rounds",
       evidence: "Evidence",
@@ -1839,6 +2389,9 @@ export const en = {
       created_by: "Filed by",
       updated_at: "Last updated",
       closed_at: "Closed",
+      closed_by: "Closed by",
+      outcome_cd: "Outcome",
+      outcome_reason: "Outcome remarks",
       parcel_id: "Parcel ID",
       current_round: "Current round",
       location: "Reported location",
@@ -1875,6 +2428,7 @@ export const en = {
       noDetail: "Nothing was written down when this complaint was filed.",
       noComplainant: "No complainant was recorded. A case raised from a detection has none.",
       noOwner: "No owner recorded",
+      surveyRound: "Recorded on site by the surveyor, round {{n}}.",
       noParcel:
         "No parcel is recorded. A complaint filed by telephone about a building nobody could name has none.",
 
@@ -1929,11 +2483,16 @@ export const en = {
       body: "The surveyor named will be able to open a round, check in at the site and record findings.",
       reassignBody:
         "The open assignment is closed and a new one opened, so who held this case and when stays answerable afterwards.",
-      assigneeLabel: "Surveyor user ID",
-      assigneePlaceholder: "The surveyor's user ID",
-      assigneeHint:
-        "A user ID, not a name: there is no officer directory this screen is allowed to read, so the ID is what identifies them. They must hold Field Surveyor and be assigned to this case's zone.",
-      assigneeRequired: "Enter the surveyor's user ID.",
+      roleLabel: "Role",
+      rolePlaceholder: "Choose a role",
+      roleHint: "The roles the workflow lets carry out the inspection.",
+      assigneeLabel: "Officer",
+      assigneePlaceholder: "Choose an officer",
+      assigneeHint: "Officers who hold this role and are assigned to this case's zone.",
+      assigneeRequired: "Choose an officer.",
+      assigneesLoading: "Loading officers…",
+      assigneesError: "The list of officers could not be loaded.",
+      noCandidates: "No officer holding this role is assigned to this case's zone.",
       noteLabel: "Note (optional)",
       notePlaceholder: "Anything the surveyor should know before going out",
       reasonLabel: "Reason for reassigning",
@@ -1947,6 +2506,41 @@ export const en = {
         "They have no active assignment to this case's zone, so the case would be invisible to them. Give them the zone first, or name a surveyor who already has it. Nothing was changed.",
       doneTitle: "The case has been assigned.",
       done: "It is now with {{userId}}.",
+    },
+
+    end: {
+      codePlaceholder: "Choose one",
+      remarksLabel: "Remarks",
+      remarksPlaceholder: "What the record should say about this decision",
+      remarksRequired: "Required when the reason is Other — at least {{n}} characters.",
+      remarksOptional: "Optional. Recorded on the case history.",
+      reject: {
+        title: "Reject complaint",
+        body: "Rejecting ends the case. Any surveyor it is assigned to is released and told, and the case cannot be reopened.",
+        codeLabel: "Reason",
+        doneTitle: "Complaint rejected.",
+        codes: {
+          false_complaint: "False complaint",
+          duplicate: "Duplicate complaint",
+          outside_jurisdiction: "Outside jurisdiction",
+          no_violation_found: "No violation found",
+          other: "Other",
+        },
+      },
+      close: {
+        title: "Close case",
+        body: "Closing records how the case ended after its notice. The case cannot be reopened.",
+        codeLabel: "Outcome",
+        doneTitle: "Case closed.",
+        codes: {
+          demolished_by_owner: "Demolished by owner",
+          demolished_by_authority: "Demolished by authority",
+          regularised: "Regularised",
+          court_case_filed: "Court case filed",
+          sealed: "Sealed",
+          other: "Other",
+        },
+      },
     },
 
     amend: {
@@ -2156,6 +2750,9 @@ export const en = {
       noCaseTitle: "Choose a complaint first",
       noCaseBody:
         "A notice is always issued against one confirmed complaint, and what you may do depends on which one.",
+      noIssueTitle: "You cannot issue notices",
+      noIssueBody:
+        "Issuing a notice needs the notice.issue permission. If you should be able to issue notices, ask a Super Admin to grant it.",
     },
 
     refusedTitle: "The server refused that",
@@ -2243,10 +2840,11 @@ export const en = {
 
   dashboard: {
     title: "Dashboard",
-    heading: "Encroachment monitoring overview",
+    heading: "Encroachment Monitoring Overview",
     scopeNote:
       "Every count on this page is taken over the cases this account may read. A field surveyor sees the cases assigned to them, not their zone's totals — so nothing here is a zone or a district figure unless your own scope is the whole district.",
-    loadedAt: "Loaded {{time}}",
+    subtitle: "Data as of {{time}}",
+    runChangeDetection: "Run Change Detection",
     refresh: "Refresh",
     refreshing: "Refreshing…",
 
@@ -2265,27 +2863,27 @@ export const en = {
       noRequestId: "The server sent no request ID with this failure.",
     },
 
-    summary: {
-      title: "Case counts",
-      description:
-        "One grouped count over the register this account can read. Not limited to a period.",
-      empty:
-        "There are no cases in the register this account can read, so there is nothing to count yet.",
-      total: { label: "Total cases", note: "Every case you can see, at every stage." },
-      open: { label: "Open", note: "Not yet closed and not rejected." },
-      closed: { label: "Closed", note: "Reached the closed status." },
-      rejected: {
-        label: "Rejected",
-        note: "Refused rather than closed. Neither open nor closed.",
-      },
-      highPriority: {
-        label: "High priority",
-        note: "Marked high priority, whether open or not.",
-      },
+    toolbar: { label: "Dashboard filters" },
+
+    tiles: {
+      total: "Total Encroachments",
+      newDetections: "New Detections",
+      activeComplaints: "Active Complaints",
+      inspectionsScheduled: "Inspections Scheduled",
+      noticesIssued: "Notices Issued",
+      casesClosed: "Cases Closed",
+      unavailable: "Could not be loaded",
+      noPermission: "Not available to this account",
+      last30Days: "Last 30 days",
+      raisedInPeriod: "+{{n}} in {{period}}",
+      highPriority: "{{n}} high priority",
+      awaitingSubmission: "Scheduled or in progress",
+      allNotices: "Issued, excluding drafts and withdrawn",
+      rejected: "{{n}} rejected",
     },
 
     trend: {
-      title: "Cases raised over time",
+      title: "Trend",
       periodLabel: "Period",
       period: {
         "7d": "Last 7 days, by day",
@@ -2293,10 +2891,11 @@ export const en = {
         "90d": "Last 90 days, by week",
         "365d": "Last 365 days, by month",
       },
-      bucketNote: {
-        day: "One point per IST calendar day. The server sends every day in the window, the days with no cases included.",
-        week: "One point per week, starting Monday in IST. The server sends every week in the window, the empty ones included.",
-        month: "One point per calendar month in IST. The server sends every month in the window, the empty ones included.",
+      periodShort: {
+        "7d": "last 7 days",
+        "30d": "last 30 days",
+        "90d": "last 90 days",
+        "365d": "last 365 days",
       },
       series: {
         raised: "Cases raised",
@@ -2304,17 +2903,13 @@ export const en = {
       },
       cohortNote:
         "The second line is a cohort of the first, not a separate daily count: of the cases RAISED in a bucket, how many have since reached closed or rejected. It is not the number of cases closed on that date, and the two lines cannot be read against each other as intake versus output.",
-      window: "{{start}} to {{end}}.",
-      totals:
-        "{{raised}} cases were raised in this period; {{resolved}} of those same cases have since been closed or rejected.",
       allZero:
         "No cases were raised in this period. Every bucket came back as a zero — none is missing.",
       empty: "The server returned no buckets for this period.",
       point:
         "Of the {{raised}} cases raised in this bucket, {{resolved}} have since been closed or rejected.",
-      axis: "Cases",
-      showTable: "Show these figures as a table",
-      hideTable: "Hide the table",
+      showTable: "Show table",
+      hideTable: "Hide table",
       tableCaption: "The same figures as the chart, bucket by bucket.",
       columns: {
         period: "Bucket start",
@@ -2324,30 +2919,20 @@ export const en = {
     },
 
     byType: {
-      title: "By complaint type",
-      description:
-        "Every case this account can read, grouped by its complaint type. Lifetime to date — the period chosen above does not apply here.",
+      title: "By Encroachment Type",
       cap: "At most {{limit}} types, largest first. Shares are of the cases in the groups listed, and are rounded, so they may not total 100%.",
       untyped: "Type not recorded",
       empty: "There is nothing to break down by type yet.",
-      columns: {
-        type: "Type",
-        total: "Cases",
-        share: "Share",
-        open: "Open",
-        resolved: "Closed or rejected",
-      },
+      count: "{{count}} cases",
       share: "{{share}}%",
     },
 
     byZone: {
-      title: "By zone",
-      description:
-        "One row per zone this account holds, and no row for any other. For a field surveyor a row is their own caseload in that zone, not the zone's total. Lifetime to date — the period chosen above does not apply here.",
+      title: "Encroachments by Zone",
+      badge: "All time",
       cap: "At most {{limit}} zones, largest first. Zone names come from the register as recorded; this endpoint sends no translated name.",
       empty: "No zone in this account's scope has a case yet.",
-      axis: "Cases",
-      scrollHint: "The chart scrolls sideways; the table below lists every zone.",
+      scrollHint: "The chart scrolls sideways; the table lists every zone.",
       columns: {
         zone: "Zone",
         total: "Cases",
@@ -2356,19 +2941,14 @@ export const en = {
       },
     },
 
-    byStatus: {
-      title: "By workflow status",
-      description:
-        "The statuses the register is grouped by, and the table the counts above are summed from. Individual cases are in the Complaints register.",
-      empty: "There are no cases to group by status yet.",
-      unknown: "Unrecognised status: {{code}}",
-      totalRow: "All statuses",
-      columns: {
-        status: "Status",
-        count: "Cases",
-        share: "Share",
-        high: "High priority",
-      },
+    feed: {
+      title: "Complaint Status",
+      noPermission: "Recent complaints are not available to this account.",
+      empty: "No complaints have been raised yet.",
+      noAddress: "Address not recorded",
+      today: "Today",
+      daysAgo: "{{n}}d ago",
+      viewAll: "View all complaints",
     },
   },
 

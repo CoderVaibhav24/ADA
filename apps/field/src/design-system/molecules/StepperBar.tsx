@@ -5,6 +5,8 @@
 
 import { StyleSheet, View } from 'react-native';
 
+import { useT } from '@/services/i18n';
+
 import { ProgressBar, Text } from '../atoms';
 import { space, type LayoutStyle } from '../tokens';
 
@@ -18,6 +20,7 @@ export type StepperBarProps = {
 
 // A segment is complete, current or pending; the current one fills to show it is in play.
 export function StepperBar({ steps, current, style }: StepperBarProps) {
+  const t = useT();
   const total = steps.length;
   const index = Math.min(Math.max(current, 1), total);
   const name = steps[index - 1] ?? '';
@@ -25,7 +28,7 @@ export function StepperBar({ steps, current, style }: StepperBarProps) {
     <View
       accessible
       accessibilityRole="progressbar"
-      accessibilityLabel={`Step ${index} of ${total}: ${name}`}
+      accessibilityLabel={t('stepper.a11y', { current: index, total, name })}
       accessibilityValue={{ min: 1, max: total, now: index }}
       style={[{ gap: space[2] }, style]}
     >
@@ -39,7 +42,7 @@ export function StepperBar({ steps, current, style }: StepperBarProps) {
         ))}
       </View>
       <View style={styles.caption}>
-        <Text variant="label" color="brand">{`Step ${index} of ${total}`}</Text>
+        <Text variant="label" color="brand">{t('stepper.progress', { current: index, total })}</Text>
         <Text variant="subheading" color="ink0" numberOfLines={1} style={styles.name}>
           {name}
         </Text>

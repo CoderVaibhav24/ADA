@@ -21,7 +21,7 @@
  * password.
  *
  * Figma's role selector is dropped on instruction. No role is collected and
- * none is sent; roles come from the token's realm claims (auth/roles.ts).
+ * none is sent; what the officer may do comes from /me/capabilities.
  *
  * Measurements are Figma's to the sub-pixel, which is why so many of them are
  * fractional: the card was drawn at 1.318x and scaled down. The one deliberate
@@ -33,7 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { isSkewed, measureClockSkew } from "../auth/clockSkew";
-import { isSignedIn, login } from "../auth/oidc";
+import { isSignedIn, login, type LoginOptions } from "../auth/oidc";
 import { signInWithPassword, type RejectionReason } from "../auth/passwordLogin";
 import { Icon } from "../lib/icons";
 import { loginLabelsEn as t } from "./login-labels.en";
@@ -90,9 +90,8 @@ interface ScreenError {
   offerHostedPage: boolean;
 }
 
-/** Reasons where the answer is "finish this on Keycloak's own page", not "try again here". */
+/** Reasons where the answer is "finish this on Keycloak's own page", not "try again here". account-incomplete is not here: it continues there automatically. */
 const HOSTED_PAGE_REASONS: ReadonlySet<RejectionReason> = new Set<RejectionReason>([
-  "account-incomplete",
   "direct-grant-disabled",
   "invalid-origin",
   "client-misconfigured",
@@ -141,6 +140,8 @@ export default function Login() {
   const [remember, setRemember] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [step, setStep] = useState<Step>("password");
+  /** Set while the card hands over to Keycloak's required actions (set password, scan QR, verify e-mail). */
+  const [finishing, setFinishing] = useState(false);
 
   const usernameRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -208,13 +209,14 @@ export default function Login() {
 
   /** Leaves busy set on success: the tab is navigating away, and a re-enabled button invites a second submit. */
   const toHostedPage = useCallback(
-    async (action?: "CONFIGURE_TOTP") => {
+    async (options?: LoginOptions) => {
       setThrown(null);
       setBusy(true);
       try {
-        await login(from, action ? { action } : undefined);
+        await login(from, options);
       } catch (err: unknown) {
         setBusy(false);
+        setFinishing(false);
         setThrown({
           lines: [t.errorFallback],
           detail: err instanceof Error ? err.message : undefined,
@@ -267,6 +269,14 @@ export default function Login() {
       return;
     }
 
+    // Keycloak wants a required action finished first. The hosted pages wear this
+    // same card, so the officer continues there straight away with the name prefilled.
+    if (result.reason === "account-incomplete") {
+      setFinishing(true);
+      void toHostedPage({ loginHint: user });
+      return;
+    }
+
     setBusy(false);
 
     // A first refusal is not something the officer can act on, so it is never
@@ -286,7 +296,7 @@ export default function Login() {
       detail: result.detail,
       offerHostedPage: HOSTED_PAGE_REASONS.has(result.reason),
     });
-  }, [username, password, otp, step, remember, from, navigate]);
+  }, [username, password, otp, step, remember, from, navigate, toHostedPage]);
 
   if (status === "checking" || (status === "signed-in" && shouldAutoResume)) {
     return (
@@ -414,7 +424,26 @@ export default function Login() {
 
             {/* The calm counterpart. Step two arrives here, never in the red box. */}
             <div aria-live="polite" aria-atomic="true" className="empty:hidden">
-              {otpStep && !error && (
+              {finishing && !error && (
+                <div
+                  role="status"
+                  className="flex w-full flex-col gap-[6px] rounded-[9.104px] border-[0.759px] border-[rgba(217,119,54,0.4)] bg-[rgba(15,23,42,0.55)] px-[12.898px] py-[10px]"
+                >
+                  <p className="flex items-start gap-[7px] text-[11px] leading-[15px] font-semibold text-[#cbd5e1]">
+                    <Icon name="feedback.loading" spin className="mt-[1px] size-[13px] shrink-0 text-[#f2ae63]" />
+                    <span>{t.finishingSetup}</span>
+                  </p>
+                  {/* Fallback for a blocked or stalled redirect; deliberately not disabled by busy. */}
+                  <button
+                    type="button"
+                    onClick={() => void toHostedPage({ loginHint: username.trim() })}
+                    className="mt-[2px] self-start text-[11px] leading-[15px] font-semibold text-[#f2ae63] underline underline-offset-2"
+                  >
+                    {t.hostedPageCta}
+                  </button>
+                </div>
+              )}
+              {otpStep && !error && !finishing && (
                 <p className="flex w-full items-start gap-[7px] rounded-[9.104px] border-[0.759px] border-[rgba(217,119,54,0.4)] bg-[rgba(15,23,42,0.55)] px-[12.898px] py-[10px] text-[11px] leading-[15px] text-[#cbd5e1]">
                   <Icon name="feedback.info" className="mt-[1px] size-[13px] shrink-0 text-[#f2ae63]" />
                   <span>{t.otpStepBody}</span>
@@ -463,7 +492,7 @@ export default function Login() {
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void toHostedPage("CONFIGURE_TOTP")}
+                        onClick={() => void toHostedPage({ action: "CONFIGURE_TOTP", loginHint: username.trim() })}
                         className="font-semibold text-[#d97736] underline underline-offset-2 disabled:opacity-60"
                       >
                         {t.enrolmentCta}

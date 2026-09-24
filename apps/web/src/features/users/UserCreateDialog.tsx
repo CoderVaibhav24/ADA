@@ -25,7 +25,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { IcmsApiError } from "@/api/icms/http";
 import {
-  ASSIGNABLE_ROLES,
   EMAIL_PATTERN,
   MIN_PASSWORD_LENGTH,
   USERNAME_PATTERN,
@@ -56,7 +55,7 @@ import {
   UserRefusal,
   type PasswordValidity,
 } from "./parts";
-import { useCreateUser } from "./useUsers";
+import { useAssignableRoles, useCreateUser } from "./useUsers";
 
 type FieldErrors = {
   username?: string;
@@ -68,16 +67,17 @@ export default function UserCreateDialog({
   open,
   onOpenChange,
   labels,
-  canManage,
+  canCreate,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   labels: UserLabels;
-  canManage: boolean;
+  canCreate: boolean;
   onCreated: (user: UserDetail) => void;
 }) {
   const create = useCreateUser();
+  const assignableRoles = useAssignableRoles().data ?? [];
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -99,7 +99,7 @@ export default function UserCreateDialog({
   const failure = create.error instanceof IcmsApiError ? create.error : null;
   const halted = failure?.code === USER_PARTIALLY_CREATED;
   const created = create.result;
-  const busy = !canManage || create.pending;
+  const busy = !canCreate || create.pending;
 
   const close = () => {
     onOpenChange(false);
@@ -308,7 +308,7 @@ export default function UserCreateDialog({
             </div>
 
             <RoleSetEditor
-              roles={ASSIGNABLE_ROLES}
+              roles={assignableRoles}
               selected={roles}
               onToggle={toggleRole}
               labels={labels}

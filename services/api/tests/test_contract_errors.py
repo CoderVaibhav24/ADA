@@ -263,7 +263,7 @@ class TestNotFoundHidesExistence:
         """`total` is counted over the scoped selectable, so it cannot count a hidden row."""
         body = icms_client.sign_in(NODAL).get(f"{ICMS}/cases").json()
 
-        assert body["total"] == len(body["items"]) == 9
+        assert body["total"] == len(body["items"]) == 10
         assert "CMP-2026-0004" not in [row["case_ref"] for row in body["items"]]
 
 
@@ -280,14 +280,17 @@ class TestTheAllowedListIsActionable:
                      status=422, code="unknown_permission", field="permission_cds",
                      allowed=known)
 
-    def test_an_unknown_role_lists_the_ones_that_exist(self, icms_client, contract_world):
+    def test_a_transition_naming_an_unknown_permission_lists_the_ones_that_exist(
+        self, icms_client, contract_world
+    ):
         client = icms_client.sign_in(SUPER_ADMIN)
-        known = sorted(row["role_cd"] for row in client.get(f"{ADMIN}/roles").json())
+        known = sorted(row["permission_cd"] for row in client.get(f"{ADMIN}/permissions").json())
 
-        response = client.patch(f"{ADMIN}/transitions/1", json={"roles": ["bogus"]})
+        response = client.patch(f"{ADMIN}/transitions/1", json={"permission_cd": "bogus"})
 
-        assert_error(f"PATCH {ADMIN}/transitions/{{id}}", "an unknown role lists the whitelist",
-                     response, status=422, code="unknown_role", field="roles", allowed=known)
+        assert_error(f"PATCH {ADMIN}/transitions/{{id}}",
+                     "an unknown permission lists the whitelist", response, status=422,
+                     code="unknown_permission", field="permission_cd", allowed=known)
 
 
 class TestWorkflowRefusals:
@@ -311,14 +314,6 @@ class TestWorkflowRefusals:
                              response, status=403, code="role_not_permitted")
         assert "pcs-nodal-officer" in error["message"]
 
-    # BUG: RoleNotPermitted builds its message from the `required` generator and
-    # then stores frozenset(required) from the exhausted generator, so `allowed`
-    # is always []. Only the prose carries the roles, which no client can parse.
-    @pytest.mark.xfail(
-        strict=True,
-        reason="workflow.RoleNotPermitted consumes `required` building its message, "
-               "so the machine-readable `allowed` is always []",
-    )
     def test_a_workflow_refusal_names_the_roles_in_allowed_and_not_only_in_the_message(
         self, icms_client, contract_world
     ):
@@ -329,10 +324,6 @@ class TestWorkflowRefusals:
             "ada-project-lead", "field-surveyor", "pcs-nodal-officer", "public",
         ]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="same generator-exhaustion bug, reached through workflow.check_amendable",
-    )
     def test_an_amendment_refusal_names_the_roles_in_allowed(self, icms_client, contract_world):
         response = icms_client.sign_in(SUPER_ADMIN).patch(
             f"{ICMS}/cases/CMP-2026-0001", json={"priority": "low"})
@@ -353,9 +344,8 @@ class TestTheReferenceAllocator:
             f"{ICMS}/cases", json={"source": "public", "zone_cd": "TAJ"})
 
         assert response.status_code == 201
-        # 0012 and not 0011 since 2026-09-23: `contract_world` seeds an eleventh
-        # case, CMP-2026-0011 in `confirmed`, for Batch 6's issue_notice.
-        assert response.json()["case_ref"] == "CMP-2026-0012"
+        # `contract_world` seeds twelve cases; the last, CMP-2026-0012, for close.
+        assert response.json()["case_ref"] == "CMP-2026-0013"
 
     # BUG: allocate() mints the next reference from icms_notice_sequence with no
     # check that it is free and no retry. A register imported from the legacy

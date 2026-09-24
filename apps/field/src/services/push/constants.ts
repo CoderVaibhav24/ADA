@@ -30,14 +30,19 @@ export const PUSH_CHANNEL_ID = 'case-updates';
 
 /*
  * Template keys ada-notify sends as `type` (§4). The data payload is
- * `{ type, case_ref?, notification_id }` and nothing more (§5); an unknown type
- * is still routed by its case reference.
+ * `{ type, notification_id, case_ref?, inspection_ref?, notice_ref?, route? }`, all
+ * strings (§5); an unknown type is still routed by its case reference.
  */
 export const NOTIFICATION_TYPES = [
   'case_assigned',
+  'case_unassigned',
+  'case_rejected',
+  'inspection_assigned',
   'inspection_reminder',
   'findings_accepted',
   'resurvey_requested',
+  'resurvey_request_raised',
+  'resurvey_approved',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

@@ -261,6 +261,8 @@ class NoticeRow(BaseModel):
                     "from compliance_due on every read and is never stored.",
     )
     issued_by: str | None = None
+    issued_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     issued_at: IstDateTime | None = None
     compliance_due: date | None = Field(
         default=None,

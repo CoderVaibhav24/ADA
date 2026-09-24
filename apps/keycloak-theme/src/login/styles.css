@@ -1,256 +1,763 @@
+/* Values are copied from apps/web/src/routes/Login.tsx (Figma 147:900) so the two screens are indistinguishable. */
 :root {
-  --ada-bg: #0a0e13;
-  --ada-surface: #10161d;
-  --ada-border: #22303f;
-  --ada-border-strong: #33414f;
-  --ada-text: #dbe6f0;
-  --ada-muted: #7d92a5;
-  --ada-dim: #5f7385;
-  --ada-accent: #ff7a29;
-  --ada-accent-hover: #ff8d47;
-  --ada-danger: #ffb4ae;
-  --ada-ok: #7ee0b0;
+  --ada-canvas: #1c1610;
+  --ada-cream: #e8d4a8;
+  --ada-ochre-brand: #ce862e;
+  --ada-ochre: #d97736;
+  --ada-ochre-hover: #e08544;
+  --ada-ochre-soft: #f2ae63;
+  --ada-ink: #150b03;
+  --ada-label: #94a3b8;
+  --ada-text: #f8fafc;
+  --ada-text-soft: #cbd5e1;
+  --ada-placeholder: #475569;
+  --ada-well-border: #334155;
+  --ada-well: rgba(15, 23, 42, 0.5);
+  --ada-face-wordmark: "Open Sans", "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --ada-face-heading: "Siemreap", "Inter", ui-sans-serif, sans-serif;
+  --ada-face-ui: "Inter", ui-sans-serif, sans-serif;
+  --ada-face-action: "Manrope", "Inter", ui-sans-serif, sans-serif;
 }
 
-.ada-html,
-html {
-  background: var(--ada-bg);
-}
-
-.ada-body,
-body {
+html.ada-html,
+html.ada-html body.ada-body {
   margin: 0;
-  min-height: 100vh;
-  background:
-    radial-gradient(1200px 600px at 50% -10%, #16202b 0%, transparent 60%),
-    var(--ada-bg);
-  color: var(--ada-text);
-  font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-#kc-header,
-.login-pf-page .card-pf {
-  background: none;
-  border: none;
-  box-shadow: none;
-}
-
-.login-pf-page {
   padding: 0;
-  width: 100%;
-  max-width: 420px;
-}
-
-.ada-card,
-.login-pf-page .card-pf {
-  background: var(--ada-surface);
-  border: 1px solid var(--ada-border);
-  border-radius: 6px;
-  padding: 32px 28px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
-}
-
-#kc-page-title {
-  font-family: "Barlow Condensed", sans-serif;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 1.6rem;
-  margin: 0 0 4px;
+  min-height: 100%;
+  background: var(--ada-canvas) !important;
   color: var(--ada-text);
+  font-family: var(--ada-face-ui);
+  -webkit-font-smoothing: antialiased;
 }
 
-.ada-form-group,
-.form-group {
-  margin-bottom: 16px;
-}
-
-.ada-label,
-.control-label {
-  display: block;
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ada-muted);
-  margin-bottom: 6px;
-  font-weight: 500;
-}
-
-.ada-input,
-input[type="text"],
-input[type="password"],
-input[type="email"] {
-  width: 100%;
+.ada-page,
+.ada-page *,
+.ada-page *::before,
+.ada-page *::after {
   box-sizing: border-box;
-  height: 44px;
-  padding: 0 12px;
-  color: var(--ada-text);
-  background: var(--ada-bg);
-  border: 1px solid var(--ada-border);
-  border-radius: 3px;
-  font-size: 0.95rem;
-  font-family: inherit;
-  transition: border-color 120ms ease;
 }
 
-.ada-input:focus,
-input[type="text"]:focus,
-input[type="password"]:focus {
-  outline: none;
-  border-color: var(--ada-accent);
-}
-
-.ada-input[aria-invalid="true"] {
-  border-color: var(--ada-danger);
-}
-
-.ada-password-wrapper {
+.ada-page {
   position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
+  background: var(--ada-canvas);
+  font-family: var(--ada-face-ui);
+  color: var(--ada-text);
 }
 
-.ada-password-wrapper .ada-input {
-  padding-right: 64px;
+.ada-page__bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ada-page__wash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(56, 56, 56, 0.2);
+}
+
+.ada-page__column {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: max(2rem, min(111px, 14vh)) 16px 2rem;
+}
+
+@media (min-width: 1024px) {
+  .ada-page__column {
+    transform: translateX(29.88px);
+  }
+}
+
+.ada-wordmark {
+  margin: 0 0 clamp(20px, 3.2vw, 46.2px);
+  width: 100%;
+  text-align: center;
+  font-family: var(--ada-face-wordmark);
+  font-stretch: 75%;
+  font-size: clamp(17px, 4.9vw, 38px);
+  line-height: 1.1;
+  font-weight: 700;
+  color: var(--ada-cream);
+}
+
+.ada-wordmark__short {
+  color: var(--ada-ochre-brand);
+}
+
+.ada-card {
+  display: flex;
+  width: 100%;
+  max-width: 525.76px;
+  flex-direction: column;
+  align-items: center;
+  gap: 30.347px;
+  border-radius: 12.139px;
+  border: 0.759px solid rgba(21, 93, 252, 0.3);
+  background: rgba(9, 3, 0, 0.2);
+  padding: 25.759px 31.106px 31.106px;
+  -webkit-backdrop-filter: blur(6.069px);
+  backdrop-filter: blur(6.069px);
+  box-shadow: 0 18.967px 37.934px -9.104px rgba(0, 0, 0, 0.25);
+}
+
+.ada-title {
+  margin: 0;
+  min-height: 52px;
+  width: 100%;
+  text-align: center;
+  font-family: var(--ada-face-heading);
+  font-size: 38px;
+  line-height: 41.8px;
+  font-weight: 400;
+  color: var(--ada-cream);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ada-content,
+.ada-swap,
+.ada-form {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 18.208px;
+}
+
+.ada-content {
+  font-family: var(--ada-face-ui);
+}
+
+.ada-swap {
+  animation: ada-enter 200ms ease-out both;
+}
+
+.ada-live:empty {
+  display: none;
+}
+
+@keyframes ada-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Labels and wells. */
+.ada-field {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 6.069px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.ada-page .ada-label {
+  display: block;
+  margin: 0;
+  padding: 0;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 12.139px;
+  letter-spacing: 0.4552px;
+  color: var(--ada-label);
+  text-transform: uppercase;
+}
+
+.ada-page .ada-label--password {
+  font-size: 14px;
+}
+
+.ada-page .ada-input {
+  display: block;
+  height: 37.934px;
+  width: 100%;
+  margin: 0;
+  border-radius: 9.104px;
+  border: 0.759px solid var(--ada-well-border);
+  background: var(--ada-well);
+  padding: 0 12.898px;
+  font-family: var(--ada-face-ui);
+  font-size: 12px;
+  color: var(--ada-text);
+  outline: none;
+  box-shadow: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ada-page .ada-input::placeholder {
+  color: var(--ada-placeholder);
+  opacity: 1;
+}
+
+.ada-page .ada-input:focus-visible {
+  border-color: var(--ada-ochre);
+  box-shadow: 0 0 0 3px rgba(217, 119, 54, 0.35);
+}
+
+.ada-page .ada-input[aria-invalid="true"] {
+  border-color: rgba(220, 38, 38, 0.7);
+}
+
+.ada-page .ada-input--code {
+  letter-spacing: 3px;
+}
+
+.ada-page .ada-input--with-reveal {
+  padding-right: 34px;
+}
+
+.ada-password {
+  position: relative;
+  width: 100%;
 }
 
 .ada-reveal {
   position: absolute;
-  right: 6px;
-  top: 6px;
-  height: 32px;
-  padding: 0 10px;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 27px;
+  height: 27px;
+  transform: translateY(-50%);
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
-  border: 1px solid var(--ada-border);
-  border-radius: 3px;
-  color: var(--ada-muted);
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  padding: 0;
+  color: #6b7280;
   cursor: pointer;
+  outline: none;
 }
 
 .ada-reveal:hover {
-  color: var(--ada-text);
-  border-color: var(--ada-border-strong);
+  color: var(--ada-text-soft);
 }
 
-.ada-form-options {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: -4px 0 4px;
-  font-size: 0.85rem;
+.ada-reveal:focus-visible {
+  box-shadow: 0 0 0 2px rgba(217, 119, 54, 0.6);
 }
 
-.ada-checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ada-muted);
-  cursor: pointer;
-}
-
-.ada-checkbox input {
-  accent-color: var(--ada-accent);
+.ada-reveal__icon {
   width: 15px;
   height: 15px;
 }
 
-.ada-link,
-a {
-  color: var(--ada-accent);
-  text-decoration: none;
+.ada-field-error {
+  display: block;
+  font-size: 11px;
+  line-height: 15px;
+  color: #fecaca;
 }
 
-.ada-link:hover,
-a:hover {
-  color: var(--ada-accent-hover);
+/* REMEMBER ME row and its hand-drawn checkbox. */
+.ada-options {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ada-check {
+  display: flex;
+  cursor: pointer;
+  align-items: center;
+  gap: 9.104px;
+  user-select: none;
+  margin: 0;
+}
+
+.ada-check__box {
+  position: relative;
+  display: grid;
+  width: 15.173px;
+  height: 15.173px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 3.035px;
+  border: 0.759px solid #ffffff;
+  background: #22252f;
+}
+
+.ada-check__box input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 3.035px;
+  outline: none;
+}
+
+.ada-check__box input:focus-visible {
+  box-shadow: 0 0 0 2px rgba(217, 119, 54, 0.7);
+}
+
+.ada-check__tick {
+  pointer-events: none;
+  width: 11px;
+  height: 11px;
+  color: var(--ada-ochre);
+  opacity: 0;
+}
+
+.ada-check__box input:checked + .ada-check__tick {
+  opacity: 1;
+}
+
+.ada-check__label {
+  font-size: 11px;
+  line-height: 11.38px;
+  font-weight: 600;
+  letter-spacing: -0.3793px;
+  color: var(--ada-label);
+  text-transform: uppercase;
+}
+
+.ada-page .ada-forgot {
+  margin: -6px 0;
+  padding: 6px 0;
+  text-align: right;
+  font-size: 9.104px;
+  line-height: 11.38px;
+  font-weight: 600;
+  letter-spacing: -0.3793px;
+  color: var(--ada-ochre);
+  text-transform: uppercase;
+  text-decoration: none;
+  outline: none;
+}
+
+.ada-page .ada-forgot:hover,
+.ada-page .ada-forgot:focus-visible {
   text-decoration: underline;
 }
 
-.ada-button,
-input[type="submit"],
-button[type="submit"] {
-  height: 44px;
-  padding: 0 18px;
-  border-radius: 3px;
-  border: 1px solid transparent;
-  font-family: inherit;
-  font-size: 0.92rem;
-  font-weight: 600;
+/* The ochre pill. Dark earth text, not Figma's white, for WCAG AA (as on the web). */
+.ada-submit-row {
+  width: 100%;
+  padding-top: 12.139px;
+}
+
+.ada-page .ada-submit {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  border: 0;
+  border-radius: 9.104px;
+  background: var(--ada-ochre);
+  padding: 12.139px 0;
+  outline: none;
   cursor: pointer;
+  filter: drop-shadow(0 0 7.587px rgba(21, 93, 252, 0.4));
 }
 
-.ada-button-primary {
-  background: var(--ada-accent);
-  border-color: #d6601b;
-  color: #14100c;
+.ada-page .ada-submit:hover:not(:disabled) {
+  background: var(--ada-ochre-hover);
 }
 
-.ada-button-primary:hover:not(:disabled) {
-  background: var(--ada-accent-hover);
+.ada-page .ada-submit:focus-visible {
+  box-shadow: 0 0 0 3px rgba(242, 174, 99, 0.7);
 }
 
-.ada-button-primary:disabled {
-  opacity: 0.6;
+.ada-page .ada-submit:disabled {
+  opacity: 0.7;
   cursor: progress;
 }
 
-.ada-button-block {
+.ada-submit__label {
+  font-family: var(--ada-face-action);
+  font-size: 20px;
+  line-height: 18.208px;
+  font-weight: 800;
+  letter-spacing: 1.2139px;
+  color: var(--ada-ink);
+  text-transform: uppercase;
+}
+
+.ada-submit__icon {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  color: var(--ada-ink);
+}
+
+.ada-spin {
+  animation: ada-spin 1s linear infinite;
+}
+
+@keyframes ada-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Notice boxes: red "Sign-in problem" and its calm counterpart. */
+.ada-notice {
+  display: flex;
   width: 100%;
-  display: block;
-  margin-top: 8px;
+  margin: 0;
+  border-radius: 9.104px;
+  padding: 10px 12.898px;
+  font-size: 11px;
+  line-height: 15px;
 }
 
-.ada-field-error {
-  display: block;
-  margin-top: 6px;
-  color: var(--ada-danger);
-  font-size: 0.82rem;
+.ada-notice--error {
+  flex-direction: column;
+  gap: 6px;
+  border: 0.759px solid rgba(220, 38, 38, 0.45);
+  background: rgba(69, 10, 10, 0.55);
 }
 
-.ada-note {
-  margin: 16px 0 0;
-  font-size: 0.8rem;
-  color: var(--ada-dim);
+.ada-notice--info {
+  align-items: flex-start;
+  gap: 7px;
+  border: 0.759px solid rgba(217, 119, 54, 0.4);
+  background: rgba(15, 23, 42, 0.55);
+  color: var(--ada-text-soft);
+}
+
+div.ada-notice--info {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ada-notice__title {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  font-weight: 600;
+  color: #fecaca;
+}
+
+.ada-notice--info .ada-notice__title {
+  color: var(--ada-text-soft);
+}
+
+.ada-notice__body {
+  margin: 0;
+  color: #f3c9c9;
+}
+
+.ada-notice--info .ada-notice__body {
+  color: var(--ada-text-soft);
+}
+
+.ada-notice__icon {
+  margin-top: 1px;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.ada-notice--info .ada-notice__icon {
+  color: var(--ada-ochre-soft);
+}
+
+/* Secondary text, links and the back link. */
+.ada-hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--ada-label);
+}
+
+.ada-page .ada-link {
+  font-weight: 600;
+  color: var(--ada-ochre);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ada-page .ada-back,
+.ada-page .ada-text-button {
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 6px;
+  font-family: var(--ada-face-ui);
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--ada-ochre);
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.ada-page .ada-back:hover,
+.ada-page .ada-text-button:hover {
+  text-decoration: underline;
+}
+
+.ada-page .ada-back:focus-visible,
+.ada-page .ada-text-button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(217, 119, 54, 0.6);
+}
+
+.ada-back__icon {
+  width: 13px;
+  height: 13px;
+}
+
+.ada-account {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--ada-label);
+}
+
+.ada-account__icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--ada-ochre);
+}
+
+.ada-account__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ada-account strong {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+/* TOTP enrolment: QR on a white tile, manual key disclosure, open-app link. */
+.ada-qr {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.ada-qr__tile {
+  display: grid;
+  place-items: center;
+  border-radius: 9.104px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.ada-qr__tile img {
+  display: block;
+  width: 180px;
+  height: 180px;
+  image-rendering: pixelated;
+}
+
+.ada-page .ada-open-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9.104px;
+  border: 0.759px solid rgba(217, 119, 54, 0.6);
+  padding: 7px 14px;
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--ada-ochre-soft);
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.ada-page .ada-open-app:hover {
+  background: rgba(217, 119, 54, 0.12);
+}
+
+.ada-open-app__icon {
+  width: 13px;
+  height: 13px;
+}
+
+.ada-disclosure {
+  width: 100%;
   text-align: center;
 }
 
-.ada-alert,
-.alert,
-.pf-c-alert {
-  border-radius: 3px;
-  border: 1px solid var(--ada-border);
-  background: #131a22;
+.ada-disclosure summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 600;
+  color: var(--ada-ochre);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ada-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.ada-disclosure[open] summary {
+  margin-bottom: 8px;
+}
+
+.ada-secret {
+  margin: 6px 0 0;
+  border-radius: 9.104px;
+  border: 0.759px solid var(--ada-well-border);
+  background: var(--ada-well);
+  padding: 8px 12px;
+  font-family: ui-monospace, "IBM Plex Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 1px;
   color: var(--ada-text);
-  padding: 10px 12px;
-  font-size: 0.86rem;
-  margin-bottom: 16px;
+  word-break: break-all;
+  user-select: all;
 }
 
-.alert-error,
-.pf-m-danger {
-  border-color: rgba(255, 180, 174, 0.4);
-  color: var(--ada-danger);
+.ada-apps {
+  text-align: center;
 }
 
-.alert-success,
-.pf-m-success {
-  border-color: rgba(126, 224, 176, 0.4);
-  color: var(--ada-ok);
+/* Credential picker on the code step when an officer has several authenticators. */
+.ada-credentials {
+  gap: 8px;
 }
 
+.ada-radio {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 9.104px;
+  border: 0.759px solid var(--ada-well-border);
+  background: var(--ada-well);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--ada-text);
+  cursor: pointer;
+}
+
+.ada-radio input {
+  accent-color: var(--ada-ochre);
+  margin: 0;
+}
+
+/* Support footer, identical to the web card's. */
+.ada-support {
+  width: 100%;
+  border-top: 0.759px solid rgba(51, 65, 85, 0.3);
+  padding-top: 18.967px;
+  font-family: var(--ada-face-ui);
+}
+
+.ada-support__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9.104px;
+}
+
+.ada-support__icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--ada-ochre);
+}
+
+.ada-support__text {
+  margin: 0;
+  font-size: 8.345px;
+  line-height: 12.518px;
+  letter-spacing: 0.2086px;
+  color: var(--ada-label);
+}
+
+.ada-support__text a {
+  font-weight: 600;
+  white-space: nowrap;
+  color: #ffffff;
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.ada-support__text a:hover,
+.ada-support__text a:focus-visible {
+  text-decoration: underline;
+}
+
+/* Locale switcher, shown only when the realm enables more than one language. */
+.ada-locale {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+  align-self: flex-end;
+  gap: 4px 10px;
+  margin-bottom: -18px;
+  font-size: 10px;
+}
+
+.ada-locale a {
+  color: var(--ada-label);
+  text-decoration: none;
+}
+
+.ada-locale a[aria-current="true"] {
+  color: var(--ada-ochre);
+  font-weight: 600;
+}
+
+.ada-info {
+  font-size: 11px;
+  color: var(--ada-label);
+  text-align: center;
+}
+
+/* Social providers (kept for realms that enable them). */
 .ada-divider {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 22px 0 14px;
-  color: var(--ada-dim);
-  font-size: 0.76rem;
+  color: var(--ada-label);
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -259,44 +766,110 @@ button[type="submit"] {
 .ada-divider::after {
   content: "";
   flex: 1;
-  height: 1px;
-  background: var(--ada-border);
+  height: 0.759px;
+  background: rgba(51, 65, 85, 0.6);
 }
 
 .ada-social-list {
   list-style: none;
-  margin: 0;
+  margin: 12px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.ada-social-link {
+.ada-page .ada-social-link {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 42px;
-  border: 1px solid var(--ada-border);
-  border-radius: 3px;
+  height: 37.934px;
+  border-radius: 9.104px;
+  border: 0.759px solid var(--ada-well-border);
+  background: var(--ada-well);
+  font-size: 12px;
   color: var(--ada-text);
-}
-
-.ada-social-link:hover {
-  border-color: var(--ada-border-strong);
   text-decoration: none;
 }
 
-@media (max-width: 480px) {
-  .ada-card,
-  .login-pf-page .card-pf {
-    padding: 24px 18px;
+/* Keycloakify's default pages (reset password, info, error) inside the same card. */
+.ada-page .ada-form-group {
+  margin: 0 0 18.208px;
+}
+
+.ada-page .ada-form-buttons {
+  margin-top: 12.139px;
+}
+
+.ada-page .ada-button {
+  height: auto;
+  border: 0;
+  border-radius: 9.104px;
+  padding: 12.139px 18px;
+  font-family: var(--ada-face-action);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 1.2139px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ada-page .ada-button-primary {
+  background: var(--ada-ochre);
+  color: var(--ada-ink);
+}
+
+.ada-page .ada-button-primary:hover {
+  background: var(--ada-ochre-hover);
+}
+
+.ada-page .ada-button-block {
+  display: block;
+  width: 100%;
+}
+
+.ada-page #kc-content a:not([class]) {
+  color: var(--ada-ochre);
+}
+
+.ada-page .instruction,
+.ada-page #kc-content p:not([class]) {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--ada-text-soft);
+}
+
+.ada-page .ada-hint {
+  color: var(--ada-label);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+@media (max-width: 640px) {
+  .ada-support__text {
+    font-size: 10px;
+    line-height: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .ada-card {
+    gap: 24px;
+    padding-left: 20px;
+    padding-right: 20px;
   }
 
-  .ada-form-options {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
+  .ada-title {
+    min-height: 0;
+    font-size: 32px;
+    line-height: 1.1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ada-swap,
+  .ada-spin {
+    animation: none;
   }
 }

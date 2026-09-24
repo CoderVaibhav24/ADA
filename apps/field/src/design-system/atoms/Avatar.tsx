@@ -5,11 +5,15 @@
 
 import { Image, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 
+import defaultPortrait from '../../../assets/images/avatar-inspector.png';
+import { useScriptOf } from '@/services/i18n';
+
 import {
   avatarSize,
   colors,
   control,
   radius,
+  shell,
   textStyle,
   type AvatarSizeToken,
   type LayoutStyle,
@@ -22,6 +26,11 @@ export type AvatarProps = {
   size?: AvatarSizeToken;
   /** A ring marks the signed-in user in the header. */
   ringed?: boolean;
+  /**
+   * `framed` is the mobile frames' avatar (163:1032, 204:4277): a 45.78 circle in a
+   * 4.58 `#635540` ring, showing the Figma inspector illustration when there is no photo.
+   */
+  appearance?: 'initials' | 'framed';
   style?: LayoutStyle;
 };
 
@@ -42,7 +51,16 @@ function initialsOf(name: string): string {
 }
 
 // Image when there is one, initials when there is not; the label is the name either way.
-export function Avatar({ name, source, size = 'md', ringed = false, style }: AvatarProps) {
+export function Avatar({ name, source, size = 'md', ringed = false, appearance = 'initials', style }: AvatarProps) {
+  const initials = initialsOf(name);
+  const script = useScriptOf(initials);
+  if (appearance === 'framed') {
+    return (
+      <View style={[styles.framed, style]} accessible accessibilityRole="image" accessibilityLabel={name}>
+        <Image source={source ?? defaultPortrait} style={styles.framedImage} resizeMode="contain" />
+      </View>
+    );
+  }
   const dimension = avatarSize[size];
   const frame = [
     styles.frame,
@@ -64,7 +82,7 @@ export function Avatar({ name, source, size = 'md', ringed = false, style }: Ava
   }
   return (
     <View style={frame} accessible accessibilityRole="image" accessibilityLabel={name}>
-      <Text style={textStyle(initialsVariant[size], 'brand')}>{initialsOf(name)}</Text>
+      <Text style={textStyle(initialsVariant[size], 'brand', script)}>{initials}</Text>
     </View>
   );
 }
@@ -77,4 +95,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brandTint,
   },
   image: { width: '100%', height: '100%' },
+  framed: {
+    width: shell.control,
+    height: shell.control,
+    borderRadius: radius.pill,
+    borderWidth: shell.avatarRing,
+    borderColor: colors.figControl,
+    backgroundColor: colors.figControl,
+    overflow: 'hidden',
+  },
+  framedImage: { width: '100%', height: '100%', borderRadius: radius.pill },
 });

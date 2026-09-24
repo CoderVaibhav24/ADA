@@ -107,13 +107,15 @@ export type IcmsRequestInit = {
   signal?: AbortSignal;
   method?: string;
   body?: unknown;
+  /** Extra request headers, e.g. `Idempotency-Key`. Cannot override auth. */
+  headers?: Readonly<Record<string, string>>;
 };
 
 export async function icmsRequest(
   path: string,
   init: IcmsRequestInit = {},
 ): Promise<unknown> {
-  const { query, signal, method = "GET", body } = init;
+  const { query, signal, method = "GET", body, headers: extra } = init;
   const search = query ? toSearchParams(query).toString() : "";
   const url = search ? `${path}?${search}` : path;
 
@@ -122,7 +124,7 @@ export async function icmsRequest(
   // would reach the server unparseable.
   const multipart = typeof FormData !== "undefined" && body instanceof FormData;
 
-  const headers: Record<string, string> = { ...(await authHeader()) };
+  const headers: Record<string, string> = { ...extra, ...(await authHeader()) };
   if (body !== undefined && !multipart) headers["Content-Type"] = "application/json";
 
   let response: Response;

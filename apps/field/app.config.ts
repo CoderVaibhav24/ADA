@@ -1,6 +1,6 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
-import { resolveAdaConfig } from './ada.config.ts';
+import { appContactFor, resolveAdaConfig } from './ada.config.ts';
 
 /*
  * Build-time configuration. `app.json` was removed in favour of this file. Which
@@ -63,6 +63,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: './assets/images/icon.png',
   scheme: 'adaicms',
   userInterfaceStyle: 'automatic',
+  // The native window behind React: colors.figScreen, so no white shows before the first frame.
+  backgroundColor: '#463E2F',
 
   /*
    * Over-the-air updates from our own server (`infra/ota/`), not EAS Update.
@@ -195,6 +197,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ],
     'expo-secure-store',
     'expo-updates',
+    // Case-location map preview; required on iOS (Podfile post_install), no-op on Android.
+    '@maplibre/maplibre-react-native',
     [
       'expo-camera',
       {
@@ -202,6 +206,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           'ADA ICMS uses the camera to photograph the parcel you are inspecting. ' +
           'Every photograph is stamped with its location and time.',
         recordAudioAndroid: false,
+        // Photos only: no NSMicrophoneUsageDescription, so iOS never shows a microphone prompt.
+        microphonePermission: false,
         /*
          * Nothing in the ICMS workflow scans a barcode, and the scanner is not
          * free: leaving it on packages ML Kit — `libbarhopper_v3.so` at 4.7 MB,
@@ -229,6 +235,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           'ADA ICMS records your position when you check in and stamps it on inspection ' +
           'photographs. If allowed "Always", a future version may also record location ' +
           'during an active inspection while the app is in the background.',
+        // No motion-activity API is called: no NSMotionUsageDescription placeholder prompt on iOS.
+        motionUsagePermission: false,
         // Declared 2026-09-23 for future use, unused. See the android.permissions comment.
         isAndroidBackgroundLocationEnabled: true,
         isAndroidForegroundServiceEnabled: true,
@@ -312,6 +320,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       // Normally empty: the issuer is read from the API's /api/auth/config, the
       // same source the portal uses, so one deployment cannot drift from the other.
       authIssuerOverride: ADA.authIssuer ?? '',
+      // Support number and login footer links (ada.config.ts appContactFor).
+      contact: appContactFor(ADA.env),
     },
   },
 });

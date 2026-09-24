@@ -5,13 +5,15 @@
  * open right now, and there is no undo. Three things follow, and they are the
  * whole design of this screen:
  *
- *  1. **The confirmation names the consequence, not the field.** "Field
- *     Surveyor will no longer be able to submit an inspection" — never "Are you
- *     sure?", and never "roles: [-field-surveyor]". An admin cannot weigh a
- *     diff of column names; they can weigh a sentence about an officer.
+ *  1. **The confirmation names the consequence, not the field.** A step is
+ *     gated by one permission code; who may take it is derived from the role
+ *     grants. So a permission change is spelled out as the roles that gain or
+ *     lose the step ("Field Surveyor will no longer be able to submit an
+ *     inspection"), never as "permission_cd: a -> b".
  *  2. **`note` is shown on every row.** It is the reason the rule exists and
  *     the only thing on screen that can stop a change that looks harmless.
- *  3. **Four fields are editable and no others.** `action_cd`,
+ *  3. **Five fields are editable and no others** (permission, requires,
+ *     assignee_only, active, note). `action_cd`,
  *     `source_status`, `target_status` and `stage_no` are what the product
  *     means by a stage; `TransitionUpdate` has no field for them at all, so the
  *     server refuses them by name. They are shown, fixed, with that said.
@@ -21,14 +23,20 @@
  * still be written and `updated_by` would credit the wrong edit.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { CaseStatus } from "@/api/icms/cases";
 import { IcmsApiError } from "@/api/icms/http";
-import type { PolicyTransition, TransitionPatch } from "@/api/icms/policy";
+import {
+  UNKNOWN_PERMISSION,
+  type PolicyPermission,
+  type PolicyTransition,
+  type RoleGrants,
+  type TransitionPatch,
+} from "@/api/icms/policy";
+import type { FlowSelection } from "@/components/flow/FlowCanvas";
 import { EmptyState } from "@/components/icms/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -39,18 +47,35 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useCaseStatusLabels, type PolicyLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { useIsNarrow } from "@/lib/useMediaQuery";
+import { partitionByBand } from "./bands";
 import { Code, PolicyLoadError, PolicyPanel, PolicyRefusal } from "./parts";
-import { usePatchTransition, useRoleGrants, useTransitions } from "./usePolicy";
+import {
+  usePatchTransition,
+  usePermissionCatalogue,
+  useRoleGrants,
+  useTransitions,
+} from "./usePolicy";
+import WorkflowChart, { SelectionFilter } from "./WorkflowChart";
+import { inSelection } from "./workflowSelection";
 
-/** The four editable fields, plus the note. Nothing else is in this type. */
+/** The editable fields. Nothing else is in this type. */
 type Draft = {
-  roles: string[];
+  permission_cd: string;
   requires: string[];
   assignee_only: boolean;
   active: boolean;
@@ -64,7 +89,7 @@ type Sentence = { key: string; text: string; tone: "add" | "remove" | "warn" };
 
 function draftOf(row: PolicyTransition): Draft {
   return {
-    roles: [...row.roles].sort(),
+    permission_cd: row.permission_cd,
     requires: [...row.requires],
     assignee_only: row.assignee_only,
     active: row.active,
@@ -72,14 +97,23 @@ function draftOf(row: PolicyTransition): Draft {
   };
 }
 
-function sameSet(a: readonly string[], b: readonly string[]): boolean {
+// Same members, order ignored.
+function sameMembers(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value) => b.includes(value));
+}
+
+// The active roles whose grants include the code: the same derivation the server makes for `roles`.
+function holdersOf(roleRows: readonly RoleGrants[], permissionCd: string): string[] {
+  return roleRows
+    .filter((role) => role.active && role.permission_cds.includes(permissionCd))
+    .map((role) => role.role_cd)
+    .sort();
 }
 
 /** Only the keys that actually moved — see the note at the top of this file. */
 function patchOf(row: PolicyTransition, draft: Draft): TransitionPatch {
   const patch: TransitionPatch = {};
-  if (!sameSet(draft.roles, row.roles)) patch.roles = [...draft.roles];
+  if (draft.permission_cd !== row.permission_cd) patch.permission_cd = draft.permission_cd;
   if (draft.requires.join("\u0000") !== row.requires.join("\u0000")) {
     patch.requires = [...draft.requires];
   }
@@ -101,31 +135,60 @@ export default function TransitionsEditor({
   const narrow = useIsNarrow();
   const transitions = useTransitions();
   const roles = useRoleGrants();
+  const catalogue = usePermissionCatalogue();
   const statusLabels = useCaseStatusLabels();
   const [editing, setEditing] = useState<PolicyTransition | null>(null);
 
   const text = labels.transitions;
   const rows = transitions.data ?? [];
   const roleRows = roles.data ?? [];
+  const permissionRows = catalogue.data ?? [];
 
-  const roleLabel = (roleCd: string): string => {
-    const row = roleRows.find((role) => role.role_cd === roleCd);
-    return labels.role(roleCd, row?.label ?? roleCd);
+  const permissionLabel = (permissionCd: string): string => {
+    const row = permissionRows.find((item) => item.permission_cd === permissionCd);
+    return row ? labels.permission(row.resource, row.action, row.label) : permissionCd;
   };
+
+  // Stable, so the flowchart only re-lays itself out when its inputs change.
+  const roleLabel = useCallback(
+    (roleCd: string): string => {
+      const row = roles.data?.find((role) => role.role_cd === roleCd);
+      return labels.role(roleCd, row?.label ?? roleCd);
+    },
+    [roles.data, labels],
+  );
 
   // `source_status` is null on `raise`: the case does not exist yet, which is a
   // different sentence from an unknown status, not a blank cell.
-  const statusLabel = (value: string | null): string =>
-    value === null ? text.initialStatus : (statusLabels[value as CaseStatus] ?? value);
+  const statusLabel = useCallback(
+    (value: string | null): string =>
+      value === null ? text.initialStatus : (statusLabels[value as CaseStatus] ?? value),
+    [text, statusLabels],
+  );
+
+  const [selection, setSelection] = useState<FlowSelection>(null);
+  const shown = useMemo(() => {
+    const all = transitions.data ?? [];
+    return selection ? all.filter((row) => inSelection(row, selection)) : all;
+  }, [transitions.data, selection]);
 
   const status =
-    transitions.status === "error" || roles.status === "error"
+    transitions.status === "error" || roles.status === "error" || catalogue.status === "error"
       ? "error"
-      : transitions.status === "pending" || roles.status === "pending"
+      : transitions.status === "pending" ||
+          roles.status === "pending" ||
+          catalogue.status === "pending"
         ? "pending"
         : "success";
 
-  const shared = { labels, roleLabel, statusLabel, canManage, onEdit: setEditing };
+  const shared = {
+    labels,
+    roleLabel,
+    permissionLabel,
+    statusLabel,
+    canManage,
+    onEdit: setEditing,
+  };
 
   return (
     <PolicyPanel
@@ -147,11 +210,12 @@ export default function TransitionsEditor({
 
       {status === "error" && (
         <PolicyLoadError
-          error={transitions.error ?? roles.error}
+          error={transitions.error ?? roles.error ?? catalogue.error}
           labels={labels}
           onRetry={() => {
             void transitions.refetch();
             void roles.refetch();
+            void catalogue.refetch();
           }}
         />
       )}
@@ -166,10 +230,27 @@ export default function TransitionsEditor({
             <Icon name="feedback.warning" className="me-2 inline size-4 align-[-2px]" />
             {text.confirmBody}
           </p>
+          <WorkflowChart
+            rows={rows}
+            labels={labels}
+            roleLabel={roleLabel}
+            statusLabel={statusLabel}
+            selection={selection}
+            onSelectionChange={setSelection}
+          />
+          <SelectionFilter
+            selection={selection}
+            count={shown.length}
+            labels={labels}
+            statusLabel={statusLabel}
+            onClear={() => {
+              setSelection(null);
+            }}
+          />
           {narrow ? (
-            <NarrowTransitions rows={rows} {...shared} />
+            <NarrowTransitions rows={shown} {...shared} />
           ) : (
-            <WideTransitions rows={rows} {...shared} />
+            <WideTransitions rows={shown} {...shared} />
           )}
         </>
       )}
@@ -177,9 +258,11 @@ export default function TransitionsEditor({
       {editing && (
         <TransitionDialog
           row={editing}
-          roleCds={roleRows.map((role) => role.role_cd)}
+          roleRows={roleRows}
+          permissions={permissionRows}
           labels={labels}
           roleLabel={roleLabel}
+          permissionLabel={permissionLabel}
           statusLabel={statusLabel}
           canManage={canManage}
           onClose={() => {
@@ -196,10 +279,46 @@ type RowProps = {
   rows: readonly PolicyTransition[];
   labels: PolicyLabels;
   roleLabel: (roleCd: string) => string;
+  permissionLabel: (permissionCd: string) => string;
   statusLabel: (value: string | null) => string;
   canManage: boolean;
   onEdit: (row: PolicyTransition) => void;
 };
+
+// The gating permission, then the roles that hold it today (read-only, derived by the server).
+function WhoMay({
+  row,
+  labels,
+  roleLabel,
+  permissionLabel,
+}: {
+  row: PolicyTransition;
+  labels: PolicyLabels;
+  roleLabel: (roleCd: string) => string;
+  permissionLabel: (permissionCd: string) => string;
+}) {
+  const text = labels.transitions;
+  return (
+    <span className="flex min-w-0 flex-col gap-1">
+      <span className="text-fg-base text-pretty">{permissionLabel(row.permission_cd)}</span>
+      <span>
+        <Code>{row.permission_cd}</Code>
+      </span>
+      <span className="text-2xs text-fg-faint">{text.holdersLabel}</span>
+      {row.roles.length === 0 ? (
+        <span className="text-2xs text-status-danger-fg">{text.noHolders}</span>
+      ) : (
+        <span className="flex flex-wrap gap-1">
+          {row.roles.map((roleCd) => (
+            <Badge key={roleCd} variant="outline">
+              {roleLabel(roleCd)}
+            </Badge>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /** The rules that are not roles, as chips, so a row reads at a glance. */
 function RuleChips({ row, labels }: { row: PolicyTransition; labels: PolicyLabels }) {
@@ -220,7 +339,15 @@ function RuleChips({ row, labels }: { row: PolicyTransition; labels: PolicyLabel
  * it rather than behind a disclosure. The note is the reason the rule exists;
  * putting it behind a click is how a rule gets changed without it being read.
  */
-function WideTransitions({ rows, labels, roleLabel, statusLabel, canManage, onEdit }: RowProps) {
+function WideTransitions({
+  rows,
+  labels,
+  roleLabel,
+  permissionLabel,
+  statusLabel,
+  canManage,
+  onEdit,
+}: RowProps) {
   const text = labels.transitions;
   return (
     // Two layers, as components/data-table/DataTable.tsx does it. The OUTER
@@ -245,7 +372,7 @@ function WideTransitions({ rows, labels, roleLabel, statusLabel, canManage, onEd
               {text.columns.to}
             </th>
             <th scope="col" className="px-3 py-2 text-start font-medium">
-              {text.columns.roles}
+              {text.columns.permission}
             </th>
             <th scope="col" className="px-3 py-2 text-start font-medium">
               {text.columns.requires}
@@ -280,18 +407,13 @@ function WideTransitions({ rows, labels, roleLabel, statusLabel, canManage, onEd
               <td className="px-3 py-2 align-top text-fg-base">
                 {statusLabel(row.target_status)}
               </td>
-              <td className="px-3 py-2 align-top">
-                {row.roles.length === 0 ? (
-                  <span className="text-status-danger-fg">{text.noRoles}</span>
-                ) : (
-                  <span className="flex flex-wrap gap-1">
-                    {row.roles.map((roleCd) => (
-                      <Badge key={roleCd} variant="outline">
-                        {roleLabel(roleCd)}
-                      </Badge>
-                    ))}
-                  </span>
-                )}
+              <td className="min-w-[14rem] px-3 py-2 align-top">
+                <WhoMay
+                  row={row}
+                  labels={labels}
+                  roleLabel={roleLabel}
+                  permissionLabel={permissionLabel}
+                />
               </td>
               <td className="px-3 py-2 align-top">
                 {row.requires.length === 0 ? (
@@ -346,6 +468,7 @@ function NarrowTransitions({
   rows,
   labels,
   roleLabel,
+  permissionLabel,
   statusLabel,
   canManage,
   onEdit,
@@ -387,18 +510,15 @@ function NarrowTransitions({
           </p>
 
           <div className="flex min-w-0 flex-col gap-1">
-            <span className="text-2xs font-semibold text-fg-muted">{text.columns.roles}</span>
-            {row.roles.length === 0 ? (
-              <span className="text-sm text-status-danger-fg">{text.noRoles}</span>
-            ) : (
-              <span className="flex flex-wrap gap-1">
-                {row.roles.map((roleCd) => (
-                  <Badge key={roleCd} variant="outline">
-                    {roleLabel(roleCd)}
-                  </Badge>
-                ))}
-              </span>
-            )}
+            <span className="text-2xs font-semibold text-fg-muted">
+              {text.columns.permission}
+            </span>
+            <WhoMay
+              row={row}
+              labels={labels}
+              roleLabel={roleLabel}
+              permissionLabel={permissionLabel}
+            />
           </div>
 
           <div className="flex min-w-0 flex-col gap-1">
@@ -435,18 +555,22 @@ function NarrowTransitions({
  */
 function TransitionDialog({
   row,
-  roleCds,
+  roleRows,
+  permissions,
   labels,
   roleLabel,
+  permissionLabel,
   statusLabel,
   canManage,
   onClose,
   onSaved,
 }: {
   row: PolicyTransition;
-  roleCds: readonly string[];
+  roleRows: readonly RoleGrants[];
+  permissions: readonly PolicyPermission[];
   labels: PolicyLabels;
   roleLabel: (roleCd: string) => string;
+  permissionLabel: (permissionCd: string) => string;
   statusLabel: (value: string | null) => string;
   canManage: boolean;
   onClose: () => void;
@@ -464,6 +588,14 @@ function TransitionDialog({
   const dirty = Object.keys(patch).length > 0;
   const fieldValid = field === "" || FIELD_PATTERN.test(field);
   const id = String(row.id);
+  const bands = useMemo(() => partitionByBand(permissions), [permissions]);
+  const draftHolders = useMemo(
+    () => holdersOf(roleRows, draft.permission_cd),
+    [roleRows, draft.permission_cd],
+  );
+  // A 422 unknown_permission belongs on the select, not in the banner.
+  const permissionRefused =
+    refused?.code === UNKNOWN_PERMISSION || refused?.field === "permission_cd" ? refused : null;
 
   /* ---- the consequence, in sentences ------------------------------------ */
   const sentences = useMemo<Sentence[]>(() => {
@@ -477,22 +609,37 @@ function TransitionDialog({
       );
     }
 
-    for (const roleCd of draft.roles) {
-      if (!row.roles.includes(roleCd)) {
-        out.push({
-          key: `role+${roleCd}`,
-          text: text.changeRoleAdded(roleLabel(roleCd), phrase),
-          tone: "add",
-        });
+    if (draft.permission_cd !== row.permission_cd) {
+      out.push({
+        key: "permission",
+        text: text.changePermission(
+          labels.actionName(row.action_cd),
+          permissionLabel(draft.permission_cd),
+          draft.permission_cd,
+        ),
+        tone: "warn",
+      });
+      // Who is affected, from the role grants: the server's derived holders today versus the new code's.
+      for (const roleCd of draftHolders) {
+        if (!row.roles.includes(roleCd)) {
+          out.push({
+            key: `role+${roleCd}`,
+            text: text.changeHolderAdded(roleLabel(roleCd), phrase),
+            tone: "add",
+          });
+        }
       }
-    }
-    for (const roleCd of row.roles) {
-      if (!draft.roles.includes(roleCd)) {
-        out.push({
-          key: `role-${roleCd}`,
-          text: text.changeRoleRemoved(roleLabel(roleCd), phrase),
-          tone: "remove",
-        });
+      for (const roleCd of row.roles) {
+        if (!draftHolders.includes(roleCd)) {
+          out.push({
+            key: `role-${roleCd}`,
+            text: text.changeHolderRemoved(roleLabel(roleCd), phrase),
+            tone: "remove",
+          });
+        }
+      }
+      if (draftHolders.length > 0 && sameMembers(draftHolders, row.roles)) {
+        out.push({ key: "same-holders", text: text.changeHoldersSame, tone: "remove" });
       }
     }
 
@@ -525,14 +672,14 @@ function TransitionDialog({
       out.push({ key: "note", text: text.changeNote, tone: "remove" });
     }
 
-    // Not a change in itself — a state the change would leave behind, and the
-    // one an admin is most likely to reach by unticking one box too many.
-    if (draft.roles.length === 0) {
+    // Not a change in itself: a state the change would leave behind, reached by
+    // picking a permission no active role holds.
+    if (draftHolders.length === 0) {
       out.push({ key: "nobody", text: text.nobodyWarning(phrase), tone: "warn" });
     }
 
     return out;
-  }, [draft, row, phrase, roleLabel, text]);
+  }, [draft, row, phrase, roleLabel, permissionLabel, draftHolders, labels, text]);
 
   const apply = () => {
     patchTransition.mutate(
@@ -573,7 +720,7 @@ function TransitionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {refused && (
+        {refused && !permissionRefused && (
           <PolicyRefusal
             labels={labels}
             title={text.refusedTitle}
@@ -619,33 +766,78 @@ function TransitionDialog({
               </p>
             )}
 
-            <fieldset className="flex min-w-0 flex-col gap-2">
-              <legend className="text-sm font-medium text-fg-strong">{text.rolesLabel}</legend>
-              {roleCds.map((roleCd) => (
-                <label
-                  key={roleCd}
-                  htmlFor={`t-${id}-role-${roleCd}`}
-                  className="flex flex-wrap items-center gap-2 text-sm"
+            <div className="flex min-w-0 flex-col gap-2">
+              <Label htmlFor={`t-${id}-permission`}>{text.permissionLabel}</Label>
+              <p
+                id={`t-${id}-permission-hint`}
+                className="max-w-prose text-2xs text-fg-faint text-pretty"
+              >
+                {text.permissionHint}
+              </p>
+              <Select
+                value={draft.permission_cd}
+                disabled={!canManage}
+                onValueChange={(next) => {
+                  setRefused(null);
+                  setDraft((current) => ({ ...current, permission_cd: next }));
+                }}
+              >
+                <SelectTrigger
+                  id={`t-${id}-permission`}
+                  className="w-full max-w-md"
+                  aria-invalid={permissionRefused !== null}
+                  aria-describedby={`t-${id}-permission-hint`}
                 >
-                  <Checkbox
-                    id={`t-${id}-role-${roleCd}`}
-                    checked={draft.roles.includes(roleCd)}
-                    disabled={!canManage}
-                    onCheckedChange={(next) => {
-                      setDraft((current) => ({
-                        ...current,
-                        roles:
-                          next === true
-                            ? [...current.roles, roleCd].sort()
-                            : current.roles.filter((value) => value !== roleCd),
-                      }));
-                    }}
-                  />
-                  <span className="text-fg-base">{roleLabel(roleCd)}</span>
-                  <Code>{roleCd}</Code>
-                </label>
-              ))}
-            </fieldset>
+                  <SelectValue placeholder={text.permissionPlaceholder} />
+                </SelectTrigger>
+                <SelectContent className="max-h-80">
+                  {/* A code the catalogue no longer lists still has to render as the current value. */}
+                  {!permissions.some((item) => item.permission_cd === row.permission_cd) && (
+                    <SelectItem value={row.permission_cd}>{row.permission_cd}</SelectItem>
+                  )}
+                  {bands.map((group) => (
+                    <SelectGroup key={group.band}>
+                      <SelectLabel>{labels.bands[group.band]}</SelectLabel>
+                      {group.items.map((permission) => (
+                        <SelectItem key={permission.permission_cd} value={permission.permission_cd}>
+                          <span className="flex min-w-0 flex-col items-start">
+                            <span>
+                              {labels.permission(
+                                permission.resource,
+                                permission.action,
+                                permission.label,
+                              )}
+                            </span>
+                            <span className="font-mono text-2xs text-fg-faint">
+                              {permission.permission_cd}
+                            </span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+              {permissionRefused && (
+                <p className="text-2xs text-status-danger-fg" role="alert">
+                  {text.unknownPermission(draft.permission_cd)}
+                </p>
+              )}
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-2xs text-fg-faint">{text.holdersNow}</span>
+                {draftHolders.length === 0 ? (
+                  <span className="text-2xs text-status-danger-fg">{text.noHolders}</span>
+                ) : (
+                  <span className="flex flex-wrap gap-1">
+                    {draftHolders.map((roleCd) => (
+                      <Badge key={roleCd} variant="outline">
+                        {roleLabel(roleCd)}
+                      </Badge>
+                    ))}
+                  </span>
+                )}
+              </div>
+            </div>
 
             <div className="flex min-w-0 flex-col gap-2">
               <Label htmlFor={`t-${id}-field`}>{text.requiresLabel}</Label>

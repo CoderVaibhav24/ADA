@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 
 from ada_core import CoreSettings
 from ada_core.database import configure_engine
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import NoDecode
 
 
@@ -52,6 +52,9 @@ class Settings(CoreSettings):
     # account is still refused by the service-account check.
     # OIDC_ALLOWED_AZP, comma-separated.
     oidc_allowed_azp: Annotated[list[str], NoDecode] = ["ada-web", "ada-field", "ada-auth"]
+    # The field app's client. A findings save whose token has this azp is field-origin;
+    # any other accepted client is the web portal (docs/icms/inspection-findings-fields.md).
+    oidc_field_client_id: str = "ada-field"
 
     # --- user administration -------------------------------------------------
     #
@@ -99,6 +102,18 @@ class Settings(CoreSettings):
     # is short on purpose: if ada-ml cannot accept an id in five seconds the
     # right answer to the officer is an error, not a spinner.
     ml_timeout_seconds: float = 5.0
+
+    # --- notifications (ada-notify) -----------------------------------------
+    # Tells a surveyor a case was assigned to them (push + inbox). Sent as the
+    # ada-ml client: ada-notify maps exactly one client_id to a project, and the
+    # field app's inbox reads project `ada`, which is bound to ada-ml.
+    # Off by default so a stack without ada-notify is not trailed by warnings.
+    notify_enabled: bool = False
+    notify_url: str = "http://ada-notify:8001"
+    # The token endpoint is fetched, not compared, so this is the REACHABLE realm URL.
+    notify_issuer: str = ""
+    notify_client_id: str = "ada-ml"
+    notify_client_secret: str = ""
 
     # --- browser -------------------------------------------------------------
     # The origin the SPA is served from. One entry, not a wildcard: credentials
@@ -149,6 +164,8 @@ class Settings(CoreSettings):
         ),
     )
     icms_accuracy_flag_m: float = 15.0
+    # A photo whose EXIF GPS sits farther than this from the submitted fix is flagged.
+    icms_exif_mismatch_m: float = 25.0
 
     # How many photographs one round carries: the floor a submit is held to and
     # the ceiling an upload is refused at. The server owns both — `submit`
@@ -169,6 +186,50 @@ class Settings(CoreSettings):
     # argue about, and that argument must not be a release.
     icms_min_photos_per_round: int = 3
     icms_max_photos_per_round: int = 5
+    # Photographs attached to a complaint at filing time, before any round.
+    icms_max_photos_per_case: int = 10
+
+    # Submit holds a round to the answer rules R1-R6 (app/icms/inspection_rules.py).
+    # Off only in test suites that are about a transition rather than the answers.
+    icms_require_inspection_answers: bool = True
+
+    # --- reverse geocoding --------------------------------------------------
+    # Suggests state, district and pin code for a complaint pin. Empty base URL
+    # turns it off. The public Nominatim has a usage policy: docs/icms/geo-locate.md.
+    geo_locate_base_url: str = "https://nominatim.openstreetmap.org"
+    # Nominatim refuses anonymous clients; empty builds "ADA-ICMS/<version>".
+    geo_locate_user_agent: str = ""
+    # Appended to the default User-Agent as the operator contact Nominatim asks for.
+    geo_locate_contact: str = ""
+    geo_locate_timeout_s: float = 5.0
+
+    # --- chunked upload and the sweeper (docs/ADA-Upload-and-ML-Runtime-Design.md §3) ---
+    # One chunk must fit under the gateway's 128 MB per-request cap.
+    upload_chunk_bytes: int = 64 << 20
+    upload_max_bytes: int = 64 << 30
+    upload_session_ttl_hours: float = 24.0
+    upload_max_open_sessions: int = 3
+    raster_failed_retention_days: float = 7.0
+    raster_stuck_minutes: float = 30.0
+    disk_min_free_pct: float = 15.0
+    sweeper_interval_seconds: float = 900.0
+    # Off in the suite: tests call sweep_once directly with a fake clock.
+    sweeper_enabled: bool = True
+    # ICMS deadline reminders (app/icms/reminders.py); SLAs live in icms_runtime_setting.
+    reminders_enabled: bool = True
+
+    # --- cold tier: any S3-compatible bucket; an empty endpoint disables it ---
+    cold_store_endpoint: str = ""
+    cold_store_bucket: str = ""
+    cold_store_region: str = "us-east-1"
+    cold_store_access_key: str = ""
+    cold_store_secret_key: SecretStr = SecretStr("")
+    # STANDARD for MinIO; GLACIER_IR or DEEP_ARCHIVE in production.
+    cold_store_storage_class: str = "STANDARD"
+    cold_after_days: float = 180.0
+    cold_restore_eta_hours: float = 5.0
+    # >0 writes every archive under COMPLIANCE-mode Object Lock for this many days.
+    cold_object_lock_days: int = 0
 
     # Production unless said otherwise; compose (local development) sets local.
     ada_env: Literal["local", "staging", "production"] = "production"
@@ -203,6 +264,28 @@ class Settings(CoreSettings):
         if not self.oidc_allowed_azp:
             raise ValueError("OIDC_ALLOWED_AZP is empty, so no token could ever be accepted")
         return self
+
+    @model_validator(mode="after")
+    def _check_upload_and_storage(self) -> Settings:
+        if not 0 < self.upload_chunk_bytes <= 128 << 20:
+            raise ValueError("UPLOAD_CHUNK_BYTES must be between 1 and 134217728 (the gateway cap)")
+        if self.upload_max_bytes < self.upload_chunk_bytes:
+            raise ValueError("UPLOAD_MAX_BYTES is smaller than one chunk")
+        if not 0 <= self.disk_min_free_pct < 100:
+            raise ValueError("DISK_MIN_FREE_PCT must be a percentage in [0, 100)")
+        if self.upload_max_open_sessions < 1:
+            raise ValueError("UPLOAD_MAX_OPEN_SESSIONS must be >= 1")
+        if self.sweeper_interval_seconds <= 0:
+            raise ValueError("SWEEPER_INTERVAL_SECONDS must be positive")
+        if self.cold_store_endpoint and not self.cold_store_bucket:
+            raise ValueError("COLD_STORE_ENDPOINT is set but COLD_STORE_BUCKET is empty")
+        if self.cold_object_lock_days < 0:
+            raise ValueError("COLD_OBJECT_LOCK_DAYS must be >= 0")
+        return self
+
+    @property
+    def cold_store_enabled(self) -> bool:
+        return bool(self.cold_store_endpoint and self.cold_store_bucket)
 
     # Under uploads_dir so one bind mount carries every officer-supplied file.
     @property

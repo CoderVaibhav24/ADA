@@ -37,19 +37,23 @@ nobody wants to be reading a stack trace.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from ada_core.database import SessionLocal, get_engine
 from ada_platform.logging import configure as configure_logging
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from . import sweeper
+from .clients import ml as ml_client
 from .config import settings
+from .deps import require_imagery
 from .errors import install_error_handlers
-from .icms import policy
+from .icms import policy, reminders
 from .routers import (
     analysis,
     app_screens,
@@ -57,6 +61,7 @@ from .routers import (
     icms_admin,
     icms_cases,
     icms_dashboard,
+    icms_geo,
     icms_inspections,
     icms_notices,
     icms_users,
@@ -64,6 +69,7 @@ from .routers import (
     rasters,
     redzones,
     tiles,
+    uploads,
 )
 from .security import JWTMiddleware, auth
 
@@ -93,9 +99,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             get_engine(), poll_seconds=settings.icms_policy_poll_seconds
         )
         watcher.start()
+    sweep_task = asyncio.create_task(sweeper.run_forever()) if settings.sweeper_enabled else None
+    remind_task = (asyncio.create_task(reminders.run_forever())
+                   if settings.reminders_enabled else None)
     try:
         yield
     finally:
+        if remind_task is not None:
+            reminders.stop_event.set()
+            remind_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await remind_task
+        if sweep_task is not None:
+            sweeper.stop_event.set()
+            sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sweep_task
         if watcher is not None:
             await watcher.stop()
 
@@ -138,6 +157,7 @@ install_error_handlers(app)
 API = "/api"
 app.include_router(projects.router, prefix=API)
 app.include_router(rasters.router, prefix=API)
+app.include_router(uploads.router, prefix=API)
 app.include_router(redzones.router, prefix=API)
 app.include_router(analysis.router, prefix=API)
 app.include_router(tiles.router, prefix=API)
@@ -148,6 +168,7 @@ app.include_router(icms_notices.router, prefix=API)
 app.include_router(icms_dashboard.router, prefix=API)
 app.include_router(icms_admin.router, prefix=API)
 app.include_router(icms_users.router, prefix=API)
+app.include_router(icms_geo.router, prefix=API)
 app.include_router(app_screens.router, prefix=API)
 
 
@@ -185,11 +206,34 @@ async def ready(response: Response) -> dict:
     ok = all(value == "ok" for value in checks.values())
     if not ok:
         response.status_code = 503
+    try:
+        disk = "low" if await asyncio.to_thread(sweeper.disk_low) else "ok"
+    except OSError:
+        disk = "unknown"
+    last = sweeper.last_report
     return {
         "status": "ok" if ok else "unavailable",
         "service": settings.service_name,
         "checks": checks,
+        "disk": disk,
+        "sweeper_last_run": last.at.isoformat() if last else None,
     }
+
+
+_RUNTIME_FIELDS = ("backend", "tier", "device_name", "fp16", "ort_provider", "gpu_budget_gb",
+                   "grid_cap_px", "eta_s_per_mpx", "eta_s_at_grid_cap", "queue_depth")
+
+
+# Proxies ada-ml's readiness, whitelisted, so the console can show the tier and a CPU-mode ETA.
+@app.get("/api/ml/runtime", dependencies=[Depends(require_imagery)],
+         responses={503: {"description": "model service unavailable"}})
+def ml_runtime() -> dict:
+    try:
+        body = ml_client.runtime(timeout=3.0)
+    except ml_client.MLUnavailable as exc:
+        log.info("ml runtime unavailable: %s", exc)
+        raise HTTPException(503, "model service unavailable") from exc
+    return {key: body[key] for key in _RUNTIME_FIELDS if key in body}
 
 
 @app.get("/api/auth/config")

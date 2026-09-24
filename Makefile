@@ -2,6 +2,7 @@
 #
 # Dev model: infrastructure in Docker, services native.
 #   make infra             postgres, redis, keycloak, mailpit, kong (containers)
+#   make infra-cold        also start minio, the dev cold-storage tier (compose --profile cold)
 #   make api / ml / auth / notify / worker / web
 #                          each service on the host, one terminal each, with reload
 #   make up-full           the whole stack in containers instead (compose --profile full)
@@ -33,6 +34,8 @@ RELOAD_LIBS  := --reload-dir . --reload-dir $(ROOT)/libs/python
 # Overridable on the command line: make infra-logs SERVICE=keycloak
 SERVICE ?=
 CONFIRM ?=
+FILE    ?=
+DRY_RUN ?=
 # Where api/auth/ml/notify listen. Kong reaches them via host.docker.internal,
 # which on Linux is the docker bridge, not loopback: use BIND=0.0.0.0 there.
 BIND    ?= 127.0.0.1
@@ -51,8 +54,8 @@ NATIVE_ENV = set -a; \
 
 .DEFAULT_GOAL := help
 
-.PHONY: help infra infra-down infra-logs up-full down-full \
-        migrate db-shell db-current \
+.PHONY: help infra infra-cold infra-down infra-logs up-full down-full \
+        migrate geo-import db-shell db-current \
         api ml auth notify worker web field \
         test test-api test-core lint typecheck openapi \
         gateway-sync nuke
@@ -78,6 +81,9 @@ help: ## Print this help
 infra: ## Start postgres, redis, keycloak, mailpit and kong; waits until healthy
 	$(COMPOSE) up -d --wait --wait-timeout 300
 
+infra-cold: ## Also start minio (dev cold-storage tier, profile cold); waits until healthy
+	$(COMPOSE) --profile cold up -d --wait --wait-timeout 300
+
 infra-down: ## Stop the infrastructure containers; volumes survive (see nuke)
 	$(COMPOSE) down
 
@@ -95,6 +101,10 @@ down-full: ## Stop the whole containerised stack; volumes survive
 
 migrate: ## Bring the schema to head (ada_core.migrate) using DATABASE_URL from .env
 	@$(NATIVE_ENV) cd $(CORE_DIR) && $(PY) -m ada_core.migrate
+
+geo-import: ## Load boundary KML/KMZ: make geo-import FILE=agra.kml [DRY_RUN=1]
+	@test -n "$(FILE)" || { echo "usage: make geo-import FILE=<path.kml|kmz> [DRY_RUN=1]" >&2; exit 1; }
+	@$(NATIVE_ENV) $(PY) $(ROOT)/scripts/geo/import_boundaries.py "$(abspath $(FILE))" $(if $(DRY_RUN),--dry-run,)
 
 db-shell: ## Interactive psql in the postgres container
 	@$(COMPOSE) exec postgres sh -lc 'exec psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
@@ -114,6 +124,8 @@ api: ## ada-api on :BACKEND_PORT (8000) with reload
 	OIDC_ISSUER="$${OIDC_ISSUER:-$$ADA_ISSUER}" OIDC_INTERNAL_ISSUER_URL="$$KC_HOST_ISSUER" \
 	OIDC_ADMIN_CLIENT_ID="$${ADA_API_CLIENT_ID:-ada-api}" OIDC_ADMIN_CLIENT_SECRET="$${ADA_API_CLIENT_SECRET:-}" \
 	ML_SERVICE_URL="http://127.0.0.1:$${ML_PORT:-8100}" WEBSITE_ORIGIN="$${APP_ORIGIN:-http://localhost:5173}" \
+	NOTIFY_ENABLED="$${NOTIFY_ENABLED:-true}" NOTIFY_URL="http://127.0.0.1:$${ADA_NOTIFY_PORT:-8001}" NOTIFY_ISSUER="$$KC_HOST_ISSUER" \
+	NOTIFY_CLIENT_ID="$${NOTIFY_CLIENT_ID:-ada-ml}" NOTIFY_CLIENT_SECRET="$$ADA_ML_CLIENT_SECRET" \
 	exec $(UVICORN) app.main:app --reload $(RELOAD_LIBS) --host $(BIND) --port $${BACKEND_PORT:-8000}
 
 ml: ## ada-ml on :ML_PORT (8100) with reload; migrates the schema on startup

@@ -53,6 +53,7 @@ from sqlalchemy import text
 
 from . import jobs
 from .api.v1 import health, work
+from .ml import gpu
 
 configure_logging("ada-ml", settings.log_level)
 log = logging.getLogger("ada.ml")
@@ -100,12 +101,39 @@ async def lifespan(app: FastAPI):
             "anywhere else."
         )
 
+    _require_runtime()
+
     # Anything left mid-flight by the previous process (restart, crash) is
     # stranded otherwise — the worker is in-process, so its queue does not
     # survive, but the "processing" row does.
     jobs.requeue_stale()
 
-    yield
+    retry = (asyncio.create_task(_retry_loop(settings.ml_retry_interval_seconds))
+             if settings.ml_retry_interval_seconds > 0 else None)
+    try:
+        yield
+    finally:
+        if retry is not None:
+            retry.cancel()
+
+
+# A pinned ML_DEVICE whose probe fails raises here, so the process never serves.
+def _require_runtime() -> dict:
+    info = gpu.runtime_info()
+    log.info("ML runtime: %s on %s (tier %s, %s, ORT %s)", info["backend"],
+             info["device_name"], info["tier"], "fp16" if info["fp16"] else "fp32",
+             info["ort_provider"])
+    return info
+
+
+# Retryable (OOM-exhausted) analyses come back when the card may be free again.
+async def _retry_loop(interval: int) -> None:
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(jobs.requeue_retryable)
+        except Exception:  # noqa: BLE001 - the loop must outlive one bad tick
+            log.exception("retryable-analysis requeue failed")
 
 
 app = FastAPI(

@@ -1,156 +1,281 @@
 /**
- * PhotoGrid — step 2 (`179:6402`). The Add Photo tile, the captured photographs with
- * their geo badge and upload state, and the "n/min minimum photos captured" counter.
- * Next stays disabled below the minimum, and the reason is stated (ui-rules.md §4).
+ * PhotoGrid — step 2 (`179:6402`). What to photograph, the captured tiles with their
+ * upload state in words, the Add Photo tile and the "n/min minimum photos captured"
+ * counter. Next stays disabled below the minimum, with the reason (ui-rules.md §4).
  *
- * Only camera captures exist here: there is no gallery path, so nothing from the
- * gallery can count toward the minimum. Remove is offered only while the server
- * cannot hold the photograph; once it may have landed there is no delete control.
- * Camera and location are primed inline before the OS dialogs (ui-rules.md §6).
+ * Camera only: nothing from the gallery can be added, so nothing from it counts.
+ * Delete and Retake are offered only while the office cannot hold the photo, and
+ * ask first; once it may have landed there is no delete control (evidence rule 6).
+ * Storage is checked before the camera opens; permissions are primed first (§6).
  */
 
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Modal, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Linking, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useInspectionDetail } from '@/services/api/inspection-reads';
 import { useAppConfig } from '@/services/config/use-app-config';
 import { formatDateTime } from '@/services/format/datetime';
-import { gpsExif, recordPhoto, removePhoto, retryPhoto } from '@/services/inspection/evidence';
+import { useT, useTPlural, type PlainKey } from '@/services/i18n';
+import { recordPhoto, releasePhotos, removePhoto, retryPhoto, type ShutterFix } from '@/services/inspection/evidence';
 import { useRoundCaptures } from '@/services/inspection/queries';
+import { uploadRefusalKey } from '@/services/inspection/refusals';
+import { signalQuality } from '@/services/inspection/site';
+import { discardFile, embedGps, looksRendered, normalizePhoto, stampAddress, stampLines } from '@/services/inspection/stamp';
 import { judgeFix, useLiveFix, useLocationPermission } from '@/services/location/live-fix';
-import { CaptureRejected, isRemovable, type CaptureRecord } from '@/services/storage/captures';
+import {
+  CaptureRejected,
+  cannotBeSent,
+  hasRoomForCapture,
+  isRemovable,
+  stuckReason,
+  type CaptureRecord,
+  type CaptureRejectionReason,
+} from '@/services/storage/captures';
 import { useSyncStore } from '@/store/sync-store';
 
-import { Button, Icon, ProgressBar, Text } from '../atoms';
-import { GpsReadout, PhotoThumb } from '../molecules';
-import {
-  colors,
-  control,
-  disabledOpacity,
-  gutter,
-  layout,
-  radius,
-  space,
-  type ColorToken,
-  type LayoutStyle,
-} from '../tokens';
+import { type LayoutStyle } from '../tokens';
+import { wizardColors, wizardMetrics as m, type WizardColor } from '../tokens/wizard';
+import { PhotoStamper, type PhotoStamperHandle } from './PhotoStamper';
+import { ConfirmSheet, Glyph, Notice, RemoveGlyph, WButton, WIcon, WText, type WizardIconName } from './wizard/kit';
 
-export type PhotoGate = { readonly ready: boolean; readonly reason: string | null };
+export type PhotoGate = { readonly ready: boolean; readonly missing: number };
 
 export type PhotoGridProps = {
   caseRef: string;
   /** Null while the round is not yet known; captures are kept and bound when it is. */
   inspectionRef: string | null;
-  /** Tells the screen whether Next may enable, and if not, why. Pass a stable function. */
+  /** Tells the screen whether Next may enable. Pass a stable function. */
   onGateChange: (gate: PhotoGate) => void;
   style?: LayoutStyle;
 };
 
-const COLUMNS = 3;
+const REJECTED: Record<CaptureRejectionReason, PlainKey> = {
+  no_location: 'photos.rejected.noLocation',
+  poor_accuracy: 'photos.rejected.poorAccuracy',
+  no_timestamp: 'photos.rejected.noTimestamp',
+  gallery_not_allowed: 'photos.rejected.gallery',
+  file_missing: 'photos.rejected.fileMissing',
+};
 
-// The upload state of one capture, in words, with the tone the sync banner uses.
-function uploadState(record: CaptureRecord): { text: string; tone: ColorToken } {
+type TileState = { word: PlainKey; icon: WizardIconName; color: WizardColor };
+
+// A capture's upload state as an icon, a colour and a word — never colour alone.
+function tileState(record: CaptureRecord): TileState {
   switch (record.state) {
     case 'uploaded':
       return record.geotagFlagged === true
-        ? { text: 'Received — location flagged by the office', tone: 'priorityMedium' }
-        : { text: 'Received by the office', tone: 'syncClear' };
+        ? { word: 'photos.state.flagged', icon: 'warning', color: 'gpsWeak' }
+        : { word: 'photos.state.sent', icon: 'ok', color: 'ok' };
     case 'uploading':
-      return { text: 'Sending…', tone: 'syncPending' };
+      return { word: 'photos.state.sending', icon: 'upload', color: 'warn' };
     case 'pending':
-      return { text: 'On this device — waiting to send', tone: 'syncPending' };
+      return { word: 'photos.state.waiting', icon: 'clock', color: 'warn' };
     case 'failed':
-      return { text: `Not sent: ${record.lastError ?? 'the upload failed.'}`, tone: 'syncFailed' };
+      return { word: 'photos.state.failed', icon: 'alert', color: 'error' };
   }
 }
 
-// Whether a capture still held on the device is nearing or past the server's staleness limit.
-function expiryCaption(deviceTimestamp: string, maxAgeHours: number): string | null {
-  const takenAt = Date.parse(deviceTimestamp);
-  if (Number.isNaN(takenAt)) return null;
-  const remainingHours = maxAgeHours - (Date.now() - takenAt) / 3_600_000;
-  if (remainingHours <= 0) {
-    return 'Past the office’s time limit — it will be refused on upload. Retake it if possible.';
-  }
-  if (remainingHours <= 1) {
-    return 'Expires within the hour — send it soon, or retake it.';
-  }
-  return null;
-}
-
-// One photograph with its state line, remove (before upload only) and retry (after a failure).
-function PhotoTile({ record, size, deviceTimestampMaxAgeHours }: { record: CaptureRecord; size: number; deviceTimestampMaxAgeHours: number }) {
-  const state = uploadState(record);
-  const removable = isRemovable(record);
-  // Only a capture still owed to the server can go stale before it sends.
-  const expiry =
-    record.state === 'pending' || record.state === 'failed'
-      ? expiryCaption(record.geo.deviceTimestamp, deviceTimestampMaxAgeHours)
-      : null;
-  const onRemove = () =>
-    Alert.alert(
-      'Remove this photograph?',
-      'It has not reached the office, so it is deleted from this device. This cannot be undone.',
-      [
-        { text: 'Keep', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => void removePhoto(record) },
-      ],
-    );
+// One 96px tile (179:7172): the photo in its dark inner frame, the remove mark while it can go.
+function PhotoTile({
+  record,
+  index,
+  onOpen,
+  onRemove,
+}: {
+  record: CaptureRecord;
+  index: number;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  const t = useT();
+  const state = tileState(record);
   return (
-    <View style={[styles.tile, { width: size }]}>
-      <PhotoThumb
-        uri={record.fileUri}
-        size={size}
-        source={record.geo.captureSource}
-        geotagged
-        accuracyMeters={record.geo.accuracyM}
-        onRemove={removable ? onRemove : undefined}
-        accessibilityLabel={`Photograph taken ${formatDateTime(record.geo.deviceTimestamp) ?? ''}, accuracy ${Math.round(record.geo.accuracyM)} metres. ${state.text}`}
-      />
-      <Text variant="caption" color={state.tone} numberOfLines={3}>
-        {state.text}
-      </Text>
-      {expiry !== null ? (
-        <Text variant="caption" color="priorityMedium" numberOfLines={2}>
-          {expiry}
-        </Text>
+    <View style={styles.tileWrap}>
+      <Pressable
+        onPress={onOpen}
+        accessibilityRole="imagebutton"
+        accessibilityLabel={t('photos.tileA11y', { index, state: t(state.word) })}
+        accessibilityHint={t('photos.tileHint')}
+        style={styles.tile}
+      >
+        <View style={styles.tileInner}>
+          <Image source={{ uri: record.fileUri }} contentFit="cover" style={styles.fill} recyclingKey={record.id} />
+        </View>
+        <View style={styles.badge}>
+          <WIcon name={state.icon} size={14} color={state.color} />
+        </View>
+      </Pressable>
+      {isRemovable(record) ? (
+        <Pressable
+          onPress={onRemove}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t('photos.remove')}
+          style={styles.remove}
+        >
+          <RemoveGlyph />
+        </Pressable>
       ) : null}
-      {record.state === 'failed' ? (
-        <Button
-          label="Retry"
-          size="sm"
-          variant="secondary"
-          onPress={() => retryPhoto(record)}
-          accessibilityHint="Sends this photograph again under its original key, so it is never stored twice"
-        />
-      ) : null}
+      <WText variant="caption" color={state.color} numberOfLines={2} align="center">
+        {t(state.word)}
+      </WText>
     </View>
   );
 }
 
-// The full-screen camera: live preview, the live fix, and a shutter gated on it.
+type PreviewAction = 'retake' | 'delete';
+
+// The full view of one photo: the stamped picture, when and how precisely it was taken, and Keep / Retake / Delete.
+function PhotoPreview({
+  record,
+  index,
+  onClose,
+  onRetake,
+  onDelete,
+}: {
+  record: CaptureRecord;
+  index: number;
+  onClose: () => void;
+  onRetake: () => void;
+  onDelete: () => void;
+}) {
+  const t = useT();
+  const [confirming, setConfirming] = useState<PreviewAction | null>(null);
+  const state = tileState(record);
+  const removable = isRemovable(record);
+  const failure =
+    record.state === 'failed'
+      ? stuckReason(record) === 'retry'
+        ? 'photos.failed.stuck'
+        : uploadRefusalKey(record.lastErrorCode, record.lastErrorField, record.refusedByServer === true)
+      : null;
+  return (
+    <SafeAreaView style={styles.modal}>
+      <View style={styles.modalHead}>
+        <WText variant="sheetTitle" accessibilityRole="header" style={styles.flex}>
+          {t('photos.view.title', { index })}
+        </WText>
+        <WButton label={t('common.close')} variant="secondary" onPress={onClose} style={styles.headButton} />
+      </View>
+      <View style={styles.viewer}>
+        <Image source={{ uri: record.fileUri }} contentFit="contain" style={styles.fill} />
+      </View>
+      <View style={styles.modalFoot}>
+        <View style={styles.inline}>
+          <WIcon name={state.icon} size={18} color={state.color} />
+          <WText variant="noteBold" color={state.color}>
+            {t(state.word)}
+          </WText>
+        </View>
+        <WText variant="note" color="stepBody">
+          {t('photos.view.taken', { time: formatDateTime(record.geo.deviceTimestamp) ?? '' })}
+        </WText>
+        <WText variant="note" color="stepBody">
+          {t('photos.view.accuracy', { meters: Math.round(record.geo.accuracyM) })}
+        </WText>
+        {failure !== null ? <Notice tone="error" body={t(failure)} /> : null}
+        {removable && confirming !== null ? (
+          <Notice
+            tone="warn"
+            icon={confirming === 'retake' ? 'retake' : 'trash'}
+            title={t(confirming === 'retake' ? 'photos.retake.title' : 'photos.remove.title')}
+            body={t(confirming === 'retake' ? 'photos.retake.body' : 'photos.remove.body')}
+          >
+            <View style={styles.pair}>
+              <WButton
+                label={t(confirming === 'retake' ? 'photos.retake' : 'photos.remove.confirm')}
+                onPress={confirming === 'retake' ? onRetake : onDelete}
+                leading={<WIcon name={confirming === 'retake' ? 'retake' : 'trash'} size={18} />}
+              />
+              <WButton label={t('photos.remove.keep')} variant="secondary" onPress={() => setConfirming(null)} />
+            </View>
+          </Notice>
+        ) : removable ? (
+          <>
+            <View style={styles.pair}>
+              <WButton label={t('photos.retake')} onPress={() => setConfirming('retake')} leading={<WIcon name="retake" size={18} />} />
+              <WButton
+                label={t('photos.remove.confirm')}
+                variant="secondary"
+                onPress={() => setConfirming('delete')}
+                leading={<WIcon name="trash" size={18} color="error" />}
+              />
+            </View>
+            <WButton label={t('photos.remove.keep')} variant="secondary" onPress={onClose} leading={<Glyph name="check" />} />
+          </>
+        ) : record.state === 'failed' ? (
+          <WButton label={t('photos.retry')} onPress={() => retryPhoto(record)} leading={<WIcon name="sync" size={18} />} />
+        ) : (
+          <View style={styles.inline}>
+            <WIcon name="info" size={16} color="beige" />
+            <WText variant="caption" color="beige" style={styles.flex}>
+              {t('photos.view.locked')}
+            </WText>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// The preview as its own full-screen sheet, for the grid.
+function PhotoViewer({
+  record,
+  index,
+  onClose,
+  onRetake,
+  onDelete,
+}: {
+  record: CaptureRecord | null;
+  index: number;
+  onClose: () => void;
+  onRetake: () => void;
+  onDelete: () => void;
+}) {
+  if (record === null) return null;
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
+      <PhotoPreview key={record.id} record={record} index={index} onClose={onClose} onRetake={onRetake} onDelete={onDelete} />
+    </Modal>
+  );
+}
+
+// Camera quality before the stamp re-encode; the stamp's own JPEG uses the served quality.
+const CAMERA_QUALITY = 0.92;
+
+// The full-screen camera: live preview, GPS in words, a shutter gated on the fix, and the shots so far.
 function CaptureCamera({
   visible,
   caseRef,
   inspectionRef,
   remaining,
+  captures,
+  count,
   onClose,
 }: {
   visible: boolean;
   caseRef: string;
   inspectionRef: string | null;
   remaining: number;
+  captures: CaptureRecord[];
+  count: number;
   onClose: () => void;
 }) {
+  const t = useT();
+  const tp = useTPlural();
   const { config } = useAppConfig();
   const camera = useRef<CameraView>(null);
+  const stamper = useRef<PhotoStamperHandle>(null);
   const live = useLiveFix(visible);
   const [now, setNow] = useState(() => Date.now());
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ key: PlainKey; tone: 'ok' | 'error' } | null>(null);
+  const [lowStorage, setLowStorage] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) return undefined;
@@ -159,117 +284,210 @@ function CaptureCamera({
   }, [visible]);
 
   const verdict = judgeFix(live.fix, config.gpsAccuracyGateM, config.gpsFixMaxAgeMs, now);
-  // Usable but coarser than the flag threshold: allowed, but stored `geotag_flagged` by the server.
-  const flaggedAccuracyM =
-    verdict.usable && live.fix !== null && live.fix.accuracyM !== null && live.fix.accuracyM > config.gpsAccuracyFlagM
-      ? live.fix.accuracyM
-      : null;
+  const quality = live.fix === null ? 'searching' : signalQuality(live.fix.accuracyM, config.gpsAccuracyGateM, config.gpsAccuracyFlagM);
   const full = remaining <= 0;
+  const missing = Math.max(0, config.minimumPhotoCount - count);
+  const previewed = previewId === null ? null : (captures.find((record) => record.id === previewId) ?? null);
 
-  // The preview is torn down with the modal, so the next opening waits for it to be ready again.
   const close = () => {
     setReady(false);
     setMessage(null);
+    setPreviewId(null);
     onClose();
+  };
+
+  const removeFromPreview = () => {
+    if (previewed !== null) removePhoto(previewed);
+    setPreviewId(null);
   };
 
   const onShutter = async () => {
     const fix = live.fix;
-    if (!verdict.usable || fix === null || fix.accuracyM === null || camera.current === null) return;
+    if (!verdict.usable || fix === null || fix.accuracyM === null || camera.current === null || busy) return;
+    if (!hasRoomForCapture()) {
+      setLowStorage(true);
+      return;
+    }
     // Stamped at the press: this position, this clock reading, this source.
     const pressedAt = new Date();
     const stamp = { latitude: fix.latitude, longitude: fix.longitude, accuracyM: fix.accuracyM };
     setBusy(true);
     setMessage(null);
     try {
-      const picture = await camera.current.takePictureAsync({
-        quality: config.photoJpegQuality,
-        exif: true,
-        additionalExif: gpsExif(stamp),
-      });
-      await recordPhoto({ caseRef, inspectionRef, uri: picture.uri, fix: stamp, pressedAt });
-      setMessage('Photograph kept on this device and queued to send.');
+      const picture = await camera.current.takePictureAsync({ quality: CAMERA_QUALITY, imageType: 'jpg', exif: false });
+      const uri = await burnStamp(picture, stamp, pressedAt);
+      await recordPhoto({ caseRef, inspectionRef, uri, fix: stamp, pressedAt, held: true });
+      setMessage({ key: 'photos.camera.kept', tone: 'ok' });
     } catch (cause) {
-      setMessage(
-        cause instanceof CaptureRejected
-          ? cause.message
-          : `The photograph was not taken: ${cause instanceof Error ? cause.message : 'the camera failed'}. Take it again.`,
-      );
+      setMessage({ key: cause instanceof CaptureRejected ? REJECTED[cause.reason] : 'photos.camera.failed', tone: 'error' });
     } finally {
       setBusy(false);
     }
   };
 
+  // Upright JPEG with its location bar and GPS EXIF; the plain upright shot if stamping fails, since the server stamps too.
+  const burnStamp = async (picture: { uri: string }, fix: ShutterFix, pressedAt: Date) => {
+    let plain;
+    try {
+      plain = await normalizePhoto(picture.uri, config.photoMaxEdgePx, config.photoJpegQuality);
+    } catch (cause) {
+      if (__DEV__) console.warn('[photos] normalise failed, keeping the camera file', cause);
+      return picture.uri;
+    }
+    discardFile(picture.uri);
+    try {
+      if (stamper.current === null) throw new Error('stamper not mounted');
+      const address = await stampAddress(fix.latitude, fix.longitude);
+      const stamped = await stamper.current.stamp({
+        uri: plain.uri,
+        width: plain.width,
+        height: plain.height,
+        quality: config.photoJpegQuality,
+        lines: stampLines(caseRef, fix, pressedAt, address),
+      });
+      if (!looksRendered(stamped, plain.uri)) {
+        discardFile(stamped);
+        throw new Error('stamp came out blank');
+      }
+      await embedGps(stamped, fix, pressedAt);
+      discardFile(plain.uri);
+      return stamped;
+    } catch (cause) {
+      if (__DEV__) console.warn('[photos] stamp failed, keeping the plain photo', cause);
+      await embedGps(plain.uri, fix, pressedAt).catch(() => undefined);
+      return plain.uri;
+    }
+  };
+
+  const signalText =
+    quality === 'good' || quality === 'fair'
+      ? t(quality === 'good' ? 'checkin.signal.good' : 'checkin.signal.fair', { meters: Math.round(live.fix?.accuracyM ?? 0) })
+      : quality === 'weak'
+        ? t('checkin.signal.weak')
+        : t('checkin.signal.searching');
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
-      <SafeAreaView style={styles.cameraScreen}>
-        <View style={styles.cameraHeader}>
-          <Text variant="title" color="ink0" style={styles.flex}>
-            Photograph the site
-          </Text>
-          <Button label="Done" variant="ghost" size="sm" fullWidth={false} onPress={close} />
+    <Modal visible={visible} animationType="slide" onRequestClose={previewed !== null ? () => setPreviewId(null) : close} presentationStyle="fullScreen">
+      <SafeAreaView style={styles.modal}>
+        {visible ? <PhotoStamper ref={stamper} /> : null}
+        <View style={[styles.modalHead, styles.cover]}>
+          <WIcon name="location" size={20} color="beige" />
+          <WText variant="sheetTitle" accessibilityRole="header" style={styles.flex}>
+            {t('photos.camera.title')}
+          </WText>
+          <WButton
+            label={t('photos.camera.doneCount', { count: captures.length })}
+            variant="secondary"
+            onPress={close}
+            leading={<Glyph name="check" />}
+            style={styles.headButton}
+          />
         </View>
         <View style={styles.preview}>
-          <CameraView
-            ref={camera}
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            active={visible}
-            onCameraReady={() => setReady(true)}
-            onMountError={(event) => setMessage(`The camera could not start: ${event.message}`)}
-          />
-        </View>
-        <View style={styles.cameraFooter}>
-          <GpsReadout
-            state={live.fix === null ? 'searching' : verdict.usable ? 'locked' : 'weak'}
-            latitude={live.fix?.latitude}
-            longitude={live.fix?.longitude}
-            accuracyMeters={live.fix?.accuracyM ?? undefined}
-            thresholdMeters={config.gpsAccuracyGateM}
-          />
-          {message !== null ? (
-            <Text variant="caption" color="ink1" accessibilityLiveRegion="polite">
-              {message}
-            </Text>
+          {visible ? (
+            <CameraView
+              ref={camera}
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              active={visible}
+              onCameraReady={() => setReady(true)}
+              onMountError={() => setMessage({ key: 'photos.camera.startFailed', tone: 'error' })}
+            />
           ) : null}
+        </View>
+        <View style={styles.modalFoot}>
+          <View style={styles.inline} accessibilityLiveRegion="polite">
+            <WIcon
+              name={quality === 'good' ? 'signalGood' : quality === 'fair' ? 'signalFair' : 'warning'}
+              size={18}
+              color={quality === 'good' ? 'gpsLocked' : quality === 'searching' ? 'beige' : 'gpsWeak'}
+            />
+            <WText variant="noteBold" color={quality === 'good' ? 'gpsLocked' : quality === 'searching' ? 'beige' : 'gpsWeak'} style={styles.flex}>
+              {signalText}
+            </WText>
+          </View>
           {!verdict.usable ? (
-            <Text variant="caption" color="priorityMedium" accessibilityLiveRegion="polite">
-              {verdict.reason}
-            </Text>
+            <WText variant="note" color="warn">
+              {t('photos.camera.gpsWait')}
+            </WText>
           ) : null}
-          {flaggedAccuracyM !== null ? (
-            <Text variant="caption" color="priorityMedium" accessibilityLiveRegion="polite">
-              {`Accuracy is ±${Math.round(flaggedAccuracyM)} m. This photograph will be recorded as low accuracy — you can still take it.`}
-            </Text>
+          {lowStorage ? <Notice tone="error" icon="storage" title={t('photos.lowStorage.title')} body={t('photos.lowStorage.body')} /> : null}
+          {message !== null ? <Notice tone={message.tone} body={t(message.key)} /> : null}
+          {full ? <Notice tone="ok" body={t('photos.maxReached', { max: config.maximumPhotoCount })} /> : null}
+          {captures.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
+              {captures.map((record, index) => (
+                <Pressable
+                  key={record.id}
+                  onPress={() => setPreviewId(record.id)}
+                  accessibilityRole="imagebutton"
+                  accessibilityLabel={t('photos.camera.stripA11y', { index: index + 1 })}
+                  style={styles.lastThumb}
+                >
+                  <Image source={{ uri: record.fileUri }} contentFit="cover" style={styles.fill} recyclingKey={record.id} />
+                </Pressable>
+              ))}
+            </ScrollView>
           ) : null}
-          {full ? (
-            <Text variant="caption" color="priorityMedium">
-              The maximum number of photographs for this inspection has been reached.
-            </Text>
-          ) : null}
-          <Button
-            label="Take photograph"
-            onPress={() => void onShutter()}
-            disabled={!ready || !verdict.usable || full}
-            loading={busy}
-            leadingIcon={<Icon name="camera" size="md" color="inkOnMuted" />}
-            accessibilityHint="Takes a photograph stamped with this position and time"
-          />
+          <View style={styles.shutterRow}>
+            <View style={styles.lastSlot}>
+              <WText variant="caption" color={missing > 0 ? 'warn' : 'ok'} align="center">
+                {missing > 0 ? tp('photos.needMore', missing) : t('photos.counter', { count: Math.min(count, config.minimumPhotoCount), min: config.minimumPhotoCount })}
+              </WText>
+            </View>
+            <Pressable
+              onPress={() => void onShutter()}
+              disabled={!ready || !verdict.usable || full || busy}
+              accessibilityRole="button"
+              accessibilityLabel={t('photos.camera.shutter')}
+              accessibilityHint={t('photos.camera.shutterHint')}
+              accessibilityState={{ disabled: !ready || !verdict.usable || full, busy }}
+              style={({ pressed }) => [
+                styles.shutter,
+                pressed ? styles.shutterPressed : null,
+                !ready || !verdict.usable || full || busy ? styles.dim : null,
+              ]}
+            >
+              <View style={styles.shutterCore}>
+                <Glyph name="camera" size={30} color="white" />
+              </View>
+            </Pressable>
+            <View style={styles.lastSlot} />
+          </View>
+          <WText variant="noteBold" align="center">
+            {busy ? t('photos.camera.stamping') : t('photos.camera.shutter')}
+          </WText>
         </View>
+        {previewed !== null ? (
+          <View style={StyleSheet.absoluteFill}>
+            <PhotoPreview
+              key={previewed.id}
+              record={previewed}
+              index={captures.indexOf(previewed) + 1}
+              onClose={() => setPreviewId(null)}
+              onRetake={removeFromPreview}
+              onDelete={removeFromPreview}
+            />
+          </View>
+        ) : null}
       </SafeAreaView>
     </Modal>
   );
 }
 
-// Step 2: the capture grid. Enforces the minimum before Next enables.
+// Step 2: guidance, tiles, the minimum, and every capture state.
 export function PhotoGrid({ caseRef, inspectionRef, onGateChange, style }: PhotoGridProps) {
+  const t = useT();
+  const tp = useTPlural();
   const { config } = useAppConfig();
-  const { width } = useWindowDimensions();
   const [cameraPermission, requestCamera] = useCameraPermissions();
   const location = useLocationPermission();
   const records = useRoundCaptures(caseRef, inspectionRef);
   const detail = useInspectionDetail(inspectionRef);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<{ record: CaptureRecord; retake: boolean } | null>(null);
+  const [lowStorage, setLowStorage] = useState(false);
   const refreshSync = useSyncStore((state) => state.refresh);
 
   // Gallery images never count toward the minimum (ui-rules.md §4); none can be added here.
@@ -279,33 +497,38 @@ export function PhotoGrid({ caseRef, inspectionRef, onGateChange, style }: Photo
   const serverOnly = (detail.data?.evidence ?? []).filter(
     (row) => row.kind === 'photo' && row.capture_source === 'camera' && !uploadedIds.has(String(row.id)),
   );
-  const count = onDevice.length + serverOnly.length;
+  // A photo the office refused will never count; it stays visible so it can be retaken.
+  const counted = onDevice.filter((record) => !cannotBeSent(record));
+  const count = counted.length + serverOnly.length;
   const minimum = config.minimumPhotoCount;
   const maximum = config.maximumPhotoCount;
-  const remaining = maximum - count;
+  const remaining = maximum - onDevice.length - serverOnly.length;
+  const missing = Math.max(0, minimum - count);
+  // Refused by the office: sending again gets the same answer, so it is retaken, not retried.
+  const refused = onDevice.filter(cannotBeSent);
+  const failed = onDevice.filter((record) => record.state === 'failed' && !cannotBeSent(record));
+  const waiting = onDevice.filter((record) => record.state !== 'uploaded');
 
   useEffect(() => {
     refreshSync();
   }, [records, refreshSync]);
 
-  const ready = count >= minimum;
-  const missing = minimum - count;
-  const reason = ready
-    ? null
-    : `Take ${missing} more photograph${missing === 1 ? '' : 's'} — at least ${minimum} are needed.`;
   useEffect(() => {
-    onGateChange({ ready, reason });
-  }, [onGateChange, ready, reason]);
+    onGateChange({ ready: missing === 0, missing });
+  }, [onGateChange, missing]);
 
-  const tile = Math.floor((width - gutter * 2 - space[3] * (COLUMNS - 1)) / COLUMNS);
+  // Photos kept in the camera go to the upload queue once it closes (and after a restart mid-session).
+  useEffect(() => {
+    if (!cameraOpen) releasePhotos(caseRef);
+  }, [cameraOpen, caseRef, records]);
+
   const cameraGranted = cameraPermission?.granted === true;
   const locationGranted = location.status === 'granted';
   const canCapture = cameraGranted && locationGranted;
-  const blocked =
-    (cameraPermission !== null && !cameraGranted && !cameraPermission.canAskAgain) ||
-    location.status === 'denied';
-  const needsPriming =
-    !blocked && location.status !== 'checking' && cameraPermission !== null && !canCapture;
+  const cameraBlocked = cameraPermission !== null && !cameraGranted && !cameraPermission.canAskAgain;
+  const locationBlocked = location.status === 'denied' && !location.canAskAgain;
+  const blocked = cameraBlocked || locationBlocked;
+  const needsPriming = !blocked && location.status !== 'checking' && cameraPermission !== null && !canCapture;
 
   // The primer's one button asks for both, camera first, each OS dialog in turn.
   const onAllow = async () => {
@@ -313,152 +536,283 @@ export function PhotoGrid({ caseRef, inspectionRef, onGateChange, style }: Photo
     if (!locationGranted) await location.request();
   };
 
+  const openCamera = () => {
+    if (!hasRoomForCapture()) {
+      setLowStorage(true);
+      return;
+    }
+    setLowStorage(false);
+    setCameraOpen(true);
+  };
+
+  const confirmAndRemove = () => {
+    if (confirmRemove === null) return;
+    const { record, retake } = confirmRemove;
+    setConfirmRemove(null);
+    setViewing(null);
+    removePhoto(record);
+    if (retake) openCamera();
+  };
+
+  // From the preview, which has already asked.
+  const removeViewed = (retake: boolean) => {
+    if (viewed === null) return;
+    setViewing(null);
+    removePhoto(viewed);
+    if (retake) openCamera();
+  };
+
+  const viewed = viewing === null ? null : (onDevice.find((record) => record.id === viewing) ?? null);
+  const viewedIndex = viewed === null ? 0 : onDevice.indexOf(viewed) + 1;
+
+  const guides: { key: PlainKey; icon: WizardIconName }[] = [
+    { key: 'photos.guide.encroachment', icon: 'rcc' },
+    { key: 'photos.guide.boundary', icon: 'fencing' },
+    { key: 'photos.guide.wide', icon: 'levelling' },
+  ];
+
   return (
     <View style={[styles.stack, style]}>
-      <View
-        style={styles.counter}
-        accessible
-        accessibilityRole="progressbar"
-        accessibilityLabel={`${count} of ${minimum} minimum photographs captured`}
-      >
-        <Text variant="subheading" color={ready ? 'syncClear' : 'ink0'}>
-          {`${Math.min(count, minimum)}/${minimum} minimum photos captured`}
-        </Text>
-        <ProgressBar value={minimum > 0 ? count / minimum : 1} tone={ready ? 'syncClear' : 'brand'} />
-        <Text variant="caption" color="ink3">
-          {`Up to ${maximum} photographs. Each is stamped with its position and time when taken.`}
-        </Text>
+      <View style={styles.guides}>
+        {guides.map((guide, index) => (
+          <View key={guide.key} style={styles.inline}>
+            <View style={styles.guideNumber}>
+              <WText variant="caption" color="accent">
+                {String(index + 1)}
+              </WText>
+            </View>
+            <WIcon name={guide.icon} size={18} color="beige" />
+            <WText variant="note" color="stepBodyPhotos" style={styles.flex}>
+              {t(guide.key)}
+            </WText>
+          </View>
+        ))}
       </View>
 
-      {inspectionRef === null ? (
-        <Text variant="caption" color="syncPending">
-          The inspection round is not open on this device yet. Photographs are kept here and sent once it is.
-        </Text>
-      ) : null}
+      {inspectionRef === null ? <Notice tone="warn" icon="offline" body={t('photos.roundNotOpen')} /> : null}
 
       {needsPriming ? (
-        <View style={[styles.callout, { borderColor: colors.brand }]}>
-          <Text variant="subheading" color="ink0">
-            Camera and location are needed
-          </Text>
-          <Text variant="body" color="ink1">
-            ICMS records where each photograph was taken so the inspection can be verified later. The camera is
-            used only on this step.
-          </Text>
-          <Button label="Allow camera and location" onPress={() => void onAllow()} />
-        </View>
+        <Notice tone="info" icon="location" title={t('photos.perm.title')} body={t('photos.perm.body')}>
+          <WButton label={t('photos.perm.allow')} onPress={() => void onAllow()} leading={<Glyph name="camera" size={20} />} />
+        </Notice>
       ) : null}
 
       {blocked ? (
-        <View style={[styles.callout, { borderColor: colors.statusOverdue }]}>
-          <Text variant="subheading" color="ink0">
-            {!cameraGranted ? 'Camera is off for ICMS' : 'Location is off for ICMS'}
-          </Text>
-          <Text variant="body" color="ink1">
-            Photographs cannot be taken without both. Turn them on for ICMS in the system settings; findings can still
-            be recorded meanwhile.
-          </Text>
-          <Button label="Open settings" variant="secondary" onPress={() => void Linking.openSettings()} />
+        <Notice
+          tone="error"
+          title={cameraBlocked ? t('photos.perm.cameraOff') : t('photos.perm.locationOff')}
+          body={t('photos.perm.deniedBody')}
+        >
+          <WButton label={t('checkin.perm.settings')} variant="secondary" onPress={() => void Linking.openSettings()} leading={<WIcon name="settings" size={18} />} />
+        </Notice>
+      ) : null}
+
+      {lowStorage ? <Notice tone="error" icon="storage" title={t('photos.lowStorage.title')} body={t('photos.lowStorage.body')} /> : null}
+
+      <View style={styles.section}>
+        <View style={styles.grid}>
+          {onDevice.map((record, index) => (
+            <PhotoTile
+              key={record.id}
+              record={record}
+              index={index + 1}
+              onOpen={() => setViewing(record.id)}
+              onRemove={() => setConfirmRemove({ record, retake: false })}
+            />
+          ))}
+          {serverOnly.map((row) => (
+            <View key={row.id} style={styles.tileWrap}>
+              <View style={[styles.tile, styles.officeTile]}>
+                <WIcon name="noAction" size={28} color="ok" />
+              </View>
+              <WText variant="caption" color="ok" numberOfLines={2} align="center">
+                {t('photos.state.office')}
+              </WText>
+            </View>
+          ))}
+          {remaining > 0 ? (
+            <Pressable
+              onPress={openCamera}
+              disabled={!canCapture}
+              accessibilityRole="button"
+              accessibilityLabel={t('photos.add')}
+              accessibilityHint={t('photos.addHint')}
+              accessibilityState={{ disabled: !canCapture }}
+              style={({ pressed }) => [styles.addTile, pressed ? styles.addPressed : null, !canCapture ? styles.dim : null]}
+            >
+              <Glyph name="camera" color="accent" />
+              <WText variant="addPhoto" color="accent" align="center">
+                {t('photos.add')}
+              </WText>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <WText variant="counter" color="beige" accessibilityLiveRegion="polite">
+          {t('photos.counter', { count: Math.min(count, minimum), min: minimum })}
+        </WText>
+        <WText variant="caption" color="beige">
+          {remaining > 0 ? t('photos.max', { max: maximum }) : t('photos.maxReached', { max: maximum })}
+        </WText>
+      </View>
+
+      {missing > 0 && canCapture ? (
+        <View style={styles.inline} accessibilityLiveRegion="polite">
+          <WIcon name="info" size={18} color="warn" />
+          <WText variant="note" color="warn" style={styles.flex}>
+            {tp('photos.needMore', missing)}
+          </WText>
         </View>
       ) : null}
 
-      <View style={styles.grid}>
-        {onDevice.map((record) => (
-          <PhotoTile
-            key={record.id}
-            record={record}
-            size={tile}
-            deviceTimestampMaxAgeHours={config.deviceTimestampMaxAgeHours}
+      {refused.length > 0 ? (
+        <Notice
+          tone="error"
+          icon="retake"
+          body={t(uploadRefusalKey(refused[0].lastErrorCode, refused[0].lastErrorField, true))}
+        />
+      ) : null}
+      {failed.length > 0 ? (
+        <Notice tone="error" icon="upload" body={t(failed.some((record) => stuckReason(record) === 'retry') ? 'photos.failed.stuck' : 'photos.failed.retrying')}>
+          <WButton
+            label={t('photos.retryAll')}
+            variant="secondary"
+            onPress={() => failed.forEach((record) => retryPhoto(record))}
+            leading={<WIcon name="sync" size={18} />}
           />
-        ))}
-        {serverOnly.map((row) => (
-          <View key={row.id} style={[styles.serverTile, { width: tile, height: tile }]}>
-            <Icon name="verified" size="lg" color="syncClear" />
-            <Text variant="caption" color="ink1" align="center">
-              {`Held by the office${row.geotag_flagged ? ' — location flagged' : ''}`}
-            </Text>
-          </View>
-        ))}
-        {remaining > 0 ? (
-          <Pressable
-            onPress={() => setCameraOpen(true)}
-            disabled={!canCapture}
-            accessibilityRole="button"
-            accessibilityLabel="Add photo"
-            accessibilityHint="Opens the camera"
-            accessibilityState={{ disabled: !canCapture }}
-            style={({ pressed }) => [
-              styles.addTile,
-              {
-                width: tile,
-                height: tile,
-                backgroundColor: colors[pressed ? 'surface3' : 'surface2'],
-                opacity: canCapture ? 1 : disabledOpacity,
-              },
-            ]}
-          >
-            <Icon name="camera" size="xl" color="brand" />
-            <Text variant="label" color="brand">
-              Add Photo
-            </Text>
-          </Pressable>
-        ) : (
-          <Text variant="caption" color="ink2">
-            {`The maximum of ${maximum} photographs has been reached.`}
-          </Text>
-        )}
-      </View>
+        </Notice>
+      ) : waiting.length > refused.length ? (
+        <Notice tone="warn" icon="upload" body={t('photos.pendingNote')} />
+      ) : null}
 
       <CaptureCamera
         visible={cameraOpen}
         caseRef={caseRef}
         inspectionRef={inspectionRef}
         remaining={remaining}
+        captures={onDevice}
+        count={count}
         onClose={() => setCameraOpen(false)}
+      />
+      <PhotoViewer
+        record={viewed}
+        index={viewedIndex}
+        onClose={() => setViewing(null)}
+        onRetake={() => removeViewed(true)}
+        onDelete={() => removeViewed(false)}
+      />
+      <ConfirmSheet
+        visible={confirmRemove !== null}
+        destructive
+        title={t('photos.remove.title')}
+        body={t('photos.remove.body')}
+        confirmLabel={confirmRemove?.retake === true ? t('photos.retake') : t('photos.remove.confirm')}
+        cancelLabel={t('photos.remove.keep')}
+        confirmIcon={<WIcon name={confirmRemove?.retake === true ? 'retake' : 'trash'} size={18} />}
+        onConfirm={confirmAndRemove}
+        onCancel={() => setConfirmRemove(null)}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  stack: { gap: space[4] },
   flex: { flex: 1 },
-  counter: { gap: space[2] },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space[3] },
-  tile: { gap: space[1] },
+  fill: { width: '100%', height: '100%' },
+  stack: { gap: m.gap },
+  section: { gap: 12, paddingTop: 10, paddingBottom: 10 },
+  guides: { gap: 8 },
+  guideNumber: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: m.hairline,
+    borderColor: wizardColors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: m.photoGap },
+  tileWrap: { width: m.photoTile, gap: 4 },
+  tile: {
+    width: m.photoTile,
+    height: m.photoTile,
+    borderRadius: m.cardRadius,
+    backgroundColor: wizardColors.tile,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  officeTile: { borderWidth: m.hairline, borderColor: wizardColors.noticeBorderOk },
+  tileInner: {
+    width: m.photoInnerW,
+    height: m.photoInnerH,
+    borderRadius: m.photoInnerRadius,
+    overflow: 'hidden',
+    backgroundColor: wizardColors.tileInner,
+  },
+  badge: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: wizardColors.tile,
+  },
+  remove: {
+    position: 'absolute',
+    top: 2,
+    right: 4,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   addTile: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: space[1],
-    minHeight: layout.touchMin,
-    borderRadius: radius.md,
-    borderWidth: control.borderWidth,
+    width: m.photoTile,
+    height: m.photoTile,
+    borderRadius: m.cardRadius,
+    borderWidth: m.hairline,
     borderStyle: 'dashed',
-    borderColor: colors.brand,
-  },
-  serverTile: {
+    borderColor: wizardColors.addTileBorder,
+    backgroundColor: wizardColors.addTile,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: space[1],
-    padding: space[2],
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
+    gap: 6,
+    padding: 4,
   },
-  callout: {
-    gap: space[2],
-    padding: space[4],
-    borderRadius: radius.md,
-    borderWidth: control.borderWidth,
-    backgroundColor: colors.surface1,
-  },
-  cameraScreen: { flex: 1, backgroundColor: colors.surface0 },
-  cameraHeader: {
-    flexDirection: 'row',
+  addPressed: { backgroundColor: wizardColors.tile },
+  dim: { opacity: 0.5 },
+  modal: { flex: 1, backgroundColor: wizardColors.screen },
+  modalHead: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: m.padX },
+  headButton: { flex: 0, minWidth: 96 },
+  preview: { flex: 1, overflow: 'hidden', backgroundColor: wizardColors.tileInner },
+  viewer: { flex: 1, backgroundColor: wizardColors.tileInner },
+  modalFoot: { gap: 10, padding: m.padX, backgroundColor: wizardColors.card },
+  pair: { flexDirection: 'row', gap: m.buttonGap },
+  shutterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  lastSlot: { width: 72, alignItems: 'center', gap: 4 },
+  lastThumb: { width: 56, height: 56, borderRadius: 10, overflow: 'hidden', backgroundColor: wizardColors.tileInner },
+  strip: { gap: 8 },
+  cover: { backgroundColor: wizardColors.screen },
+  shutter: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 4,
+    borderColor: wizardColors.white,
     alignItems: 'center',
-    gap: space[2],
-    minHeight: layout.headerHeight,
-    paddingHorizontal: gutter,
+    justifyContent: 'center',
   },
-  preview: { flex: 1, overflow: 'hidden', backgroundColor: colors.surface1 },
-  cameraFooter: { gap: space[2], padding: gutter, backgroundColor: colors.surface1 },
+  shutterPressed: { transform: [{ scale: 0.95 }] },
+  shutterCore: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: wizardColors.accent,
+  },
 });

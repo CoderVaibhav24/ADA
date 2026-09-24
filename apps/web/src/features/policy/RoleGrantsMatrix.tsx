@@ -1,5 +1,5 @@
 /**
- * The role × permission matrix.
+ * Role grants: every role as a row; opening one lists its permissions to tick.
  *
  * ## The edit model: overrides, not a copy of the table
  *
@@ -40,7 +40,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PolicyLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
-import { useIsNarrow } from "@/lib/useMediaQuery";
+import { PRIMARY_NAV } from "@/routes/nav";
+import { groupByScreen, partitionByBand, type Band, type ScreenGroup } from "./bands";
+import CreateRoleDialog from "./CreateRoleDialog";
 import { Code, PolicyLoadError, PolicyPanel, PolicyRefusal } from "./parts";
 import {
   RoleGrantSaveError,
@@ -50,9 +52,17 @@ import {
   type RoleGrantWrite,
 } from "./usePolicy";
 
+// Screens in rail order: each rail entry's `*.access` code names its screen.
+const SCREEN_ORDER: readonly string[] = PRIMARY_NAV.flatMap((item) =>
+  item.requiresPermission?.endsWith(".access")
+    ? [item.requiresPermission.slice(0, -".access".length)]
+    : [],
+);
+
 type Overrides = Readonly<Record<string, readonly string[]>>;
 type GrantChange = { roleCd: string; permissionCd: string; granted: boolean };
 type Group = { resource: string; items: PolicyPermission[] };
+type BandGroup = { band: Band; codes: readonly string[]; groups: Group[] };
 
 /** Permissions in the order the API sends them, bracketed by resource. */
 function groupByResource(permissions: readonly PolicyPermission[]): Group[] {
@@ -74,13 +84,13 @@ export default function RoleGrantsMatrix({
   canManage: boolean;
   onSaved: () => void;
 }) {
-  const narrow = useIsNarrow();
   const roles = useRoleGrants();
   const permissions = usePermissionCatalogue();
   const save = useSaveRoleGrants();
 
   const [overrides, setOverrides] = useState<Overrides>({});
   const [openRole, setOpenRole] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const text = labels.grants;
   // Both memoised on the query's own `data`: a fresh `[]` on every render would
@@ -88,7 +98,20 @@ export default function RoleGrantsMatrix({
   // elsewhere on the screen.
   const roleRows = useMemo(() => roles.data ?? [], [roles.data]);
   const permissionRows = useMemo(() => permissions.data ?? [], [permissions.data]);
-  const groups = useMemo(() => groupByResource(permissionRows), [permissionRows]);
+  const bands = useMemo<BandGroup[]>(
+    () =>
+      partitionByBand(permissionRows).map(({ band, items }) => ({
+        band,
+        codes: items.map((item) => item.permission_cd),
+        groups: groupByResource(items),
+      })),
+    [permissionRows],
+  );
+
+  const screens = useMemo(
+    () => groupByScreen(permissionRows, SCREEN_ORDER),
+    [permissionRows],
+  );
 
   /** What the screen shows for a role: their edit, or the server's row. */
   const effective = (role: RoleGrants): readonly string[] =>
@@ -219,7 +242,8 @@ export default function RoleGrantsMatrix({
 
   const shared = {
     roleRows,
-    groups,
+    bands,
+    screens,
     labels,
     canManage,
     isGranted,
@@ -234,13 +258,36 @@ export default function RoleGrantsMatrix({
       title={text.title}
       subtitle={text.subtitle}
       aside={
-        changes.length > 0 ? (
-          <Badge variant="default">
-            {text.changeCount(changes.length, changedRoles.length)}
-          </Badge>
-        ) : null
+        <span className="flex flex-wrap items-center gap-2">
+          {changes.length > 0 && (
+            <Badge variant="default">
+              {text.changeCount(changes.length, changedRoles.length)}
+            </Badge>
+          )}
+          {canManage && (
+            <Button
+              size="sm"
+              onClick={() => {
+                setCreating(true);
+              }}
+            >
+              <Icon name="action.add" className="size-4" />
+              {labels.createRole.newRole}
+            </Button>
+          )}
+        </span>
       }
     >
+      <CreateRoleDialog
+        open={creating}
+        onOpenChange={setCreating}
+        roles={roleRows}
+        labels={labels}
+        onCreated={(role) => {
+          setOpenRole(role.role_cd);
+          onSaved();
+        }}
+      />
       {failure && (
         <PolicyRefusal
           labels={labels}
@@ -292,11 +339,7 @@ export default function RoleGrantsMatrix({
 
       {status === "success" && roleRows.length > 0 && permissionRows.length > 0 && (
         <>
-          {narrow ? (
-            <NarrowRoles {...shared} openRole={openRole} onOpenRole={setOpenRole} />
-          ) : (
-            <WideMatrix {...shared} permissionCount={permissionRows.length} />
-          )}
+          <RoleList {...shared} openRole={openRole} onOpenRole={setOpenRole} />
 
           {lockoutRole && (
             <p className="flex items-start gap-2 rounded-md border border-status-warning-border bg-status-warning p-3 text-sm text-status-warning-fg">
@@ -373,7 +416,8 @@ export default function RoleGrantsMatrix({
 
 type MatrixProps = {
   roleRows: readonly RoleGrants[];
-  groups: readonly Group[];
+  bands: readonly BandGroup[];
+  screens: readonly ScreenGroup<PolicyPermission>[];
   labels: PolicyLabels;
   canManage: boolean;
   isGranted: (role: RoleGrants, permissionCd: string) => boolean;
@@ -383,166 +427,11 @@ type MatrixProps = {
   changedRoles: readonly string[];
 };
 
-/**
- * The grid, at `md` and above.
- *
- * Two header rows: each resource spans its own actions, so fifteen narrow
- * columns read as ten groups. The role column is sticky because a checkbox in
- * the eleventh column with the role name scrolled out of view is a coin toss.
- */
-function WideMatrix({
+// Every role from the server; clicking one unfolds its permissions, screen by screen.
+function RoleList({
   roleRows,
-  groups,
-  permissionCount,
-  labels,
-  canManage,
-  isGranted,
-  effective,
-  onToggle,
-  lockoutRole,
-  changedRoles,
-}: MatrixProps & { permissionCount: number }) {
-  const text = labels.grants;
-  return (
-    // Two layers, as components/data-table/DataTable.tsx does it. The OUTER
-    // `overflow-hidden` is load-bearing: without it a table wider than the
-    // viewport propagates its overflow to <html> and the whole page scrolls
-    // sideways, even though the inner scroller is clipping correctly.
-    // `border-separate border-spacing-0` rather than `border-collapse`, because
-    // Chromium will not honour `position: sticky` on a cell in a collapsed table.
-    <div className="min-w-0 overflow-hidden rounded-md border border-line-subtle">
-      <div className="relative w-full overflow-x-auto">
-        <table className="w-full border-separate border-spacing-0 text-sm">
-        <thead>
-          <tr className="border-b border-line-subtle bg-surface-sunken">
-            <th
-              rowSpan={2}
-              scope="col"
-              className="sticky left-0 z-[1] min-w-[11rem] border-e border-line-subtle bg-surface-sunken px-3 py-2 text-start font-medium text-fg-muted"
-            >
-              {text.roleColumn}
-            </th>
-            {groups.map((group) => (
-              <th
-                key={group.resource}
-                colSpan={group.items.length}
-                scope="colgroup"
-                className="border-s border-line-subtle px-2 py-1.5 text-center text-2xs font-semibold text-fg-muted"
-              >
-                {labels.resource(group.resource)}
-              </th>
-            ))}
-            <th
-              rowSpan={2}
-              scope="col"
-              className="border-s border-line-subtle px-3 py-2 text-end font-medium text-fg-muted"
-            >
-              <span className="sr-only">{text.granted}</span>
-            </th>
-          </tr>
-          <tr className="border-b border-line-subtle bg-surface-sunken">
-            {groups.flatMap((group) =>
-              group.items.map((permission, index) => (
-                <th
-                  key={permission.permission_cd}
-                  scope="col"
-                  title={permission.permission_cd}
-                  className={`px-2 py-1.5 text-center text-2xs font-normal text-fg-faint ${
-                    index === 0 ? "border-s border-line-subtle" : ""
-                  }`}
-                >
-                  {labels.permissionAction(permission.action)}
-                </th>
-              )),
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {roleRows.map((role) => {
-            const granted = effective(role);
-            const dirty = changedRoles.includes(role.role_cd);
-            return (
-              <tr
-                key={role.role_cd}
-                className={`border-b border-line-subtle last:border-b-0 ${
-                  dirty ? "bg-accent-soft" : ""
-                }`}
-              >
-                <th
-                  scope="row"
-                  className={`sticky left-0 z-[1] border-e border-line-subtle px-3 py-2 text-start font-normal ${
-                    dirty ? "bg-accent-soft" : "bg-surface-1"
-                  }`}
-                >
-                  <span className="flex flex-col gap-0.5">
-                    <span className="font-medium text-fg-strong">
-                      {labels.role(role.role_cd, role.label)}
-                    </span>
-                    <span className="flex flex-wrap items-center gap-1">
-                      <Code>{role.role_cd}</Code>
-                      {!role.active && <Badge variant="outline">{text.inactiveRole}</Badge>}
-                      {role.role_cd === lockoutRole && (
-                        <Icon
-                          name="feedback.warning"
-                          label={text.lockoutHint}
-                          className="size-3.5 text-status-warning-fg"
-                        />
-                      )}
-                    </span>
-                  </span>
-                </th>
-
-                {groups.flatMap((group) =>
-                  group.items.map((permission, index) => (
-                    <td
-                      key={permission.permission_cd}
-                      className={`px-2 py-2 text-center ${
-                        index === 0 ? "border-s border-line-subtle" : ""
-                      }`}
-                    >
-                      <Checkbox
-                        checked={isGranted(role, permission.permission_cd)}
-                        disabled={!canManage}
-                        aria-label={text.cell(
-                          labels.permission(
-                            permission.resource,
-                            permission.action,
-                            permission.label,
-                          ),
-                          labels.role(role.role_cd, role.label),
-                        )}
-                        onCheckedChange={(next) => {
-                          onToggle(role, permission.permission_cd, next === true);
-                        }}
-                      />
-                    </td>
-                  )),
-                )}
-
-                <td className="border-s border-line-subtle px-3 py-2 text-end text-2xs text-fg-muted tabular">
-                  {text.roleTotal(granted.length, permissionCount)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Below `md`: one card per role, its permissions folded inside.
- *
- * The same move `components/data-table` makes when the columns stop fitting —
- * the identity column stays and everything else goes into a per-record sheet. A
- * fifteen-column grid at 360px is not a grid, it is a horizontal scrollbar with
- * checkboxes in it.
- */
-function NarrowRoles({
-  roleRows,
-  groups,
+  bands,
+  screens,
   labels,
   canManage,
   openRole,
@@ -557,7 +446,7 @@ function NarrowRoles({
   onOpenRole: (roleCd: string | null) => void;
 }) {
   const text = labels.grants;
-  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  const total = bands.reduce((sum, band) => sum + band.codes.length, 0);
 
   return (
     <>
@@ -577,7 +466,14 @@ function NarrowRoles({
               }`}
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 cursor-pointer text-start"
+                  aria-expanded={open}
+                  onClick={() => {
+                    onOpenRole(open ? null : role.role_cd);
+                  }}
+                >
                   <p className="font-medium text-fg-strong">
                     {labels.role(role.role_cd, role.label)}
                   </p>
@@ -586,7 +482,7 @@ function NarrowRoles({
                     {!role.active && <Badge variant="outline">{text.inactiveRole}</Badge>}
                     {dirty && <Badge variant="default">{text.changedBadge}</Badge>}
                   </span>
-                </div>
+                </button>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <span className="text-2xs text-fg-muted tabular">
                     {text.roleTotal(granted.length, total)}
@@ -623,52 +519,102 @@ function NarrowRoles({
               )}
 
               {open && (
-                <div className="mt-3 flex flex-col gap-3 border-t border-line-subtle pt-3">
-                  {groups.map((group) => (
-                    <fieldset key={group.resource} className="flex min-w-0 flex-col gap-2">
-                      <legend className="text-2xs font-semibold text-fg-muted">
-                        {labels.resource(group.resource)}
-                      </legend>
-                      {group.items.map((permission) => {
-                        const id = `grant-${role.role_cd}-${permission.permission_cd}`;
-                        return (
-                          <label
-                            key={permission.permission_cd}
-                            htmlFor={id}
-                            className="flex items-start gap-2 text-sm text-fg-base"
-                          >
-                            <Checkbox
-                              id={id}
-                              className="mt-0.5 shrink-0"
-                              checked={isGranted(role, permission.permission_cd)}
-                              disabled={!canManage}
-                              onCheckedChange={(next) => {
-                                onToggle(role, permission.permission_cd, next === true);
-                              }}
-                            />
-                            {/* Code on its own line: inline after the label it
-                                wraps mid-token at 360px ("d / ashboard.read"). */}
-                            <span className="flex min-w-0 flex-col items-start gap-0.5">
-                              <span className="text-pretty">
-                                {labels.permission(
-                                  permission.resource,
-                                  permission.action,
-                                  permission.label,
-                                )}
-                              </span>
-                              <Code>{permission.permission_cd}</Code>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </fieldset>
-                  ))}
-                </div>
+                <ScreenPermissions
+                  role={role}
+                  screens={screens}
+                  labels={labels}
+                  canManage={canManage}
+                  isGranted={isGranted}
+                  onToggle={onToggle}
+                />
               )}
             </li>
           );
         })}
       </ul>
     </>
+  );
+}
+
+// One card per screen: the "open this screen" switch, then every action on it.
+function ScreenPermissions({
+  role,
+  screens,
+  labels,
+  canManage,
+  isGranted,
+  onToggle,
+}: {
+  role: RoleGrants;
+  screens: readonly ScreenGroup<PolicyPermission>[];
+  labels: PolicyLabels;
+  canManage: boolean;
+  isGranted: (role: RoleGrants, permissionCd: string) => boolean;
+  onToggle: (role: RoleGrants, permissionCd: string, granted: boolean) => void;
+}) {
+  const text = labels.grants;
+  const row = (permission: PolicyPermission, strong = false) => {
+    const id = `grant-${role.role_cd}-${permission.permission_cd}`;
+    return (
+      <label
+        key={permission.permission_cd}
+        htmlFor={id}
+        className="flex items-start gap-2 text-sm text-fg-base"
+      >
+        <Checkbox
+          id={id}
+          className="mt-0.5 shrink-0"
+          checked={isGranted(role, permission.permission_cd)}
+          disabled={!canManage}
+          onCheckedChange={(next) => {
+            onToggle(role, permission.permission_cd, next === true);
+          }}
+        />
+        <span className="flex min-w-0 flex-col items-start gap-0.5">
+          <span className={`text-pretty ${strong ? "font-medium text-fg-strong" : ""}`}>
+            {labels.permission(permission.resource, permission.action, permission.label)}
+          </span>
+          <Code>{permission.permission_cd}</Code>
+        </span>
+      </label>
+    );
+  };
+
+  return (
+    <div className="mt-3 grid min-w-0 gap-3 border-t border-line-subtle pt-3 md:grid-cols-2 xl:grid-cols-3">
+      {screens.map((group) => {
+        const all = group.access ? [group.access, ...group.actions] : group.actions;
+        const held = all.filter((p) => isGranted(role, p.permission_cd)).length;
+        const screenOpen = group.access ? isGranted(role, group.access.permission_cd) : true;
+        return (
+          <section
+            key={group.screen ?? "shared"}
+            className="flex min-w-0 flex-col gap-2 rounded-md border border-line-subtle bg-surface-1 p-3"
+          >
+            <header className="flex items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-fg-strong">
+                {group.screen ? labels.resource(group.screen) : text.sharedScreen}
+              </h3>
+              <span className="text-2xs text-fg-muted tabular">
+                {text.roleTotal(held, all.length)}
+              </span>
+            </header>
+            {group.access && row(group.access, true)}
+            {group.actions.length > 0 && (
+              <div
+                className={`flex flex-col gap-2 ${
+                  group.access ? "border-s border-line-subtle ps-3" : ""
+                } ${screenOpen ? "" : "opacity-60"}`}
+              >
+                {group.actions.map((permission) => row(permission))}
+              </div>
+            )}
+            {!screenOpen && group.actions.some((p) => isGranted(role, p.permission_cd)) && (
+              <p className="text-2xs text-fg-faint text-pretty">{text.screenClosedHint}</p>
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }

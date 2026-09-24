@@ -164,7 +164,8 @@ class Settings(BaseSettings):
     # --- End-user endpoints (/v1/me) ------------------------------------------
 
     # Comma-separated Keycloak clients whose *user* tokens may call /v1/me.
-    user_client_ids: str = "ada-field"
+    # ada-web and ada-auth (OTP sign-in) are the portal; ada-field is the handset.
+    user_client_ids: str = "ada-field,ada-web,ada-auth"
 
     # --- Push (FCM HTTP v1 + APNs, direct; no Expo Push Service) --------------
 

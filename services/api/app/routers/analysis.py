@@ -4,7 +4,9 @@ import json
 from datetime import UTC, datetime
 
 from ada_core.database import get_db
+from ada_core.datetimes import now_ist
 from ada_core.models import AnalysisJob, ChangePolygon, Raster
+from ada_core.models_icms import Case as IcmsCase
 from ada_core.validation import BBox
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
@@ -12,7 +14,9 @@ from sqlalchemy.orm import Session
 from .. import bbox as bbox_rules
 from ..analysis_schemas import ChangeFeatureCollection
 from ..clients import ml as ml_client
-from ..deps import current_user_id, get_owned_project, require_imagery
+from ..clients.keycloak import KeycloakAdmin
+from ..deps import current_user_id, get_owned_project, require_imagery, require_imagery_run
+from ..icms.actors import actor_directory, resolve_actor_names
 from ..schemas import AnalysisCreate, AnalysisOut, PolygonReview, PolygonReviewOut
 
 router = APIRouter(tags=["analysis"], dependencies=[Depends(require_imagery)])
@@ -43,7 +47,11 @@ def _centroid(geom: dict) -> tuple[float | None, float | None]:
         return None, None
 
 
-@router.post("/projects/{project_id}/analyses", response_model=AnalysisOut)
+@router.post(
+    "/projects/{project_id}/analyses",
+    response_model=AnalysisOut,
+    dependencies=[Depends(require_imagery_run)],
+)
 def create_analysis(
     project_id: int,
     body: AnalysisCreate,
@@ -53,13 +61,19 @@ def create_analysis(
     get_owned_project(project_id, db, user_id)
     if body.raster_t1_id == body.raster_t2_id:
         raise HTTPException(400, "Pick two different maps for T1 and T2")
+    rasters = []
     for rid in (body.raster_t1_id, body.raster_t2_id):
         raster = db.get(Raster, rid)
         if raster is None or raster.project_id != project_id:
             raise HTTPException(404, f"Raster {rid} not found in this project")
         if raster.status != "ready":
             raise HTTPException(400, f"Raster '{raster.name}' is not ready yet")
+        rasters.append(raster)
 
+    # The sweeper's cold move checks this under a row lock, so use here keeps the archive local.
+    used_at = now_ist()
+    for raster in rasters:
+        raster.last_used_at = used_at
     job = AnalysisJob(project_id=project_id, raster_t1_id=body.raster_t1_id,
                       raster_t2_id=body.raster_t2_id, mode=body.mode)
     db.add(job)
@@ -88,7 +102,19 @@ def _get_owned_job(job_id: int, db: Session, user_id: str) -> AnalysisJob:
     return job
 
 
-def _as_feature(p: ChangePolygon) -> dict:
+def _linked_cases(db: Session, polygon_ids: list[int]) -> dict[int, tuple[str, str]]:
+    """Newest complaint raised from each polygon, as (case_ref, status)."""
+    if not polygon_ids:
+        return {}
+    rows = (db.query(IcmsCase.detection_id, IcmsCase.case_ref, IcmsCase.status)
+            .filter(IcmsCase.detection_id.in_(polygon_ids))
+            .order_by(IcmsCase.id)
+            .all())
+    return {detection_id: (ref, status) for detection_id, ref, status in rows}
+
+
+def _as_feature(p: ChangePolygon, names: dict[str, str] | None = None,
+                case: tuple[str, str] | None = None) -> dict:
     """GeoJSON Feature with the officer-review state folded into properties,
     so the map, the review queue and the exports all read the same object."""
     return {
@@ -100,7 +126,10 @@ def _as_feature(p: ChangePolygon) -> dict:
             "review_status": p.review_status or "pending",
             "review_note": p.review_note,
             "reviewed_by": p.reviewed_by,
+            "reviewed_by_name": (names or {}).get(p.reviewed_by or ""),
             "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
+            "case_ref": case[0] if case else None,
+            "case_status": case[1] if case else None,
         },
     }
 
@@ -123,6 +152,7 @@ def get_analysis_features(
         None, description="west,south,east,north in EPSG:4326, no wider than "
                           f"{bbox_rules.MAX_SPAN_DEGREES} degrees a side."),
     user_id: str = Depends(current_user_id),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ):
     """What the Change Detection screen draws its detection list from.
@@ -146,9 +176,11 @@ def get_analysis_features(
 
     total = query.count()
     polys = query.order_by(ChangePolygon.id).offset(offset).limit(limit).all()
+    names = resolve_actor_names(directory, (p.reviewed_by for p in polys))
+    cases = _linked_cases(db, [p.id for p in polys])
     return {
         "type": "FeatureCollection",
-        "features": [_as_feature(p) for p in polys],
+        "features": [_as_feature(p, names, cases.get(p.id)) for p in polys],
         "metadata": {
             "count": len(polys), "total": total, "limit": limit, "offset": offset,
             "bbox": [box.west, box.south, box.east, box.north] if box else None,

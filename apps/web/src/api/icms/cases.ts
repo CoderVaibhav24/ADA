@@ -45,6 +45,11 @@ export type CaseDetail = components["schemas"]["CaseDetail"];
 export type CaseCreate = components["schemas"]["CaseCreate"];
 export type CaseAmend = components["schemas"]["CaseAmend"];
 export type CaseAssign = components["schemas"]["CaseAssign"];
+export type CaseReject = components["schemas"]["CaseReject"];
+export type CaseClose = components["schemas"]["CaseClose"];
+export type AssigneeOptions = components["schemas"]["AssigneeOptions"];
+export type AssigneeRole = components["schemas"]["AssigneeRole"];
+export type AssigneeCandidate = components["schemas"]["AssigneeCandidate"];
 export type CaseLocation = components["schemas"]["CaseLocation"];
 export type CaseAssignment = components["schemas"]["CaseAssignmentOut"];
 export type CaseRound = components["schemas"]["InspectionRoundOut"];
@@ -129,9 +134,14 @@ export function allowsCase(
   return detail?.allowed_actions?.includes(action) ?? false;
 }
 
-/** The read gate. Every write is gated by the transition table, not by a code. */
+/** Screen gates, the read gate and the amend code; other writes follow the transition table. */
+export const COMPLAINTS_ACCESS = "complaints.access";
+export const COMPLAINT_CREATE_ACCESS = "complaint_create.access";
+/** The Change Detection screen raises cases from detections, so its gate sits here. */
+export const CHANGE_DETECTION_ACCESS = "change_detection.access";
 export const CASE_READ = "case.read";
 export const CASE_EXPORT = "case.export";
+export const CASE_AMEND = "case.amend";
 
 /**
  * The refusals that mean something specific to a screen.
@@ -223,6 +233,23 @@ export async function amendCase(
   return narrowDetail(result);
 }
 
+/** The roles the workflow admits as assignee, and the zone's officers holding them. */
+export async function fetchAssignees(
+  caseRef: string,
+  signal?: AbortSignal,
+): Promise<AssigneeOptions> {
+  const result = await icmsRequest(`${BASE}/${encodeURIComponent(caseRef)}/assignees`, {
+    signal,
+  });
+  if (typeof result !== "object" || result === null || !("candidates" in result)) {
+    throw new IcmsApiError(200, {
+      code: "malformed_response",
+      message: "The assignee response did not have the expected shape.",
+    });
+  }
+  return result as AssigneeOptions;
+}
+
 /** `ASSIGN` or `REASSIGN`, chosen server-side from the case's current status. */
 export async function assignCase(
   caseRef: string,
@@ -233,6 +260,105 @@ export async function assignCase(
     body,
   });
   return narrowDetail(result);
+}
+
+/** `REJECT`, from raised or assigned. 200 again, unchanged, on a replayed idempotency key. */
+export async function rejectCase(caseRef: string, body: CaseReject): Promise<CaseDetail> {
+  const result = await icmsRequest(`${BASE}/${encodeURIComponent(caseRef)}/reject`, {
+    method: "POST",
+    body,
+  });
+  return narrowDetail(result);
+}
+
+/** `CLOSE`, from notice_issued. 200 again, unchanged, on a replayed idempotency key. */
+export async function closeCase(caseRef: string, body: CaseClose): Promise<CaseDetail> {
+  const result = await icmsRequest(`${BASE}/${encodeURIComponent(caseRef)}/close`, {
+    method: "POST",
+    body,
+  });
+  return narrowDetail(result);
+}
+
+/* ---- case evidence -------------------------------------------------------
+   Photos attached to the case itself, before any inspection round exists.
+   Hand-typed until `npm run api:types` picks the routes up from the server. */
+
+export type CaseEvidence = {
+  id: number;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  caption: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+  content_url: string;
+};
+
+export type CaseEvidenceUpload = { evidence: CaseEvidence; replayed: boolean };
+
+export type CaseEvidenceOptions = {
+  /** One per file, held across retries, so a retry replays rather than duplicates. */
+  idempotencyKey: string;
+  caption?: string;
+  latitude?: number;
+  longitude?: number;
+  signal?: AbortSignal;
+};
+
+function isCaseEvidence(value: unknown): value is CaseEvidence {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "number" &&
+    typeof (value as { content_url?: unknown }).content_url === "string"
+  );
+}
+
+function malformedEvidence(): IcmsApiError {
+  return new IcmsApiError(200, {
+    code: "malformed_response",
+    message: "The evidence response did not have the expected shape.",
+  });
+}
+
+/** Images only (jpeg/png/webp), at most ten per case. 201, or 200 on a replay. */
+export async function uploadCaseEvidence(
+  caseKey: string,
+  file: File,
+  opts: CaseEvidenceOptions,
+): Promise<CaseEvidenceUpload> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  if (opts.caption !== undefined && opts.caption !== "") form.append("caption", opts.caption);
+  if (opts.latitude !== undefined) form.append("latitude", String(opts.latitude));
+  if (opts.longitude !== undefined) form.append("longitude", String(opts.longitude));
+
+  const result = await icmsRequest(`${BASE}/${encodeURIComponent(caseKey)}/evidence`, {
+    method: "POST",
+    body: form,
+    headers: { "Idempotency-Key": opts.idempotencyKey },
+    signal: opts.signal,
+  });
+  const upload = result as { evidence?: unknown; replayed?: unknown } | undefined;
+  if (!isCaseEvidence(upload?.evidence) || typeof upload.replayed !== "boolean") {
+    throw malformedEvidence();
+  }
+  return { evidence: upload.evidence, replayed: upload.replayed };
+}
+
+/** Every photo attached to the case. */
+export async function listCaseEvidence(
+  caseKey: string,
+  signal?: AbortSignal,
+): Promise<CaseEvidence[]> {
+  const result = await icmsRequest(`${BASE}/${encodeURIComponent(caseKey)}/evidence`, {
+    signal,
+  });
+  const items: unknown = (result as { items?: unknown } | undefined)?.items;
+  if (!Array.isArray(items) || !items.every(isCaseEvidence)) throw malformedEvidence();
+  return items;
 }
 
 /* ---- idempotency ---------------------------------------------------------

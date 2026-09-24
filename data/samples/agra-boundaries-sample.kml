@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>SAMPLE - Agra Development Authority boundary layers</name>
+  <description>SAMPLE ONLY - NOT SURVEY DATA. Synthetic rectangles and hexagons placed near Agra to show the layout docs/icms/kml-import-spec.md asks for. Codes, khasra numbers, ULPINs and owner names are invented. An OpenStreetMap Overpass query for Agra ward boundaries (boundary=administrative, admin_level=10) returned nothing on 2026-09-24, so no real outline is used and no ODbL attribution is needed.</description>
+  <Folder>
+    <name>zones</name>
+    <Placemark>
+      <name>Lohamandi (sample)</name>
+      <ExtendedData><Data name="zone_cd"><value>LOHAMANDI</value></Data><Data name="zone_name"><value>Lohamandi (sample)</value></Data><Data name="zone_name_hi"><value>लोहामंडी (नमूना)</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>77.960000,27.170000 78.010000,27.170000 78.010000,27.230000 77.985000,27.235000 77.960000,27.230000 77.960000,27.170000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Hari Parvat (sample)</name>
+      <ExtendedData><Data name="zone_cd"><value>HARIPARVAT</value></Data><Data name="zone_name"><value>Hari Parvat (sample)</value></Data><Data name="zone_name_hi"><value>हरीपर्वत (नमूना)</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.010000,27.180000 78.060000,27.180000 78.060000,27.230000 78.035000,27.233000 78.010000,27.230000 78.010000,27.180000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Taj Ganj (sample)</name>
+      <ExtendedData><Data name="zone_cd"><value>TAJGANJ</value></Data><Data name="zone_name"><value>Taj Ganj (sample)</value></Data><Data name="zone_name_hi"><value>ताजगंज (नमूना)</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.010000,27.110000 78.040000,27.107000 78.070000,27.110000 78.070000,27.180000 78.010000,27.180000 78.010000,27.110000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Folder>
+  <Folder>
+    <name>villages</name>
+    <Placemark>
+      <name>Sample Village A</name>
+      <ExtendedData><Data name="village_lgd"><value>900101</value></Data><Data name="village_name"><value>Sample Village A</value></Data><Data name="village_name_hi"><value>नमूना गाँव क</value></Data><Data name="tehsil"><value>Agra Sadar</value></Data><Data name="district_lgd"><value>118</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>77.970000,27.180000 78.000000,27.180000 78.000000,27.215000 77.970000,27.215000 77.970000,27.180000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Sample Village B</name>
+      <ExtendedData><Data name="village_lgd"><value>900102</value></Data><Data name="village_name"><value>Sample Village B</value></Data><Data name="village_name_hi"><value>नमूना गाँव ख</value></Data><Data name="tehsil"><value>Agra Sadar</value></Data><Data name="district_lgd"><value>118</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.020000,27.190000 78.050000,27.190000 78.050000,27.222000 78.020000,27.222000 78.020000,27.190000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Sample Village C</name>
+      <ExtendedData><Data name="village_lgd"><value>900103</value></Data><Data name="village_name"><value>Sample Village C</value></Data><Data name="village_name_hi"><value>नमूना गाँव ग</value></Data><Data name="tehsil"><value>Agra Sadar</value></Data><Data name="district_lgd"><value>118</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.020000,27.120000 78.036000,27.120000 78.036000,27.160000 78.020000,27.160000 78.020000,27.120000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Sample Village D</name>
+      <ExtendedData><Data name="village_lgd"><value>900104</value></Data><Data name="village_name"><value>Sample Village D</value></Data><Data name="village_name_hi"><value>नमूना गाँव घ</value></Data><Data name="tehsil"><value>Etmadpur</value></Data><Data name="district_lgd"><value>118</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.045000,27.120000 78.065000,27.120000 78.065000,27.160000 78.045000,27.160000 78.045000,27.120000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Folder>
+  <Folder>
+    <name>parcels</name>
+    <Placemark>
+      <name>Khasra 101</name>
+      <ExtendedData><Data name="khasra_no"><value>101</value></Data><Data name="village_lgd"><value>900101</value></Data><Data name="ulpin"><value>09118900100001</value></Data><Data name="land_use"><value>residential</value></Data><Data name="owner_name"><value>SAMPLE Owner 1</value></Data><Data name="area_sqm"><value>3283.86</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>77.972000,27.183000 77.972600,27.183000 77.972600,27.183500 77.972000,27.183500 77.972000,27.183000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 102/1</name>
+      <ExtendedData><Data name="khasra_no"><value>102/1</value></Data><Data name="village_lgd"><value>900101</value></Data><Data name="ulpin"><value>09118900100002</value></Data><Data name="land_use"><value>residential</value></Data><Data name="owner_name"><value>SAMPLE Owner 2</value></Data><Data name="area_sqm"><value>3283.86</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>77.973000,27.183000 77.973600,27.183000 77.973600,27.183500 77.973000,27.183500 77.973000,27.183000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 111</name>
+      <ExtendedData><Data name="khasra_no"><value>111</value></Data><Data name="village_lgd"><value>900102</value></Data><Data name="ulpin"><value>09118900200001</value></Data><Data name="land_use"><value>agricultural</value></Data><Data name="owner_name"><value>SAMPLE Owner 3</value></Data><Data name="area_sqm"><value>3283.56</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.022000,27.193000 78.022600,27.193000 78.022600,27.193500 78.022000,27.193500 78.022000,27.193000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 112/1</name>
+      <ExtendedData><Data name="khasra_no"><value>112/1</value></Data><Data name="village_lgd"><value>900102</value></Data><Data name="ulpin"><value>09118900200002</value></Data><Data name="land_use"><value>agricultural</value></Data><Data name="owner_name"><value>SAMPLE Owner 4</value></Data><Data name="area_sqm"><value>3283.56</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.023000,27.193000 78.023600,27.193000 78.023600,27.193500 78.023000,27.193500 78.023000,27.193000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 121</name>
+      <ExtendedData><Data name="khasra_no"><value>121</value></Data><Data name="village_lgd"><value>900103</value></Data><Data name="ulpin"><value>09118900300001</value></Data><Data name="land_use"><value>commercial</value></Data><Data name="owner_name"><value>SAMPLE Owner 5</value></Data><Data name="area_sqm"><value>3285.62</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.022000,27.123000 78.022600,27.123000 78.022600,27.123500 78.022000,27.123500 78.022000,27.123000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 122/1</name>
+      <ExtendedData><Data name="khasra_no"><value>122/1</value></Data><Data name="village_lgd"><value>900103</value></Data><Data name="ulpin"><value>09118900300002</value></Data><Data name="land_use"><value>commercial</value></Data><Data name="owner_name"><value>SAMPLE Owner 6</value></Data><Data name="area_sqm"><value>3285.63</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.023000,27.123000 78.023600,27.123000 78.023600,27.123500 78.023000,27.123500 78.023000,27.123000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 131</name>
+      <ExtendedData><Data name="khasra_no"><value>131</value></Data><Data name="village_lgd"><value>900104</value></Data><Data name="ulpin"><value>09118900400001</value></Data><Data name="land_use"><value>residential</value></Data><Data name="owner_name"><value>SAMPLE Owner 7</value></Data><Data name="area_sqm"><value>3285.62</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.047000,27.123000 78.047600,27.123000 78.047600,27.123500 78.047000,27.123500 78.047000,27.123000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Khasra 132/1</name>
+      <ExtendedData><Data name="khasra_no"><value>132/1</value></Data><Data name="village_lgd"><value>900104</value></Data><Data name="ulpin"><value>09118900400002</value></Data><Data name="land_use"><value>residential</value></Data><Data name="owner_name"><value>SAMPLE Owner 8</value></Data><Data name="area_sqm"><value>4271.29</value></Data></ExtendedData>
+      <MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>78.048000,27.123000 78.048600,27.123000 78.048600,27.123500 78.048000,27.123500 78.048000,27.123000</coordinates></LinearRing></outerBoundaryIs></Polygon><Polygon><outerBoundaryIs><LinearRing><coordinates>78.048000,27.123800 78.048300,27.123800 78.048300,27.124100 78.048000,27.124100 78.048000,27.123800</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+    </Placemark>
+  </Folder>
+  <Folder>
+    <name>reserved</name>
+    <Placemark>
+      <name>Taj Mahal buffer (sample)</name>
+      <ExtendedData><Data name="feature_type"><value>heritage</value></Data><Data name="name"><value>Taj Mahal buffer (sample)</value></Data><Data name="source_ref"><value>SAMPLE/ASI-BUFFER/001</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.045100,27.175100 78.043600,27.177698 78.040600,27.177698 78.039100,27.175100 78.040600,27.172502 78.043600,27.172502 78.045100,27.175100</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Sample Park</name>
+      <ExtendedData><Data name="feature_type"><value>park</value></Data><Data name="name"><value>Sample Park</value></Data><Data name="source_ref"><value>SAMPLE/ADA-PARK/014</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.050000,27.165000 78.054000,27.165000 78.054000,27.169000 78.050000,27.169000 78.050000,27.165000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Sample Pond</name>
+      <ExtendedData><Data name="feature_type"><value>water</value></Data><Data name="name"><value>Sample Pond</value></Data><Data name="source_ref"><value>SAMPLE/REV-POND/007</value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>78.040000,27.212000 78.046000,27.212000 78.046000,27.218000 78.040000,27.218000 78.040000,27.212000</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Folder>
+</Document>
+</kml>

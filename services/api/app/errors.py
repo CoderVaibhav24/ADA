@@ -40,16 +40,18 @@ def envelope(
     *,
     field: str | None = None,
     allowed: Sequence[str] | None = None,
+    details: dict | None = None,
 ) -> dict:
-    return {
-        "error": {
-            "code": code,
-            "message": message,
-            "field": field,
-            "allowed": list(allowed) if allowed is not None else None,
-            "request_id": current_request_id(),
-        }
+    error = {
+        "code": code,
+        "message": message,
+        "field": field,
+        "allowed": list(allowed) if allowed is not None else None,
+        "request_id": current_request_id(),
     }
+    if details is not None:
+        error["details"] = details
+    return {"error": error}
 
 
 class ApiError(Exception):
@@ -61,6 +63,7 @@ class ApiError(Exception):
         *,
         field: str | None = None,
         allowed: Iterable[str] | None = None,
+        details: dict | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -68,9 +71,11 @@ class ApiError(Exception):
         self.message = message
         self.field = field
         self.allowed = sorted(allowed) if allowed is not None else None
+        self.details = details
 
     def body(self) -> dict:
-        return envelope(self.code, self.message, field=self.field, allowed=self.allowed)
+        return envelope(self.code, self.message, field=self.field, allowed=self.allowed,
+                        details=self.details)
 
 
 _WORKFLOW_CODES: dict[type[WorkflowError], str] = {
@@ -123,7 +128,7 @@ def install_error_handlers(app: FastAPI) -> None:
         allowed: list[str] | None = None
         field: str | None = None
         if isinstance(exc, RoleNotPermitted):
-            allowed = sorted(exc.required)
+            allowed = list(exc.allowed)
         elif isinstance(exc, MissingPayload):
             allowed = list(exc.missing)
             field = exc.missing[0] if exc.missing else None

@@ -12,10 +12,13 @@ import {
   type AccessibilityProps,
 } from 'react-native';
 
+import { useScriptOf } from '@/services/i18n';
+
 import {
   colors,
   control,
   disabledOpacity,
+  elevation,
   layout,
   radius,
   space,
@@ -24,7 +27,8 @@ import {
   type LayoutStyle,
 } from '../tokens';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'destructive';
+/** `figPrimary` / `figSecondary` are the mobile frames' buttons (173:4660, 187:1328, 253:632). */
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'destructive' | 'figPrimary' | 'figSecondary';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export type ButtonProps = Pick<AccessibilityProps, 'accessibilityHint'> & {
@@ -50,7 +54,11 @@ const skins: Record<ButtonVariant, Skin> = {
   secondary: { bg: 'surface2', bgPressed: 'surface3', fg: 'ink0', border: 'line1' },
   ghost: { bg: 'transparent', bgPressed: 'surface2', fg: 'brand', border: 'transparent' },
   destructive: { bg: 'surface2', bgPressed: 'surface3', fg: 'statusOverdue', border: 'statusOverdue' },
+  figPrimary: { bg: 'figAccent', bgPressed: 'figAccentPressed', fg: 'white', border: 'figAccent' },
+  figSecondary: { bg: 'figSecondary', bgPressed: 'figControl', fg: 'white', border: 'figSecondaryBorder' },
 };
+
+const figma = (variant: ButtonVariant): boolean => variant === 'figPrimary' || variant === 'figSecondary';
 
 const heights: Record<ButtonSize, number> = {
   sm: control.heightSm,
@@ -75,6 +83,7 @@ export function Button({
   style,
 }: ButtonProps) {
   const skin = skins[variant];
+  const script = useScriptOf(label);
   const inactive = disabled || loading;
   return (
     <Pressable
@@ -95,6 +104,8 @@ export function Button({
           opacity: inactive ? disabledOpacity : 1,
           alignSelf: fullWidth ? 'stretch' : 'flex-start',
         },
+        figma(variant) ? styles.figma : null,
+        variant === 'figPrimary' ? elevation.figButton : null,
         style,
       ]}
     >
@@ -103,7 +114,10 @@ export function Button({
       ) : (
         <View style={styles.content}>
           {leadingIcon}
-          <Text style={[textStyle('subheading', skin.fg), styles.label]} numberOfLines={1}>
+          <Text
+            style={[textStyle(figma(variant) ? 'figButton' : 'subheading', skin.fg, script), styles.label]}
+            numberOfLines={2}
+          >
             {label}
           </Text>
           {trailingIcon}
@@ -117,6 +131,8 @@ const styles = StyleSheet.create({
   base: {
     minWidth: layout.touchMin,
     paddingHorizontal: space[5],
+    // Keeps a label that wraps to a second line (long Hindi, narrow row) off the border.
+    paddingVertical: space[1],
     borderRadius: radius.pill,
     borderWidth: control.borderWidth,
     alignItems: 'center',
@@ -128,5 +144,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: space[2],
   },
-  label: { textAlign: 'center' },
+  label: { textAlign: 'center', flexShrink: 1 },
+  // Radius 12 and 16pt side padding, as drawn (173:4660).
+  figma: { borderRadius: radius.md, paddingHorizontal: space[4], paddingVertical: space[2] },
 });

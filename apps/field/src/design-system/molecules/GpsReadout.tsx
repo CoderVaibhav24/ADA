@@ -6,6 +6,8 @@
 
 import { StyleSheet, View } from 'react-native';
 
+import { useT, type MessageKey } from '@/services/i18n';
+
 import { Icon, Text } from '../atoms';
 import {
   colors,
@@ -39,12 +41,12 @@ const tones: Record<GpsFixState, ColorToken> = {
   searching: 'ink2',
 };
 
-const stateLabels: Record<GpsFixState, string> = {
-  locked: 'GPS locked',
-  weak: 'Weak fix',
-  none: 'No GPS fix',
-  searching: 'Acquiring GPS',
-};
+const stateLabels = {
+  locked: 'gps.state.locked',
+  weak: 'gps.state.weak',
+  none: 'gps.state.none',
+  searching: 'gps.state.searching',
+} as const satisfies Record<GpsFixState, MessageKey>;
 
 // Degrees with a hemisphere letter, the way the designs and a field notebook both write it.
 function formatCoordinate(value: number, positive: string, negative: string): string {
@@ -62,21 +64,22 @@ export function GpsReadout({
   lastKnown = false,
   style,
 }: GpsReadoutProps) {
+  const t = useT();
   const tone = tones[state];
   const hasPosition = latitude !== undefined && longitude !== undefined;
   const coordinates = hasPosition
     ? `${formatCoordinate(latitude, 'N', 'S')}, ${formatCoordinate(longitude, 'E', 'W')}`
-    : 'Coordinates unavailable';
+    : t('gps.coordinatesUnavailable');
   return (
     <View style={[styles.panel, style]}>
       <View style={styles.header}>
         <Icon name="gps" size="md" color={tone} />
         <Text variant="label" color={tone}>
-          {stateLabels[state]}
+          {t(stateLabels[state])}
         </Text>
         {lastKnown ? (
           <Text variant="caption" color="ink3">
-            {'· last known position'}
+            {t('gps.lastKnown')}
           </Text>
         ) : null}
       </View>
@@ -87,18 +90,20 @@ export function GpsReadout({
 
       <View style={styles.meta}>
         <Text variant="caption" color="ink2">
-          {accuracyMeters === undefined ? 'Accuracy pending' : `Accuracy ±${Math.round(accuracyMeters)} m`}
+          {accuracyMeters === undefined
+            ? t('gps.accuracyPending')
+            : t('gps.accuracy', { meters: Math.round(accuracyMeters) })}
         </Text>
         {thresholdMeters !== undefined ? (
           <Text variant="caption" color="ink3">
-            {`· required ±${Math.round(thresholdMeters)} m`}
+            {t('gps.required', { meters: Math.round(thresholdMeters) })}
           </Text>
         ) : null}
       </View>
 
       {capturedAtLabel ? (
         <Text variant="caption" color="ink3">
-          {`Captured ${capturedAtLabel}`}
+          {t('gps.captured', { time: capturedAtLabel })}
         </Text>
       ) : null}
     </View>

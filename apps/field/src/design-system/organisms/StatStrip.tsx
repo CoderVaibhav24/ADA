@@ -1,14 +1,16 @@
 /**
- * StatStrip — the three Home counts (`158:3829`). Each count is a server total or a
- * stated state: loading, failed with the server's message, or in progress when no
- * filter can produce it honestly. A count is never estimated.
+ * StatStrip — the three Home counts (170:3829). Each count is a server total or a
+ * stated state: loading, failed, or not ready yet when no filter can produce it
+ * honestly. A count is never estimated.
  */
 
 import { StyleSheet, View } from 'react-native';
 
+import { useT } from '@/services/i18n';
+
 import { Icon, Skeleton, Text, type IconName } from '../atoms';
-import { InProgressBlock, StatCard } from '../molecules';
-import { colors, layout, radius, space, type ColorToken, type LayoutStyle } from '../tokens';
+import { StatCard } from '../molecules';
+import { colors, control, figCard, radius, space, type ColorToken, type LayoutStyle } from '../tokens';
 
 export type StatState =
   | { readonly kind: 'loading' }
@@ -31,34 +33,56 @@ export type StatStripProps = {
   style?: LayoutStyle;
 };
 
-// One slot per count; the slot's shape does not change between states, so nothing jumps.
+// A tile-shaped frame for the non-number states, so nothing jumps when the number lands.
+function Tile({ label, spoken, top, alert = false }: { label: string; spoken: string; top: React.ReactNode; alert?: boolean }) {
+  return (
+    <View style={styles.tile} accessible accessibilityLabel={spoken} accessibilityRole={alert ? 'alert' : undefined}>
+      {top}
+      <Text variant="figMetricLabel" color="figBeige" align="center" numberOfLines={2} style={styles.label}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+// One slot per count.
 function StatSlot({ item }: { item: StatItem }) {
+  const t = useT();
   const { state } = item;
   if (state.kind === 'in_progress') {
-    return <InProgressBlock title={item.label} compact testID={`stat-${item.key}`} />;
+    const soon = t('shell.home.overdueSoon');
+    return (
+      <Tile
+        label={item.label}
+        spoken={`${item.label}: ${soon}`}
+        top={
+          <View style={styles.soon}>
+            <Icon name="clock" size="sm" color={item.tone ?? 'figAccent'} />
+            <Text variant="figTime" color="figMuted" align="center" numberOfLines={2}>
+              {soon}
+            </Text>
+          </View>
+        }
+      />
+    );
   }
   if (state.kind === 'loading') {
     return (
-      <View style={styles.slot} accessible accessibilityLabel={`${item.label}: loading`}>
-        <Icon name={item.icon} size="md" color="ink3" />
-        <Skeleton height={layout.touchMin / 2} width="60%" />
-        <Text variant="label" color="ink2" numberOfLines={2}>
-          {item.label}
-        </Text>
-      </View>
+      <Tile
+        label={item.label}
+        spoken={t('shell.home.countLoading', { label: item.label })}
+        top={<Skeleton height={figCard.metricSkeleton} width="40%" tone="figControl" />}
+      />
     );
   }
   if (state.kind === 'error') {
     return (
-      <View style={styles.slot} accessible accessibilityRole="alert">
-        <Icon name="alert" size="md" color="statusOverdue" />
-        <Text variant="label" color="ink2" numberOfLines={2}>
-          {item.label}
-        </Text>
-        <Text variant="caption" color="ink3" numberOfLines={3}>
-          {state.message}
-        </Text>
-      </View>
+      <Tile
+        alert
+        label={item.label}
+        spoken={`${t('shell.home.countFailed', { label: item.label })}. ${state.message}`}
+        top={<Icon name="alert" size="md" color="figDanger" />}
+      />
     );
   }
   return (
@@ -74,7 +98,7 @@ function StatSlot({ item }: { item: StatItem }) {
   );
 }
 
-// Lays the counts out in one row; each takes an equal share.
+// The three counts in one row, each an equal share, over the row's hairline.
 export function StatStrip({ items, style }: StatStripProps) {
   return (
     <View style={[styles.row, style]}>
@@ -86,13 +110,28 @@ export function StatStrip({ items, style }: StatStripProps) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', gap: space[3], alignItems: 'stretch' },
-  slot: {
-    flex: 1,
-    minHeight: layout.touchMin,
-    gap: space[1],
-    padding: space[4],
-    borderRadius: radius.md,
-    backgroundColor: colors.surface1,
+  row: {
+    flexDirection: 'row',
+    gap: figCard.metricGap,
+    alignItems: 'stretch',
+    minHeight: figCard.metricRowHeight,
+    paddingTop: space[1],
+    paddingBottom: figCard.metricRowPadBottom,
+    borderBottomWidth: control.hairline,
+    borderBottomColor: colors.figRule,
   },
+  tile: {
+    flex: 1,
+    minHeight: figCard.metricTileHeight,
+    padding: figCard.metricPad,
+    borderRadius: radius.md,
+    borderWidth: control.hairline,
+    borderColor: colors.figTileBorder,
+    backgroundColor: colors.figTile,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space[1],
+  },
+  soon: { alignItems: 'center', minHeight: figCard.metricSkeleton },
+  label: { paddingTop: figCard.labelGap },
 });

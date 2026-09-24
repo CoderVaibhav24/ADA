@@ -13,7 +13,7 @@
   --line-soft: #182230;
   --text: #dbe6f0;
   --text-dim: #8aa0b5;
-  --text-faint: #5c7186;
+  --text-faint: #f9f9f9;
   --accent: #ff7a29;
   --accent-dim: #b35015;
   --danger: #ff4438;
@@ -763,6 +763,12 @@ textarea:focus {
   box-shadow:
     0 0 0 1px rgba(255, 68, 56, 0.35),
     0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.hover-hint {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  color: var(--text-faint);
 }
 
 .hover-popup-head {

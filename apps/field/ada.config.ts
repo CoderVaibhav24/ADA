@@ -106,6 +106,26 @@ export const ADA_ENVS: Readonly<Record<AdaEnvName, AdaEnvPreset>> = {
 
 export type ResolvedAdaConfig = AdaEnvPreset & { readonly env: AdaEnvName };
 
+export type AppContact = {
+  /** Shown and dialled from Login and the forgot-password sheet. Null hides the number. */
+  readonly supportPhone: string | null;
+  /** Footer links under the login card. Null renders plain text, never a dead link. */
+  readonly securityPolicyUrl: string | null;
+  readonly gisPortalUrl: string | null;
+  readonly termsOfServiceUrl: string | null;
+};
+
+// Who a surveyor calls, and where the login footer points, per env; read via extra.ada.contact.
+export function appContactFor(env: AdaEnvName): AppContact {
+  return {
+    // Placeholder outside prod only; a prod build says "call your office" until the real number is confirmed.
+    supportPhone: env === 'prod' ? null : '1800-123-4567', // TODO confirm real helpline (Figma 163:27 / 147:900 value)
+    securityPolicyUrl: null,
+    gisPortalUrl: null,
+    termsOfServiceUrl: null,
+  };
+}
+
 function isEnvName(value: string): value is AdaEnvName {
   return value === 'local' || value === 'dev' || value === 'prod';
 }

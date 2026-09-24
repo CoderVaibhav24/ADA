@@ -317,6 +317,9 @@ export type NoticeNewLabels = {
     deniedBody: string;
     noCaseTitle: string;
     noCaseBody: string;
+    /** The caller lacks `notice.issue`, whatever the case. */
+    noIssueTitle: string;
+    noIssueBody: string;
   };
 
   refusedTitle: string;
@@ -403,6 +406,8 @@ export function useNoticeNewLabels(): NoticeNewLabels {
         deniedBody: t("noticeNew.gate.deniedBody"),
         noCaseTitle: t("noticeNew.gate.noCaseTitle"),
         noCaseBody: t("noticeNew.gate.noCaseBody"),
+        noIssueTitle: t("noticeNew.gate.noIssueTitle"),
+        noIssueBody: t("noticeNew.gate.noIssueBody"),
       },
 
       refusedTitle: t("noticeNew.refusedTitle"),

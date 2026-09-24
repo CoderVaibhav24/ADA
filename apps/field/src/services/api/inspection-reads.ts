@@ -24,6 +24,8 @@ export type Evidence = Schemas['EvidenceOut'];
 
 export type InspectionListFilter = {
   readonly caseRef?: readonly string[];
+  /** Round statuses: scheduled, in_progress, submitted, accepted, rejected. */
+  readonly status?: readonly string[];
   readonly surveyorUserId?: readonly string[];
   /** Inclusive IST day, `YYYY-MM-DD`. */
   readonly submittedFrom?: string;
@@ -56,6 +58,7 @@ export function fetchInspectionPage(
   return apiRequest<InspectionPage>('/api/icms/inspections', {
     query: {
       case_ref: filter.caseRef,
+      status: filter.status,
       surveyor_user_id: filter.surveyorUserId,
       submitted_from: filter.submittedFrom,
       submitted_to: filter.submittedTo,
@@ -76,6 +79,7 @@ function nextPage(last: InspectionPage): number | undefined {
 
 export function useInspectionPages(
   filter: InspectionListFilter,
+  enabled = true,
 ): UseInfiniteQueryResult<InfiniteData<InspectionPage, number>, Error> {
   return useInfiniteQuery({
     queryKey: inspectionKeys.list(filter),
@@ -83,6 +87,7 @@ export function useInspectionPages(
       fetchInspectionPage(filter, pageParam, INSPECTION_PAGE_SIZE, signal),
     initialPageParam: 1,
     getNextPageParam: nextPage,
+    enabled,
   });
 }
 
@@ -115,15 +120,27 @@ export function useCaseInspections(caseRef: string): UseQueryResult<InspectionRo
   });
 }
 
+function fetchInspectionDetail(ref: string, signal?: AbortSignal): Promise<InspectionDetail> {
+  return apiRequest<InspectionDetail>(`/api/icms/inspections/${encodeURIComponent(ref)}`, {
+    signal,
+  });
+}
+
 export function useInspectionDetail(ref: string | null): UseQueryResult<InspectionDetail, Error> {
   return useQuery({
     queryKey: inspectionKeys.detail(ref ?? ''),
-    queryFn: ({ signal }) =>
-      apiRequest<InspectionDetail>(`/api/icms/inspections/${encodeURIComponent(ref ?? '')}`, {
-        signal,
-      }),
+    queryFn: ({ signal }) => fetchInspectionDetail(ref ?? '', signal),
     enabled: ref !== null && ref !== '',
   });
+}
+
+// One round's detail only if it is already cached; never fetches. The list reads its area from it.
+export function useCachedInspectionDetail(ref: string): InspectionDetail | undefined {
+  return useQuery({
+    queryKey: inspectionKeys.detail(ref),
+    queryFn: ({ signal }) => fetchInspectionDetail(ref, signal),
+    enabled: false,
+  }).data;
 }
 
 export function useInspectionEvidence(ref: string): UseQueryResult<Evidence[], Error> {

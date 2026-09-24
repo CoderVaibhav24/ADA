@@ -5,12 +5,11 @@
  *
  * The same three places `PolicyAdmin` documents, with `user.*` in them:
  *
- *   1. the rail — `navForPermissions` drops the entry without `user.read`;
- *   2. here — a typed URL still reaches this component, which refuses to render
- *      the register without `user.read` and passes `canManage` down so every
- *      write control is disabled without `user.manage`;
- *   3. **ada-api** — `require_permission("user.read" | "user.manage")` on all
- *      six endpoints.
+ *   1. the rail and the route — `officers.access` draws the entry and opens the screen;
+ *   2. here — the register needs `user.read`, and each write control is
+ *      disabled without its own code: `user.create`, `user.update`,
+ *      `user.disable`, `user.roles`, `user.password`;
+ *   3. **ada-api** — `require_permission` on all six endpoints.
  *
  * Only (3) enforces anything. `/me/capabilities` says `advisory: true` in its
  * own payload for exactly this reason: 1 and 2 decide which doors are drawn, 3
@@ -168,7 +167,7 @@ export default function UserAdministration() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {labels.gate.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{labels.gate.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{labels.gate.deniedBody}</p>
       </section>
     );
   }
@@ -180,7 +179,7 @@ export default function UserAdministration() {
           <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
             {labels.title}
           </h1>
-          <p className="mt-1 max-w-prose text-sm text-fg-muted text-pretty">
+          <p className="mt-1 max-w-prose text-sm text-fg-canvas-muted text-pretty">
             {labels.subtitle}
           </p>
         </div>
@@ -192,8 +191,8 @@ export default function UserAdministration() {
             </Link>
           </Button>
           <Button
-            disabled={!gate.canManage}
-            title={gate.canManage ? undefined : labels.register.createDenied}
+            disabled={!gate.canCreate}
+            title={gate.canCreate ? undefined : labels.register.createDenied}
             onClick={() => {
               setCreating(true);
             }}
@@ -383,7 +382,7 @@ export default function UserAdministration() {
         open={creating}
         onOpenChange={setCreating}
         labels={labels}
-        canManage={gate.canManage}
+        canCreate={gate.canCreate}
         onCreated={(user) => {
           selectUser(user.id);
         }}
@@ -392,7 +391,12 @@ export default function UserAdministration() {
       <UserDetailSheet
         userId={openUser}
         labels={labels}
-        canManage={gate.canManage}
+        canUpdate={gate.canUpdate}
+        canDisable={gate.canDisable}
+        canSetRoles={gate.canSetRoles}
+        canResetPassword={gate.canResetPassword}
+        canReadZones={gate.canReadZones}
+        canManageZones={gate.canManageZones}
         selfUserId={gate.selfUserId}
         onClose={() => {
           selectUser(null);

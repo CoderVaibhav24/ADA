@@ -2,7 +2,7 @@
  * The permission catalogue — read-mostly, because that is what it is.
  *
  * A permission is created by the endpoint that names it in the server's source,
- * never here; `0003` seeds all fifteen with `is_system = true`, and
+ * never here; migrations seed every code with `is_system = true`, and
  * `delete_permission` refuses a system row with 409 `permission_is_system`. So
  * in practice every Delete on this screen is disabled, and the screen says why
  * on the control rather than letting an admin click into a refusal.
@@ -13,7 +13,7 @@
  * is, not as "something went wrong".
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { IcmsApiError } from "@/api/icms/http";
 import { PERMISSION_IS_SYSTEM, type PolicyPermission } from "@/api/icms/policy";
 import { EmptyState } from "@/components/icms/states";
@@ -30,6 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Table,
   TableBody,
@@ -41,6 +42,7 @@ import {
 import type { PolicyLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { useIsNarrow } from "@/lib/useMediaQuery";
+import { BANDS, bandOf, type Band } from "./bands";
 import { Code, PolicyLoadError, PolicyPanel, PolicyRefusal } from "./parts";
 import { useDeletePermission, usePermissionCatalogue } from "./usePolicy";
 
@@ -59,7 +61,18 @@ export default function PermissionsCatalogue({
   const [pending, setPending] = useState<PolicyPermission | null>(null);
   const [refused, setRefused] = useState<{ code: string; error: IcmsApiError } | null>(null);
 
-  const rows = data ?? [];
+  const [band, setBand] = useState<Band | "all">("all");
+
+  const all = useMemo(() => data ?? [], [data]);
+  const rows = useMemo(
+    () => (band === "all" ? all : all.filter((row) => bandOf(row) === band)),
+    [all, band],
+  );
+  const bandCounts = useMemo(() => {
+    const counts: Record<Band, number> = { screens: 0, workflow: 0, data: 0 };
+    for (const row of all) counts[bandOf(row)] += 1;
+    return counts;
+  }, [all]);
   const text = labels.permissions;
 
   const confirmDelete = () => {
@@ -115,13 +128,42 @@ export default function PermissionsCatalogue({
         />
       )}
 
-      {status === "success" && rows.length === 0 && (
+      {status === "success" && all.length === 0 && (
         <EmptyState size="compact" title={text.emptyTitle} description={text.emptyBody} />
       )}
 
-      {status === "success" && rows.length > 0 && (
+      {status === "success" && all.length > 0 && (
         <>
           <p className="max-w-prose text-2xs text-fg-faint text-pretty">{text.systemHint}</p>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={2}
+            className="flex flex-wrap justify-start gap-2"
+            aria-label={labels.bands.filterLabel}
+            value={band}
+            // Radix answers "" when the pressed chip is pressed again; "no filter" is "All".
+            onValueChange={(next) => {
+              setBand(next === "" ? "all" : (next as Band | "all"));
+            }}
+          >
+            <ToggleGroupItem
+              value="all"
+              className="rounded-full px-3 data-[state=on]:border-line-accent data-[state=on]:bg-accent-soft data-[state=on]:text-fg-link"
+            >
+              {labels.bands.chip(labels.bands.all, all.length)}
+            </ToggleGroupItem>
+            {BANDS.map((item) => (
+              <ToggleGroupItem
+                key={item}
+                value={item}
+                className="rounded-full px-3 data-[state=on]:border-line-accent data-[state=on]:bg-accent-soft data-[state=on]:text-fg-link"
+              >
+                {labels.bands.chip(labels.bands[item], bandCounts[item])}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           {narrow ? (
             <ul className="flex flex-col gap-2">
               {rows.map((row) => (

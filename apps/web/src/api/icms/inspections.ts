@@ -197,13 +197,10 @@ export const MAX_PAGE_SIZE = 200;
 /* ---- permissions and error codes ----------------------------------------- */
 
 /**
- * The two codes that gate this whole area, both seeded by migration 0003.
- *
- * Read from `/me/capabilities` to decide which doors are drawn; enforced by
- * `require_permission` on every route regardless. They cover the four READS
- * only — writes are gated by the transition table, so there is no
- * `inspection.manage` to import here and there never will be.
+ * The screen gate and the two read codes. Read from `/me/capabilities` to decide
+ * which doors are drawn; enforced by `require_permission` on every route regardless.
  */
+export const INSPECTIONS_ACCESS = "inspections.access";
 export const INSPECTION_READ = "inspection.read";
 export const EVIDENCE_READ = "evidence.read";
 
@@ -307,10 +304,11 @@ export async function listInspectionEvidence(
 export async function fetchEvidenceContent(
   id: number,
   signal: AbortSignal,
+  stamped = false,
 ): Promise<Blob> {
   let response: Response;
   try {
-    response = await fetch(evidenceContentPath(id), {
+    response = await fetch(stamped ? evidenceStampedPath(id) : evidenceContentPath(id), {
       headers: { ...(await authHeader()) },
       signal,
     });
@@ -335,6 +333,11 @@ export async function fetchEvidenceContent(
 /** The path a download points at. The request still needs the bearer token. */
 export function evidenceContentPath(id: number): string {
   return `${BASE}/evidence/${String(id)}/content`;
+}
+
+/** The server-stamped copy: the original plus the API's location bar. */
+export function evidenceStampedPath(id: number): string {
+  return `${BASE}/evidence/${String(id)}/stamped`;
 }
 
 /** `inspection.read`. Every re-survey request raised on this case, any decision. */

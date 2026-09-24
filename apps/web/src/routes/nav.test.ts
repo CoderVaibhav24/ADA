@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   PRIMARY_NAV,
   activeNavId,
+  homePathFor,
   isBleedPath,
   isNavLink,
   navForPermissions,
@@ -14,8 +15,8 @@ import { ROUTES } from "./paths.ts";
 // nav.ts imports only paths.ts at runtime, so Node's type stripping is enough —
 // no bundler, no React, no DOM.
 
-// Figma 17:3980's eight, plus the two administration entries — which the frame
-// does not draw. They go after Report and before the rule above Logout.
+// Figma 17:3980's entries, plus the two administration entries — which the frame
+// does not draw. Logout has moved to the account menu, so it is not in the rail.
 test("the rail is in the order Figma 17:3980 draws it, plus the admin entries", () => {
   assert.deepEqual(
     PRIMARY_NAV.map((item) => item.id),
@@ -29,7 +30,6 @@ test("the rail is in the order Figma 17:3980 draws it, plus the admin entries", 
       "reports",
       "administration",
       "users",
-      "logout",
     ],
   );
 });
@@ -45,11 +45,11 @@ test("every link points at a route that exists", () => {
   }
 });
 
-test("logout is an action, not a route", () => {
-  const logoutItem = PRIMARY_NAV.find((item) => item.id === "logout");
-  assert.ok(logoutItem);
-  assert.equal(isNavLink(logoutItem), false);
-  assert.equal(logoutItem.separatorBefore, true);
+test("logout is not a rail entry; it lives in the account menu", () => {
+  assert.equal(
+    PRIMARY_NAV.some((item) => (item.id as string) === "logout"),
+    false,
+  );
 });
 
 // The reason this file exists: /complaints/new and /complaints are the first
@@ -82,53 +82,86 @@ test("only the map console is full-bleed", () => {
   assert.equal(isBleedPath(ROUTES.complaints), false);
 });
 
-/* The reason navForPermissions exists: its predecessor took a `roles` argument
-   and returned the list unchanged, so a rail entry that looked gated was not. */
-test("Administration is hidden without policy.read and shown with it", () => {
-  const idsFor = (permissions: string[]) =>
-    navForPermissions(PRIMARY_NAV, permissions).map((item) => item.id);
+const ACCESS_CODES = [
+  "dashboard.access",
+  "change_detection.access",
+  "complaint_create.access",
+  "complaints.access",
+  "inspections.access",
+  "notices.access",
+  "reports.access",
+  "administration.access",
+  "officers.access",
+];
 
-  assert.equal(idsFor([]).includes("administration"), false);
-  assert.equal(idsFor(["case.read", "notice.read"]).includes("administration"), false);
-  assert.equal(idsFor(["policy.read"]).includes("administration"), true);
+const idsFor = (permissions: string[]) =>
+  navForPermissions(PRIMARY_NAV, permissions).map((item) => item.id);
+
+test("every rail entry is gated on its screen's *.access code", () => {
+  assert.deepEqual(
+    PRIMARY_NAV.map((item) => item.requiresPermission),
+    ACCESS_CODES,
+  );
 });
 
-test("an ungated entry survives every permission set, and order is preserved", () => {
+/* The reason navForPermissions exists: its predecessor took a `roles` argument
+   and returned the list unchanged, so a rail entry that looked gated was not. */
+test("with no permissions the rail is empty; with all of them it is whole and in order", () => {
+  assert.deepEqual(idsFor([]), []);
+  assert.deepEqual(idsFor(ACCESS_CODES), PRIMARY_NAV.map((item) => item.id));
+});
+
+test("a read code alone opens no screen", () => {
   assert.deepEqual(
-    navForPermissions(PRIMARY_NAV, []).map((item) => item.id),
-    PRIMARY_NAV.filter((item) => item.requiresPermission === undefined).map(
-      (item) => item.id,
-    ),
+    idsFor(["case.read", "notice.read", "dashboard.read", "policy.read", "user.read"]),
+    [],
   );
-  assert.deepEqual(
-    navForPermissions(PRIMARY_NAV, ["dashboard.read", "policy.read", "user.read"]).map(
-      (item) => item.id,
-    ),
-    PRIMARY_NAV.map((item) => item.id),
-  );
+});
+
+test("Administration is hidden without administration.access and shown with it", () => {
+  assert.equal(idsFor(["policy.read"]).includes("administration"), false);
+  assert.equal(idsFor(["administration.access"]).includes("administration"), true);
 });
 
 /* The two admin entries are gated apart on purpose: a single grouped entry
    would have to pick one permission and hide the other screen from whoever
    holds only the code it did not pick. */
-/* The dashboard is gated too, and on a code the Field Surveyor is not seeded
-   with: an entry that always refuses is worse than an absent one. */
-test("Dashboard is hidden without dashboard.read and shown with it", () => {
-  const idsFor = (permissions: string[]) =>
-    navForPermissions(PRIMARY_NAV, permissions).map((item) => item.id);
-
-  assert.equal(idsFor([]).includes("dashboard"), false);
-  assert.equal(idsFor(["case.read", "notice.read"]).includes("dashboard"), false);
-  assert.equal(idsFor(["dashboard.read"]).includes("dashboard"), true);
-  assert.equal(idsFor(["dashboard.read"]).includes("administration"), false);
+test("Officers is gated on officers.access, independently of administration.access", () => {
+  assert.equal(idsFor(["administration.access"]).includes("users"), false);
+  assert.equal(idsFor(["officers.access"]).includes("users"), true);
+  assert.equal(idsFor(["officers.access"]).includes("administration"), false);
 });
 
-test("Officers is gated on user.read, independently of policy.read", () => {
-  const idsFor = (permissions: string[]) =>
-    navForPermissions(PRIMARY_NAV, permissions).map((item) => item.id);
+/* The seed does not grant the Field Surveyor dashboard.access or reports.access. */
+test("the surveyor's seeded codes draw no Dashboard, Reports or admin entries", () => {
+  const surveyor = [
+    "change_detection.access",
+    "complaint_create.access",
+    "complaints.access",
+    "inspections.access",
+    "notices.access",
+  ];
+  assert.deepEqual(idsFor(surveyor), [
+    "changeDetection",
+    "complaintNew",
+    "complaints",
+    "inspections",
+    "notices",
+  ]);
+});
 
-  assert.equal(idsFor([]).includes("users"), false);
-  assert.equal(idsFor(["policy.read"]).includes("users"), false);
-  assert.equal(idsFor(["user.read"]).includes("users"), true);
-  assert.equal(idsFor(["user.read"]).includes("administration"), false);
+test("home is the Dashboard when dashboard.access is held", () => {
+  assert.equal(homePathFor(ACCESS_CODES), ROUTES.dashboard);
+  assert.equal(homePathFor(["dashboard.access", "complaints.access"]), ROUTES.dashboard);
+});
+
+test("home falls back to the first rail entry the officer may open", () => {
+  assert.equal(homePathFor(["reports.access", "notices.access"]), ROUTES.notices);
+  assert.equal(homePathFor(["officers.access"]), ROUTES.administrationUsers);
+  assert.equal(homePathFor(["complaints.access"]), ROUTES.complaints);
+});
+
+test("home is null when no screen is open, e.g. the public role", () => {
+  assert.equal(homePathFor([]), null);
+  assert.equal(homePathFor(["case.raise"]), null);
 });

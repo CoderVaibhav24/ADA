@@ -1,31 +1,22 @@
-import { useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation, useRouter } from 'expo-router';
+import { useCallback } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
-import {
-  Avatar,
-  Badge,
-  Icon,
-  SearchBar,
-  Skeleton,
-  Text,
-  colors,
-  layout,
-  space,
-} from '@/design-system';
+import { ScreenHeader, colors, figCard, shell, space, useTabBarInset } from '@/design-system';
 import { NextUpCard } from '@/design-system/organisms/NextUpCard';
 import { NotificationFeed } from '@/design-system/organisms/NotificationFeed';
+import { notificationHref, type NotificationTarget } from '@/services/push/routing';
+import { PendingBanner } from '@/design-system/organisms/PendingBanner';
 import { StatStrip, type StatState } from '@/design-system/organisms/StatStrip';
 import { useCaseCount, useFirstCase } from '@/services/api/case-reads';
 import { errorText } from '@/services/api/error-text';
 import { useInspectionCount } from '@/services/api/inspection-reads';
 import { inboxConfigured, useInbox } from '@/services/api/notification-reads';
-import { displayName } from '@/services/auth/claims';
-import { useTokenClaims } from '@/services/auth/use-token-claims';
 import { useCapabilities } from '@/services/config/capabilities';
 import { useWorkStatuses } from '@/services/config/work-statuses';
 import { localIsoDay } from '@/services/format/datetime';
+import { useT, type TFunction } from '@/services/i18n';
+import { COMPLAINT_IN_COMPLAINTS } from '@/services/navigation/complaint-route';
 
 /*
  * Home, `158:3829`.
@@ -35,25 +26,33 @@ import { localIsoDay } from '@/services/format/datetime';
  *                    &submitted_to=<today> — `total`. The case register has no
  *                    completion-date filter; the inspection register's submitted
  *                    day is the honest source.
- *   Overdue          in progress — no due date or SLA exists on a case or a round.
+ *   Overdue          not ready: no due date or SLA exists on a case, and the
+ *                    inspection register cannot filter unsubmitted rounds by
+ *                    `scheduled_for`. A count from one page would be a guess.
  *   Next up          the first case in the officer's active statuses, by priority.
- *   Notifications    ada-notify GET /v1/me/notifications — the newest three, and
- *                    `unread_count` for the bell's dot.
+ *   Notifications    ada-notify GET /v1/me/notifications — the newest three; the
+ *                    header bell reads `unread_count` from the same query.
  */
 
-// A query's state as a count slot; the server's total or the server's message.
-function countState(query: { data: number | undefined; error: Error | null }): StatState {
+// A failure in plain words: offline or not, never the server's own line.
+function plainError(error: Error, t: TFunction): string {
+  return t(errorText(error).offline ? 'shell.error.offline' : 'shell.error.generic');
+}
+
+// A query's state as a count slot; the server's total or a stated failure.
+function countState(query: { data: number | undefined; error: Error | null }, t: TFunction): StatState {
   if (query.data !== undefined) return { kind: 'value', value: query.data };
-  if (query.error !== null) return { kind: 'error', message: errorText(query.error).message };
+  if (query.error !== null) return { kind: 'error', message: plainError(query.error, t) };
   return { kind: 'loading' };
 }
 
 export function HomeScreen() {
   const router = useRouter();
-  const claims = useTokenClaims();
+  const navigation = useNavigation();
+  const t = useT();
+  const tabInset = useTabBarInset();
   const capabilities = useCapabilities();
   const work = useWorkStatuses();
-  const [search, setSearch] = useState('');
 
   const userId = capabilities.data?.user_id;
   const today = localIsoDay();
@@ -70,12 +69,11 @@ export function HomeScreen() {
   );
   const nextUp = useFirstCase({ mine: true, status: active, sort: 'priority' }, active.length > 0);
   const inbox = useInbox();
-  const unread = inbox.data?.pages[0]?.unread_count ?? 0;
 
   const completedState: StatState =
     capabilities.error !== null && userId === undefined
-      ? { kind: 'error', message: errorText(capabilities.error).message }
-      : countState(completedToday);
+      ? { kind: 'error', message: plainError(capabilities.error, t) }
+      : countState(completedToday, t);
 
   const nextUpRow = work.data !== undefined && active.length === 0 ? null : nextUp.data;
   const nextUpError = nextUp.error ?? (work.data === undefined ? work.error : null);
@@ -92,98 +90,66 @@ export function HomeScreen() {
     if (inboxConfigured) void inbox.refetch();
   };
 
+  // Opens the case inside the Complaints tab (03 keeps Complaints raised), with the register under it.
   const openCase = useCallback(
     (caseRef: string) =>
-      router.push({ pathname: '/complaint/[caseRef]', params: { caseRef, from: 'home' } }),
+      router.push({ pathname: COMPLAINT_IN_COMPLAINTS, params: { caseRef, from: 'complaints' } }, { withAnchor: true }),
     [router],
   );
 
-  // Hands the search to the Complaints tab, which runs it against the register.
-  const submitSearch = () => {
-    const q = search.trim();
-    router.push({ pathname: '/complaints', params: q === '' ? {} : { q } });
-  };
+  // Opens where a notification leads; a no-case item opens the full inbox.
+  const openNotification = useCallback(
+    (target: NotificationTarget) => router.push(notificationHref(target), { withAnchor: true }),
+    [router],
+  );
 
-  const name = claims.status === 'ready' ? displayName(claims.claims) : null;
+  // Switches tab, keeping whatever that tab had open; a path would push a second list.
+  const openTab = (tab: '(complaints)' | '(inspections)') => navigation.navigate(tab as never);
 
   return (
-    <SafeAreaView edges={['top']} style={styles.screen}>
+    <View style={styles.screen}>
+      <ScreenHeader variant="home" title={t('shell.tabs.home')} />
       <ScrollView
-        contentContainerStyle={styles.body}
-        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.body, { paddingBottom: space[6] + tabInset }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={colors.brand}
-            colors={[colors.brand]}
-            progressBackgroundColor={colors.surface1}
+            tintColor={colors.figAccent}
+            colors={[colors.figAccent]}
+            progressBackgroundColor={colors.figPanel}
           />
         }
       >
-        <View style={styles.header}>
-          {name === null ? (
-            <Skeleton width={layout.touchMin} height={layout.touchMin} shape="pill" />
-          ) : (
-            <Avatar name={name} size="md" ringed />
-          )}
-          <View style={styles.greeting}>
-            {name === null ? (
-              <Skeleton height={space[5]} width="60%" />
-            ) : (
-              <Text variant="subheading" numberOfLines={1}>
-                {name}
-              </Text>
-            )}
-          </View>
-          <Pressable
-            onPress={() => router.push('/notifications')}
-            accessibilityRole="button"
-            accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
-            style={({ pressed }) => [
-              styles.bell,
-              { backgroundColor: colors[pressed ? 'surface2' : 'surface1'] },
-            ]}
-          >
-            <Icon name="bell" size="lg" color="ink0" />
-            {unread > 0 ? <Badge style={styles.bellDot} /> : null}
-          </Pressable>
-        </View>
-
-        <SearchBar
-          value={search}
-          onChangeText={setSearch}
-          onSubmit={submitSearch}
-          placeholder="Search complaints"
-          accessibilityLabel="Search complaints"
-        />
+        <PendingBanner />
 
         <StatStrip
           items={[
             {
               key: 'assigned',
-              label: 'Assigned',
+              label: t('shell.home.assigned'),
               icon: 'complaints',
-              state: countState(assigned),
-              onPress: () => router.push('/complaints'),
-              accessibilityHint: 'Opens your complaints',
+              tone: 'figAccent',
+              state: countState(assigned, t),
+              onPress: () => openTab('(complaints)'),
+              accessibilityHint: t('shell.home.assignedHint'),
             },
             {
               key: 'completed-today',
-              label: 'Completed today',
+              label: t('shell.home.completedToday'),
               icon: 'success',
-              tone: 'statusDone',
+              tone: 'figSuccess',
               state: completedState,
-              onPress: () => router.push('/inspections'),
-              accessibilityHint: 'Opens your inspections',
+              onPress: () => openTab('(inspections)'),
+              accessibilityHint: t('shell.home.completedHint'),
             },
-            { key: 'overdue', label: 'Overdue', icon: 'clock', state: { kind: 'in_progress' } },
+            { key: 'overdue', label: t('shell.home.overdue'), icon: 'clock', tone: 'figDanger', state: { kind: 'in_progress' } },
           ]}
         />
 
         <NextUpCard
           row={nextUpRow}
-          errorMessage={nextUpError === null ? null : errorText(nextUpError).message}
+          errorMessage={nextUpError === null ? null : plainError(nextUpError, t)}
           onOpen={openCase}
           onRetry={() => {
             work.refetch();
@@ -191,28 +157,14 @@ export function HomeScreen() {
           }}
         />
 
-        <NotificationFeed preview={3} onOpen={openCase} onViewAll={() => router.push('/notifications')} />
+        <NotificationFeed preview={3} onOpen={openNotification} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.surface0 },
-  body: { padding: space[4], gap: space[5], paddingBottom: space[8] },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[3],
-    minHeight: layout.headerHeight,
-  },
-  greeting: { flex: 1 },
-  bell: {
-    width: layout.touchMin,
-    height: layout.touchMin,
-    borderRadius: layout.touchMin,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellDot: { position: 'absolute', top: space[2], right: space[2] },
+  screen: { flex: 1, backgroundColor: colors.figScreen },
+  // 170:3828: x 18, 25 below the header, gap 24.
+  body: { paddingHorizontal: shell.gutter, paddingTop: shell.contentTop, gap: figCard.sectionGap },
 });

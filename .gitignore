@@ -72,6 +72,10 @@ data/weights/*
 # commit of every vendored model, so `fetch_weights.py` can rebuild an
 # identical data/weights/ on any machine. Keep it in version control.
 !data/weights/manifest.json
+# The sample boundary KML is handed to the authority and is the importer's fixture.
+!data/samples/
+data/samples/*
+!data/samples/*.kml
 
 # ── Docs build output ────────────────────────────────────────
 #

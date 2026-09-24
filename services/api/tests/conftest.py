@@ -31,6 +31,13 @@ os.environ.setdefault("ML_SERVICE_TOKEN", "service-token")
 # one in-memory SQLite connection with the test it is racing is a flake, not
 # a test, so the suite drives reloads synchronously instead.
 os.environ.setdefault("ICMS_POLICY_WATCH", "false")
+# No test reaches the network: the locator is the null one unless a test builds another.
+os.environ.setdefault("GEO_LOCATE_BASE_URL", "")
+# The sweeper is driven synchronously by tests/test_sweeper.py, never by the lifespan.
+os.environ.setdefault("SWEEPER_ENABLED", "false")
+# Reminders are driven synchronously by tests/test_icms_reminders.py with a fake clock.
+os.environ.setdefault("REMINDERS_ENABLED", "false")
+os.environ.setdefault("COLD_STORE_ENDPOINT", "")
 
 from datetime import date, datetime, timedelta  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -175,9 +182,9 @@ def principal() -> Principal:
         scopes=frozenset({"openid", "profile", "email"}),
         username="officer",
         email="officer@pcsmcpl.net",
-        # The imagery routers require imagery.read / imagery.write, which the
-        # project lead holds; tests/test_security_hardening.py covers the rest.
-        claims={"realm_access": {"roles": ["ada-project-lead", "offline_access"]}},
+        # The imagery routers require imagery.read / write / run, which only the
+        # nodal officer holds (0012); tests/test_security_hardening.py covers the rest.
+        claims={"realm_access": {"roles": ["pcs-nodal-officer", "offline_access"]}},
     )
 
 
@@ -270,11 +277,15 @@ ROLE_SUBJECTS = {
 }
 
 
-def icms_principal(subject: str, *roles: str) -> Principal:
-    """A verified token's worth of officer, with realm roles attached."""
+def icms_principal(subject: str, *roles: str, azp: str | None = None) -> Principal:
+    """A verified token's worth of officer, with realm roles attached.
+
+    A Field Surveyor signs in through the field app (azp ada-field) unless the
+    test says otherwise; everyone else through the web portal.
+    """
     return Principal(
         subject=subject,
-        azp="ada-web",
+        azp=azp or ("ada-field" if SURVEYOR in roles else "ada-web"),
         scopes=frozenset({"openid", "profile", "email"}),
         username=f"officer-{subject[:8]}",
         email=f"{subject[:8]}@pcsmcpl.net",
@@ -306,6 +317,7 @@ def icms_client(engine, db, keycloak):
     """
     from app import deps
     from app.clients.keycloak import get_admin_client
+    from app.icms.actors import actor_directory
     from app.main import app
 
     state: dict = {"principal": icms_principal(SUPER_ADMIN_ID, SUPER_ADMIN)}
@@ -315,12 +327,13 @@ def icms_client(engine, db, keycloak):
     # Keycloak is a network dependency of six endpoints. Overriding it here means
     # the contract suites exercise them without a server, like every other route.
     app.dependency_overrides[get_admin_client] = lambda: keycloak
+    app.dependency_overrides[actor_directory] = lambda: keycloak
 
     with TestClient(app) as test_client:
-        def sign_in(*roles: str, subject: str | None = None):
+        def sign_in(*roles: str, subject: str | None = None, azp: str | None = None):
             if subject is None:
                 subject = ROLE_SUBJECTS.get(roles[0], OWNER) if roles else OWNER
-            state["principal"] = icms_principal(subject, *roles)
+            state["principal"] = icms_principal(subject, *roles, azp=azp)
             return test_client
 
         test_client.sign_in = sign_in  # type: ignore[attr-defined]
@@ -536,7 +549,9 @@ def _load_revision(name: str):
 
 
 # Revisions after 0003 that add permissions and grants, applied in order.
-_POLICY_ADDENDA = ("0008_imagery_permissions",)
+_POLICY_ADDENDA = (
+    "0008_imagery_permissions", "0010_atomic_permissions", "0012_change_detection_nodal_only",
+)
 
 
 def policy_seed():
@@ -549,7 +564,19 @@ def policy_seed():
         module.PERMISSIONS.extend(addendum.PERMISSIONS)
         for role, codes in addendum.GRANTS.items():
             module.GRANTS.setdefault(role, []).extend(codes)
+        for role, codes in getattr(addendum, "REVOKES", {}).items():
+            module.GRANTS[role] = [c for c in module.GRANTS.get(role, []) if c not in codes]
     return module
+
+
+@pytest.fixture(autouse=True)
+def actor_names_are_per_test():
+    """The name cache is process-wide; one test's realm must not name the next's rows."""
+    from app.icms.actors import reset_actor_cache
+
+    reset_actor_cache()
+    yield
+    reset_actor_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -560,6 +587,16 @@ def policy_cache_is_per_test():
     policy.reset()
     yield
     policy.reset()
+
+
+@pytest.fixture(autouse=True)
+def runtime_settings_cache_is_per_test():
+    """The runtime-setting cache is process-wide, like the policy snapshot."""
+    from app.icms import runtime_settings
+
+    runtime_settings.clear_cache()
+    yield
+    runtime_settings.clear_cache()
 
 
 @pytest.fixture
@@ -577,6 +614,7 @@ def policy_tables(db):
     from app.icms import policy
 
     seed = policy_seed()
+    codes = _load_revision("0010_atomic_permissions").TRANSITION_CODES
     db.add_all([
         PolicyRole(role_cd=cd, label=label, label_hi=label_hi, sort_order=order)
         for cd, label, label_hi, order in seed.ROLES
@@ -601,6 +639,7 @@ def policy_tables(db):
             requires=list(row["requires"]),
             note=row["note"],
             sort_order=row["sort_order"],
+            permission_cd=codes[row["action_cd"]],
         )
         db.add(transition)
         db.flush()
@@ -660,6 +699,11 @@ def upload_policies(db):
                      extensions=[".pdf"], max_bytes=25 * megabyte),
         UploadPolicy(kind="signature", mime_types=["image/png"], extensions=[".png"],
                      max_bytes=2 * megabyte, max_pixels=4_000_000),
+        # Migration 0009's row.
+        UploadPolicy(kind="complaint_photo",
+                     mime_types=["image/jpeg", "image/png", "image/webp"],
+                     extensions=[".jpg", ".jpeg", ".png", ".webp"],
+                     max_bytes=15 * megabyte, max_pixels=40_000_000),
     ]
     db.add_all(rows)
     db.commit()
@@ -681,8 +725,19 @@ def no_photo_minimum(monkeypatch):
     monkeypatch.setattr(settings, "icms_min_photos_per_round", 0)
 
 
+# The same reasoning for the answer rules R1-R6; test_icms_inspection_answers.py
+# turns them back on.
 @pytest.fixture
-def inspection_ready(db, zones, assignments, cases, upload_policies, no_photo_minimum):
+def no_answer_gate(monkeypatch):
+    """Stands the submit-time answer rules down for suites that are not about them."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "icms_require_inspection_answers", False)
+
+
+@pytest.fixture
+def inspection_ready(db, zones, assignments, cases, upload_policies, no_photo_minimum,
+                     no_answer_gate):
     """What the Batch 3 suites start from: the Field Surveyor can also see TAJ.
 
     Without it the surveyor sees CANT alone, and a test about a transition would
@@ -707,7 +762,8 @@ def _evidence_on_disk(case_ref: str, name: str) -> str:
 
 
 @pytest.fixture
-def inspection_world(db, zones, cases, upload_policies, no_photo_minimum):
+def inspection_world(db, zones, cases, upload_policies, no_photo_minimum,
+                     no_answer_gate):
     """One case in each state the loop moves from, all in TAJ, with round 1 of each.
 
     All three sit in TAJ on purpose: the role matrix has to be about the role,
@@ -774,6 +830,7 @@ def inspection_world(db, zones, cases, upload_policies, no_photo_minimum):
     db.add(Evidence(
         case_id=by_ref["CMP-2026-0006"].id, inspection_id=rounds[0].id, round_no=1,
         kind="photo", storage_path=_evidence_on_disk("CMP-2026-0006", "seeded.jpg"),
+        stamped_storage_key=_evidence_on_disk("CMP-2026-0006", "seeded.stamped.jpg"),
         original_filename="seeded.jpg", content_type="image/jpeg",
         byte_size=len(JPEG_BYTES), sha256="0" * 64,
         location=json.dumps({"type": "Point", "coordinates": [78.005, 27.005]}),
@@ -826,7 +883,7 @@ def contract_world(db, zones, assignments, cases, code_values, act_sections,
     closed after a notice is the ordinary history, and it gives the Batch 6
     reads a row without adding a twelfth case to every count in the suite.
     """
-    from ada_core.models_icms import AUTHORITY_WIDE, Case, NoticeSequence
+    from ada_core.models_icms import AUTHORITY_WIDE, Case, Evidence, NoticeSequence
 
     stages = [
         Case(case_ref="CMP-2026-0009", zone_id=zones["TAJ"].id, source="field",
@@ -845,11 +902,29 @@ def contract_world(db, zones, assignments, cases, code_values, act_sections,
              owner_name="Suresh Chand", property_address="19 Wazirpura Road",
              khasra_no="77/3", district="Agra", state="Uttar Pradesh",
              pin_code="282003", raised_at=_filed(24), created_by=NODAL_ID),
+        # `notice_issued`, the only status `close` moves from.
+        Case(case_ref="CMP-2026-0012", zone_id=zones["TAJ"].id, source="office",
+             status="notice_issued", stage_no=7, current_round=1,
+             complaint_type_cd="encroachment", complainant_name="Lata Mehra",
+             property_address="3 Rawatpara", raised_at=_filed(25), created_by=NODAL_ID),
     ]
     db.add_all(stages)
     db.commit()
     for row in stages:
         db.refresh(row)
+
+    # One complaint photograph on CMP-2026-0006, the case every role can read,
+    # so the case evidence reads have a row. It is evidence id 2.
+    db.add(Evidence(
+        case_id=inspection_loop["CMP-2026-0006"].id, inspection_id=None,
+        kind="complaint_photo",
+        storage_path=_evidence_on_disk("CMP-2026-0006", "complaint.jpg"),
+        original_filename="complaint.jpg", content_type="image/jpeg",
+        byte_size=len(JPEG_BYTES), sha256="1" * 64, capture_source="upload",
+        caption="Front elevation", uploaded_by=NODAL_ID,
+        idempotency_key="22222222-2222-4222-8222-222222222222",
+    ))
+    db.commit()
 
     world = {**inspection_loop, **{row.case_ref: row for row in stages}}
     db.add(NoticeSequence(series="CMP", scope_cd=AUTHORITY_WIDE, year=2026,

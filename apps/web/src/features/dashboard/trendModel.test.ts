@@ -5,6 +5,7 @@ import {
   DEFAULT_PERIOD,
   PERIODS,
   axisMax,
+  daysAgo,
   groupTotal,
   labelledIndexes,
   niceTicks,
@@ -131,4 +132,21 @@ test("series colours cycle through the five chart tokens and never a literal", (
   for (let index = 0; index < 12; index += 1) {
     assert.match(seriesVar(index), /^var\(--color-chart-[1-5]\)$/);
   }
+});
+
+test("days ago counts IST calendar days, not 24-hour spans", () => {
+  const now = Date.parse("2026-09-23T10:00:00+05:30");
+  assert.equal(daysAgo("2026-09-23T00:05:00+05:30", now), 0);
+  // 23:50 IST yesterday is one calendar day back though under 24 hours old.
+  assert.equal(daysAgo("2026-09-22T23:50:00+05:30", now), 1);
+  assert.equal(daysAgo("2026-09-15T10:00:00+05:30", new Date(now)), 8);
+  // 20:00 UTC on the 22nd is 01:30 IST on the 23rd: still today.
+  assert.equal(daysAgo("2026-09-22T20:00:00Z", now), 0);
+});
+
+test("days ago never goes negative and rejects garbage", () => {
+  const now = Date.parse("2026-09-23T10:00:00+05:30");
+  assert.equal(daysAgo("2026-09-30T10:00:00+05:30", now), 0);
+  assert.equal(daysAgo("not a date", now), null);
+  assert.equal(daysAgo("", now), null);
 });

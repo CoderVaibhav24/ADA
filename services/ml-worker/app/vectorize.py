@@ -88,8 +88,8 @@ def extract_polygons(
     g2 = t2.mean(axis=2)
 
     features: list[dict] = []
-    for geom_dict, value in rasterio.features.shapes(mask, mask=mask == 1,
-                                                     transform=transform):
+    for geom_dict, _value in rasterio.features.shapes(mask, mask=mask == 1,
+                                                       transform=transform):
         poly = shape(geom_dict)
         # Drop interior rings: a flagged structure is reported as one solid
         # outline, not a ring around a courtyard the segmenter happened to miss.

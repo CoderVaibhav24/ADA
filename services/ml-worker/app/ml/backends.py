@@ -103,7 +103,8 @@ class FeatureDiffBackend:
         # normalization downstream is measuring.
         dist = torch.zeros((x1.shape[0], 1, h, w), device=self.device)
         for weight, fa, fb in zip(self._SCALE_WEIGHTS,
-                                  self._features(x1), self._features(x2)):
+                                  self._features(x1), self._features(x2),
+                                  strict=False):
             d = 1.0 - F.cosine_similarity(fa, fb, dim=1, eps=1e-8).unsqueeze(1)
             dist += weight * F.interpolate(d.float(), size=(h, w),
                                            mode="bilinear", align_corners=False)
@@ -253,8 +254,9 @@ def _make_session(path: str, settings):
                f"initialise. {_PROVIDER_HELP.get(expected, '')} Inference will "
                f"be ~10x slower and will saturate "
                f"{opts.intra_op_num_threads} CPU threads.")
-        if settings.require_gpu:
-            raise RuntimeError(msg + " Set REQUIRE_GPU=false to allow CPU.")
+        if settings.require_gpu or gpu.pinned() not in (None, gpu.CPU):
+            raise RuntimeError(msg + " ML_DEVICE is pinned (or REQUIRE_GPU set); "
+                               "set ML_DEVICE=auto to allow the CPU.")
         log.error(msg)
     elif expected == "CUDAExecutionProvider":
         log.info("onnxruntime on CUDA, arena capped at %.1f GB",

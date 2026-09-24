@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { Icon, Skeleton, Text, layout, space } from '@/design-system';
 import { errorText } from '@/services/api/error-text';
+import { useT } from '@/services/i18n';
 
 import { runAction } from './actions';
 import { useBinding } from './bindings';
@@ -39,7 +40,7 @@ class NodeBoundary extends Component<BoundaryProps, BoundaryState> {
   }
 
   componentDidCatch(error: Error, _info: ErrorInfo): void {
-    console.warn(`[sdui] node ${this.props.label} failed to render (${error.name})`);
+    if (__DEV__) console.warn(`[sdui] node ${this.props.label} failed to render (${error.name})`);
   }
 
   // A new definition gets a fresh attempt; the same broken node stays hidden.
@@ -75,7 +76,7 @@ function NodeGate({ node, scope }: { readonly node: SduiNode; readonly scope: Sc
   if (entry === undefined) {
     if (!reportedTypes.has(node.type)) {
       reportedTypes.add(node.type);
-      console.warn(`[sdui] unknown component type "${node.type}" skipped`);
+      if (__DEV__) console.warn(`[sdui] unknown component type "${node.type}" skipped`);
     }
     return null;
   }
@@ -109,12 +110,13 @@ function BoundNode({
 
 // The server's own message, small, in place of the block that could not load.
 function BindingError({ error }: { readonly error: Error | null }) {
+  const t = useT();
   const detail = error === null ? null : errorText(error);
   return (
     <View style={[styles.grow, styles.error]} accessibilityRole="alert">
       <Icon name={detail?.offline ? 'offline' : 'alert'} size="sm" color="ink2" />
       <Text variant="caption" color="ink2" style={styles.errorText}>
-        {detail?.message ?? 'This block could not be shown.'}
+        {detail?.message ?? t('sdui.blockFailed')}
       </Text>
     </View>
   );

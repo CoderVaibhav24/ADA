@@ -1,38 +1,22 @@
 /**
- * The Create Complaint form's fields. Seven groups, no state of their own.
+ * The Create Complaint form's fields, grouped for its two tabs. No state of their own.
  *
- * Each takes the whole `ComplaintFormState` and hands back the next one, so the
- * screen above owns the single copy that the unsaved-changes guard and the
- * request body are both computed from. A field holding its own value would be a
- * second source of truth for the same complaint.
- *
- * What Figma 23:1343 draws and what `CaseCreate` stores are not the same set,
- * and the differences are deliberate:
- *
- *   - **"Date of Complaint" is not here.** `icms_case.raised_at` is set by the
- *     server inside the transaction that allocates the reference. A date box
- *     the officer can edit would be a field whose value is discarded without
- *     saying so — and a back-dated complaint is a different feature, with an
- *     audit question attached.
- *   - **"Evidence / Photographs" is not here.** Evidence hangs off an
- *     INSPECTION (`POST /inspections/{ref}/evidence`), and at the moment a case
- *     is raised no round exists to hang it on. An upload control whose Submit
- *     cannot write it would read as an upload that does nothing.
- *   - **"Village" is a code, not a dropdown.** The column is
- *     `village_lgd_code`, an LGD number, and no endpoint in this API publishes
- *     a village list to populate a picker from. A dropdown with nothing in it
- *     is worse than a labelled box that says what shape the code takes.
- *   - **"Parcel ID" is four real identifiers.** `parcelId.ts` records that the
- *     frame's `RJ-JPR-1007` is placeholder text from another state; the columns
- *     behind that slot are `ulpin`, `khasra_no`, `village_lgd_code` and
- *     `district_lgd_code`, and they are collected as themselves.
- *   - **the map is a coordinate pair, for now.** `location` is a real column
- *     and the point is what resolves the zone, so the field stays; the pin-drop
- *     map itself is not built here — see the panel's own note.
+ * Each group takes the whole `ComplaintFormState` and hands back the next one,
+ * so the screen owns the single copy the unsaved guard and the body read from.
+ * Where this departs from Figma 23:1343: "Village" is an LGD code box (no
+ * endpoint publishes a village list), "Parcel ID" is the khasra number, the
+ * surveyor's fields (owner, property type, floors, police station) are gone,
+ * and ULPIN and the district LGD code sit in a collapsed "More details" group.
  */
 
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -55,7 +39,8 @@ import {
   OTHER_TYPE_CODE,
   fieldId,
   hasLocation,
-  setSource,
+  isIsoDate,
+  localToday,
   type ComplaintField,
   type ComplaintFormErrors,
   type ComplaintFormState,
@@ -67,36 +52,23 @@ export type FieldGroupProps = {
   labels: ComplaintNewLabels;
   state: ComplaintFormState;
   onChange: (next: ComplaintFormState) => void;
-  /** True while the gate is closed or a submit is in flight. */
+  /** True while a submit is in flight. */
   disabled: boolean;
   /** Only after a submit is attempted: a form is not wrong before it is used. */
   errors: ComplaintFormErrors;
+  /** `requiredFields(state)`: the asterisks follow the validator, not the frame. */
+  requiredSet: ReadonlySet<ComplaintField>;
+  /** Filled from the officer's own account, so shown read-only. */
+  locked: ReadonlySet<ComplaintField>;
+  /** Still holding what the pin suggested; each shows "Suggested from location". */
+  fromLocation?: ReadonlySet<ComplaintField>;
+  /** Still holding what the land record under the pin suggested; "Suggested from land record". */
+  fromLandRecord?: ReadonlySet<ComplaintField>;
+  /** Parcel ID still holds a scheme plot's number from the land record, not a khasra. */
+  fromPlotNo?: boolean;
 };
 
-// One panel per group, matching the findings form's so the two read as one
-// product.
-function Panel({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="flex min-w-0 flex-col gap-4 rounded-lg border border-line-subtle bg-surface-1 p-4 sm:p-5">
-      <header className="max-w-prose min-w-0">
-        <h2 className="font-display text-lg font-semibold text-fg-strong">{title}</h2>
-        {hint && <p className="mt-1 text-sm text-fg-muted text-pretty">{hint}</p>}
-      </header>
-      {children}
-    </section>
-  );
-}
-
-// Errors are text, never a red border alone: a colour-blind officer and a
-// screen-reader user both have to be told which field, and why.
+// Errors are text, never a red border alone.
 function FieldError({ id, children }: { id: string; children: ReactNode }) {
   return (
     <p id={id} role="alert" className="text-xs text-status-danger-fg">
@@ -107,79 +79,116 @@ function FieldError({ id, children }: { id: string; children: ReactNode }) {
 
 function Hint({ id, children }: { id: string; children: ReactNode }) {
   return (
-    <p id={id} className="text-xs text-fg-muted text-pretty">
+    <p id={id} className="text-xs text-fg-faint text-pretty">
       {children}
     </p>
   );
 }
 
-// The asterisk is decorative; the word beside it is what a screen reader says,
-// so "required" never depends on seeing a red glyph.
+// The detection chip's hint style, reused for fields the pin filled.
+function SuggestedHint({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <span id={id} className="flex items-center gap-1 text-2xs text-fg-link">
+      <Icon name="feedback.info" className="size-3.5" />
+      {children}
+    </span>
+  );
+}
+
+// The asterisk is decorative; the sr-only word is what a screen reader says.
 function FieldLabel({
   htmlFor,
+  id,
   text,
   required,
   requiredWord,
 }: {
-  htmlFor: string;
+  htmlFor?: string;
+  id?: string;
   text: string;
   required: boolean;
   requiredWord: string;
 }) {
   return (
-    <Label htmlFor={htmlFor} className="text-xs text-fg-muted">
+    <Label htmlFor={htmlFor} id={id} className="gap-1 text-xs font-normal text-fg-muted">
       <span>{text}</span>
       {required && (
         <>
-          <span aria-hidden="true" className="ml-0.5 text-status-danger-fg">
+          <span aria-hidden="true" className="font-bold text-status-danger-fg">
             *
           </span>
-          <span className="sr-only"> {requiredWord}</span>
+          <span className="sr-only">{requiredWord}</span>
         </>
       )}
     </Label>
   );
 }
 
+// Which suggestion, if any, a field still holds; the land record wins, being the more specific source.
+function suggestionText(
+  { labels, fromLocation, fromLandRecord, fromPlotNo }: FieldGroupProps,
+  field: ComplaintField,
+): string | undefined {
+  if (field === "khasraNo" && fromPlotNo === true) return labels.location.fromLandRecordPlot;
+  if (fromLandRecord?.has(field) === true) return labels.location.fromLandRecord;
+  if (fromLocation?.has(field) === true) return labels.location.suggested;
+  return undefined;
+}
+
+function describedBy(...ids: (string | undefined)[]): string | undefined {
+  const joined = ids.filter((value) => value !== undefined).join(" ");
+  return joined === "" ? undefined : joined;
+}
+
 type TextFieldProps = FieldGroupProps & {
   field: ComplaintField;
   copy: FieldLabels;
-  required?: boolean;
   maxLength?: number;
   inputMode?: "text" | "numeric" | "decimal" | "tel" | "email";
   type?: string;
   autoComplete?: string;
+  readOnly?: boolean;
 };
 
 /** One labelled text control, with its hint, its error and their `aria` wiring. */
-function TextField({
-  labels,
-  state,
-  onChange,
-  disabled,
-  errors,
-  field,
-  copy,
-  required = false,
-  maxLength,
-  inputMode = "text",
-  type = "text",
-  autoComplete,
-}: TextFieldProps) {
+function TextField(props: TextFieldProps) {
+  const {
+    labels,
+    state,
+    onChange,
+    disabled,
+    errors,
+    requiredSet,
+    locked,
+    field,
+    copy,
+    maxLength,
+    inputMode = "text",
+    type = "text",
+    autoComplete,
+    readOnly = false,
+  } = props;
   const id = fieldId(field);
   const problem = errors[field];
+  const required = requiredSet.has(field);
   const hintId = copy.hint === undefined ? undefined : `${id}-hint`;
   const errorId = problem === undefined ? undefined : `${id}-error`;
-  const described = [hintId, errorId].filter((value) => value !== undefined).join(" ");
+  const fromAccount = locked.has(field);
+  const accountId = fromAccount ? `${id}-account` : undefined;
+  const suggestion = suggestionText(props, field);
+  const suggestedId = suggestion === undefined ? undefined : `${id}-suggested`;
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <FieldLabel
-        htmlFor={id}
-        text={copy.label}
-        required={required}
-        requiredWord={labels.required}
-      />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <FieldLabel
+          htmlFor={id}
+          text={copy.label}
+          required={required}
+          requiredWord={labels.required}
+        />
+        {suggestedId !== undefined && <SuggestedHint id={suggestedId}>{suggestion}</SuggestedHint>}
+      </div>
       <Input
         id={id}
         type={type}
@@ -188,14 +197,22 @@ function TextField({
         value={state[field]}
         maxLength={maxLength}
         disabled={disabled}
+        readOnly={readOnly || fromAccount}
         placeholder={copy.placeholder}
         aria-required={required || undefined}
         aria-invalid={problem !== undefined}
-        aria-describedby={described === "" ? undefined : described}
+        aria-describedby={describedBy(suggestedId, accountId, hintId, errorId)}
+        className={fromAccount ? "h-11 cursor-not-allowed dark:border-line dark:bg-surface-3 dark:text-fg-base" : "h-11"}
         onChange={(event) => {
           onChange({ ...state, [field]: event.target.value });
         }}
       />
+      {accountId !== undefined && (
+        <p id={accountId} className="flex items-center gap-1.5 text-xs text-fg-faint">
+          <Icon name="user.single" className="size-3.5" />
+          {labels.complainant.fromAccount}
+        </p>
+      )}
       {hintId !== undefined && <Hint id={hintId}>{copy.hint}</Hint>}
       {problem !== undefined && errorId !== undefined && (
         <FieldError id={errorId}>{labels.fieldError(problem)}</FieldError>
@@ -208,46 +225,53 @@ type SelectFieldProps = FieldGroupProps & {
   field: ComplaintField;
   copy: FieldLabels;
   options: readonly CodeOption[];
-  required?: boolean;
   loading?: boolean;
   unavailable?: boolean;
   /** Said out loud when the vocabulary answered empty or failed to load. */
   unavailableText?: string;
+  /** A warning under the picker that is not an error, e.g. a pin in someone else's zone. */
+  note?: string;
 };
 
 /** One labelled picker. An unavailable vocabulary is a sentence, not a blank list. */
-function SelectField({
-  labels,
-  state,
-  onChange,
-  disabled,
-  errors,
-  field,
-  copy,
-  options,
-  required = false,
-  loading = false,
-  unavailable = false,
-  unavailableText,
-}: SelectFieldProps) {
+function SelectField(props: SelectFieldProps) {
+  const {
+    labels,
+    state,
+    onChange,
+    disabled,
+    errors,
+    requiredSet,
+    field,
+    copy,
+    options,
+    loading = false,
+    unavailable = false,
+    unavailableText,
+    note,
+  } = props;
   const id = fieldId(field);
+  const suggestion = suggestionText(props, field);
+  const suggestedId = suggestion === undefined ? undefined : `${id}-suggested`;
+  const pinNoteId = note === undefined ? undefined : `${id}-pin-note`;
   const problem = errors[field];
+  const required = requiredSet.has(field);
   const hintId = copy.hint === undefined ? undefined : `${id}-hint`;
   const noteId = unavailable && unavailableText !== undefined ? `${id}-note` : undefined;
   const errorId = problem === undefined ? undefined : `${id}-error`;
-  const described = [hintId, noteId, errorId]
-    .filter((value) => value !== undefined)
-    .join(" ");
   const value = state[field];
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <FieldLabel
-        htmlFor={id}
-        text={copy.label}
-        required={required}
-        requiredWord={labels.required}
-      />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <FieldLabel
+          htmlFor={id}
+          text={copy.label}
+          required={required}
+          requiredWord={labels.required}
+        />
+        {suggestedId !== undefined && <SuggestedHint id={suggestedId}>{suggestion}</SuggestedHint>}
+      </div>
       <Select
         value={value === "" ? undefined : value}
         disabled={disabled || loading || unavailable}
@@ -257,10 +281,10 @@ function SelectField({
       >
         <SelectTrigger
           id={id}
-          className="w-full"
+          className="w-full data-[size=default]:h-11"
           aria-required={required || undefined}
           aria-invalid={problem !== undefined}
-          aria-describedby={described === "" ? undefined : described}
+          aria-describedby={describedBy(suggestedId, hintId, noteId, pinNoteId, errorId)}
         >
           <SelectValue placeholder={copy.placeholder} />
         </SelectTrigger>
@@ -278,6 +302,11 @@ function SelectField({
           {unavailableText}
         </p>
       )}
+      {pinNoteId !== undefined && (
+        <p id={pinNoteId} role="status" className="text-xs text-status-warning-fg text-pretty">
+          {note}
+        </p>
+      )}
       {problem !== undefined && errorId !== undefined && (
         <FieldError id={errorId}>{labels.fieldError(problem)}</FieldError>
       )}
@@ -285,8 +314,24 @@ function SelectField({
   );
 }
 
-// Two fields side by side above `sm`, stacked below it. The registers scroll
-// sideways at tablet; a form reflows instead, because a field is not a column.
+// A value the officer cannot change here, drawn in the same style as a field filled from the account.
+function LockedField({ id, label, value }: { id: string; label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <Label htmlFor={id} className="gap-1 text-xs font-normal text-fg-muted">
+        {label}
+      </Label>
+      <Input
+        id={id}
+        value={value}
+        readOnly
+        className="h-11 cursor-not-allowed dark:border-line dark:bg-surface-3 dark:text-fg-base"
+      />
+    </div>
+  );
+}
+
+// Two fields side by side above `sm`, stacked below it.
 function Row({ children }: { children: ReactNode }) {
   return <div className="grid gap-4 sm:grid-cols-2">{children}</div>;
 }
@@ -301,19 +346,12 @@ export type OriginProps = {
   status: "change" | "illegal" | null;
 };
 
-/**
- * Where this complaint came from, when it came from a detection.
- *
- * The reference, the area and the confidence are facts about the DETECTION and
- * have no column on `CaseCreate`; they are shown rather than stored so the
- * officer can see what they are filing about, and the reference is what ties
- * the two together in a conversation.
- */
+/** Where this complaint came from, when it came from a detection. Shown, not stored. */
 export function OriginPanel({ labels, detectionRef, area, confidence, status }: OriginProps) {
   return (
     <section
       aria-labelledby="complaint-origin-title"
-      className="flex min-w-0 flex-col gap-2 rounded-lg border border-accent-soft-border bg-accent-soft p-4 sm:p-5"
+      className="flex min-w-0 flex-col gap-2 rounded-md border border-accent-soft-border bg-accent-soft p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
         <Icon name="map.encroachment" className="size-4 text-fg-link" />
@@ -337,49 +375,91 @@ export function OriginPanel({ labels, detectionRef, area, confidence, status }: 
   );
 }
 
-/** Who reported it, and how it reached the authority. */
-export function SourceAndComplainant(props: FieldGroupProps) {
-  const { labels, state, onChange } = props;
-  const byDetection = state.source === "detection";
-  const sourceOptions = COMPLAINT_SOURCES.map((value) => ({
+export type DetectionOriginProps = {
+  labels: ComplaintNewLabels;
+  /** `forMode(state, "detection", officer)`: the officer and the polygon, as filed. */
+  state: ComplaintFormState;
+};
+
+/** The detection tab's locked block: the officer who raises it, the source and the polygon. */
+export function DetectionOriginFields({ labels, state }: DetectionOriginProps) {
+  return (
+    <section aria-labelledby="complaint-officer-title" className="flex min-w-0 flex-col gap-4">
+      <h2
+        id="complaint-officer-title"
+        className="font-display text-base font-semibold text-fg-strong"
+      >
+        {labels.officer.legend}
+      </h2>
+      <Row>
+        <LockedField
+          id={fieldId("complainantName")}
+          label={labels.officer.name}
+          value={state.complainantName}
+        />
+        <LockedField
+          id={fieldId("complainantEmail")}
+          label={labels.officer.email}
+          value={state.complainantEmail}
+        />
+      </Row>
+      <Row>
+        <LockedField
+          id={fieldId("source")}
+          label={labels.officer.source}
+          value={labels.source.option("detection")}
+        />
+        <LockedField
+          id={fieldId("detectionId")}
+          label={labels.officer.detectionId}
+          value={state.detectionId}
+        />
+      </Row>
+      <p className="flex items-center gap-1.5 text-xs text-fg-faint">
+        <Icon name="user.single" className="size-3.5" />
+        {labels.complainant.fromAccount}
+      </p>
+    </section>
+  );
+}
+
+export type ComplainantProps = FieldGroupProps & {
+  /** Copies the officer's own name and email in; absent when the profile has neither. */
+  onUseMine?: () => void;
+};
+
+// A manual complaint comes from somewhere other than a detection.
+const MANUAL_SOURCES = COMPLAINT_SOURCES.filter((value) => value !== "detection");
+
+/** The manual tab's complainant: typed, since a citizen may be the one complaining. */
+export function ComplainantSection(props: ComplainantProps) {
+  const { labels, state, onChange, disabled, onUseMine } = props;
+  const sourceOptions = MANUAL_SOURCES.map((value) => ({
     value,
     label: labels.source.option(value),
   }));
 
   return (
-    <Panel title={labels.complainant.legend} hint={labels.complainant.hint}>
-      <Row>
-        <SelectField
-          {...props}
-          field="source"
-          copy={{ label: labels.source.label, hint: labels.source.hint }}
-          options={sourceOptions}
-          required
-          // The pair is validated together server-side, so moving the source
-          // moves the polygon id with it rather than orphaning one.
-          onChange={(next) => {
-            onChange(setSource(state, next.source));
-          }}
-        />
-        {byDetection && (
-          // Read-only rather than absent: the officer can see which polygon the
-          // case will carry, and cannot accidentally retype it.
-          <TextField
-            {...props}
-            field="detectionId"
-            copy={{ label: labels.origin.title }}
-            inputMode="numeric"
-            disabled
-          />
+    <section aria-labelledby="complaint-complainant-title" className="flex min-w-0 flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2
+          id="complaint-complainant-title"
+          className="font-display text-base font-semibold text-fg-strong"
+        >
+          {labels.complainant.legend}
+        </h2>
+        {onUseMine !== undefined && (
+          <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={onUseMine}>
+            <Icon name="user.single" className="size-4" />
+            {labels.complainant.useMine}
+          </Button>
         )}
-      </Row>
-
+      </div>
       <Row>
         <TextField
           {...props}
           field="complainantName"
           copy={labels.complainant.name}
-          required={!byDetection}
           maxLength={MAX_NAME}
           autoComplete="name"
         />
@@ -387,77 +467,412 @@ export function SourceAndComplainant(props: FieldGroupProps) {
           {...props}
           field="complainantPhone"
           copy={labels.complainant.phone}
-          required={!byDetection}
           inputMode="tel"
           autoComplete="tel"
         />
       </Row>
-
-      <TextField
-        {...props}
-        field="complainantEmail"
-        copy={labels.complainant.email}
-        maxLength={MAX_EMAIL}
-        inputMode="email"
-        type="email"
-        autoComplete="email"
-      />
-    </Panel>
-  );
-}
-
-export type LocationProps = FieldGroupProps & { zones: Vocabulary };
-
-/**
- * The zone, the point, and the read-back of both.
- *
- * `zone_cd` OR `location` — the server refuses a body with neither, and
- * resolves the zone from the point with `ST_Contains` when there is one. A
- * point outside every active boundary comes back asking for a zone, so both are
- * collected and both are sent.
- */
-export function LocationPanel(props: LocationProps) {
-  const { labels, state, onChange, disabled, zones } = props;
-  const located = hasLocation(state);
-
-  return (
-    <Panel title={labels.location.legend} hint={labels.location.hint}>
-      <SelectField
-        {...props}
-        field="zoneCd"
-        copy={labels.location.zone}
-        options={zones.options}
-        loading={zones.loading}
-        unavailable={zones.unavailable}
-        unavailableText={labels.location.zoneUnavailable}
-      />
-
       <Row>
         <TextField
           {...props}
-          field="latitude"
-          copy={labels.location.latitude}
-          inputMode="decimal"
+          field="complainantEmail"
+          copy={labels.complainant.email}
+          maxLength={MAX_EMAIL}
+          inputMode="email"
+          type="email"
+          autoComplete="email"
+        />
+        <SelectField
+          {...props}
+          // The shared state may hold "detection" from a hand-off; this tab files as the office then.
+          state={{ ...state, source: state.source === "detection" ? "office" : state.source }}
+          field="source"
+          copy={{ label: labels.source.label, hint: labels.source.hint }}
+          options={sourceOptions}
+          onChange={(next) => {
+            onChange({ ...state, source: next.source });
+          }}
+        />
+      </Row>
+    </section>
+  );
+}
+
+// Village and Parcel ID, with the hint that they come from the land record.
+function ParcelRow(props: FieldGroupProps) {
+  const { labels } = props;
+  return (
+    <>
+      <Row>
+        <TextField
+          {...props}
+          field="villageLgdCode"
+          copy={labels.parcelRow.village}
+          inputMode="numeric"
+          maxLength={12}
         />
         <TextField
           {...props}
-          field="longitude"
-          copy={labels.location.longitude}
-          inputMode="decimal"
+          field="khasraNo"
+          copy={labels.parcelRow.parcelId}
+          maxLength={MAX_KHASRA}
         />
       </Row>
+      <p className="text-xs text-fg-faint text-pretty">{labels.parcelRow.hint}</p>
+    </>
+  );
+}
 
-      <div className="flex flex-col gap-2 rounded-md border border-line-subtle bg-surface-2 p-3">
-        <p className="font-display text-xs font-semibold text-fg-strong">
-          {labels.location.readoutTitle}
+export type TypeProps = FieldGroupProps & {
+  types: Vocabulary;
+  /** The selected chip is the detection's suggestion, untouched. */
+  suggested: boolean;
+};
+
+/** The complaint type as Figma's pill chips: single-select, arrow keys, one tab stop. */
+export function ComplaintTypeField(props: TypeProps) {
+  const { labels, state, onChange, disabled, errors, types, suggested } = props;
+  const isOther = state.complaintTypeCd === OTHER_TYPE_CODE;
+  const titleId = `${fieldId("complaintTypeCd")}-label`;
+  const hintId = `${fieldId("complaintTypeCd")}-hint`;
+  const suggestedId = `${fieldId("complaintTypeCd")}-suggested`;
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <FieldLabel
+          id={titleId}
+          text={labels.type.legend}
+          required={false}
+          requiredWord={labels.required}
+        />
+        {suggested && <SuggestedHint id={suggestedId}>{labels.type.suggested}</SuggestedHint>}
+      </div>
+
+      {types.loading && (
+        <p role="status" className="flex items-center gap-2 text-xs text-fg-muted">
+          <Icon name="feedback.loading" spin className="size-3.5" />
+          {labels.type.loading}
         </p>
-        {/* The coordinates in words as well as in the boxes, so "where is this"
-            is answerable without reading two inputs. */}
-        <p role="status" className="font-mono text-xs break-all text-fg-muted">
+      )}
+      {types.unavailable && (
+        <p role="status" className="max-w-prose text-xs text-status-warning-fg text-pretty">
+          {labels.type.unavailable}
+        </p>
+      )}
+
+      {types.options.length > 0 && (
+        <ToggleGroup
+          id={fieldId("complaintTypeCd")}
+          type="single"
+          spacing={2}
+          variant="outline"
+          className="flex w-full flex-wrap justify-start gap-x-6 gap-y-2"
+          aria-labelledby={titleId}
+          aria-describedby={describedBy(suggested ? suggestedId : undefined, hintId)}
+          value={state.complaintTypeCd}
+          disabled={disabled}
+          onValueChange={(next) => {
+            // Radix answers "" when the selected chip is pressed again, which clears it.
+            onChange({
+              ...state,
+              complaintTypeCd: next,
+              otherType: next === OTHER_TYPE_CODE ? state.otherType : "",
+            });
+          }}
+        >
+          {types.options.map((option) => (
+            <ToggleGroupItem
+              key={option.value}
+              value={option.value}
+              className="h-9 rounded-full border-line-subtle bg-surface-2 px-4 text-sm font-normal text-fg-base sm:min-w-52 data-[state=on]:border-line-accent data-[state=on]:bg-accent-soft data-[state=on]:text-fg-link"
+            >
+              {option.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      )}
+      <Hint id={hintId}>{labels.type.hint}</Hint>
+
+      {/* A server rule, surfaced as a field rather than as a 422. */}
+      {isOther && (
+        <TextField
+          {...props}
+          field="otherType"
+          copy={labels.type.other}
+          maxLength={MAX_SAFE_TEXT}
+        />
+      )}
+
+      {errors.complaintTypeCd !== undefined && (
+        <FieldError id={`${fieldId("complaintTypeCd")}-error`}>
+          {labels.fieldError(errors.complaintTypeCd)}
+        </FieldError>
+      )}
+    </div>
+  );
+}
+
+export type PropertyProps = FieldGroupProps & { mode: "detection" | "manual" };
+
+/** "Property Address": where the property stands. Address and landmark are the manual tab's only. */
+export function PropertySection(props: PropertyProps) {
+  const { labels, mode } = props;
+  const manual = mode === "manual";
+
+  return (
+    <section aria-labelledby="complaint-property-title" className="flex min-w-0 flex-col gap-4">
+      <h2
+        id="complaint-property-title"
+        className="pt-2 font-display text-base font-semibold text-fg-strong"
+      >
+        {labels.property.legend}
+      </h2>
+      {manual && (
+        <>
+          <TextField
+            {...props}
+            field="propertyAddress"
+            copy={labels.property.address}
+            maxLength={MAX_SAFE_TEXT}
+            autoComplete="street-address"
+          />
+          <Row>
+            <TextField
+              {...props}
+              field="landmark"
+              copy={labels.property.landmark}
+              maxLength={MAX_NAME}
+            />
+            <PinCodeField {...props} />
+          </Row>
+        </>
+      )}
+      <ParcelRow {...props} />
+      <Row>
+        <TextField
+          {...props}
+          field="district"
+          copy={labels.property.district}
+          maxLength={MAX_NAME}
+        />
+        <TextField {...props} field="state" copy={labels.property.state} maxLength={MAX_NAME} />
+      </Row>
+      {!manual && (
+        <Row>
+          <PinCodeField {...props} />
+        </Row>
+      )}
+    </section>
+  );
+}
+
+function PinCodeField(props: FieldGroupProps) {
+  return (
+    <TextField
+      {...props}
+      field="pinCode"
+      copy={props.labels.property.pinCode}
+      inputMode="numeric"
+      maxLength={6}
+      autoComplete="postal-code"
+    />
+  );
+}
+
+function fromIsoDate(value: string): Date | undefined {
+  if (!isIsoDate(value)) return undefined;
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+// Figma writes the date as 07-09-2026: day, month, year.
+function formatDayMonthYear(value: Date): string {
+  const [year, month, day] = localToday(value).split("-");
+  return `${day}-${month}-${year}`;
+}
+
+export type DescriptionProps = FieldGroupProps & { priorities: readonly CodeOption[] };
+
+/** Description, then Priority beside Date of Complaint. */
+export function DescriptionAndDate(props: DescriptionProps) {
+  const { labels, state, onChange, disabled, errors, priorities, requiredSet } = props;
+  const id = fieldId("detail");
+  const problem = errors.detail;
+  const detailRequired = requiredSet.has("detail");
+  const dateId = fieldId("complaintDate");
+  const dateProblem = errors.complaintDate;
+
+  return (
+    <>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <FieldLabel
+          htmlFor={id}
+          text={labels.detail.label}
+          required={detailRequired}
+          requiredWord={labels.required}
+        />
+        <Textarea
+          id={id}
+          rows={3}
+          value={state.detail}
+          maxLength={MAX_LONG_TEXT}
+          disabled={disabled}
+          placeholder={labels.detail.placeholder}
+          aria-required={detailRequired || undefined}
+          aria-invalid={problem !== undefined}
+          aria-describedby={describedBy(
+            `${id}-hint`,
+            problem === undefined ? undefined : `${id}-error`,
+          )}
+          onChange={(event) => {
+            onChange({ ...state, detail: event.target.value });
+          }}
+        />
+        <Hint id={`${id}-hint`}>{labels.detail.hint}</Hint>
+        {problem !== undefined && (
+          <FieldError id={`${id}-error`}>{labels.fieldError(problem)}</FieldError>
+        )}
+      </div>
+
+      <Row>
+        <SelectField {...props} field="priority" copy={labels.priority} options={priorities} />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <FieldLabel
+            id={`${dateId}-label`}
+            htmlFor={dateId}
+            text={labels.complaintDate.label}
+            required={false}
+            requiredWord={labels.required}
+          />
+          {/* The trigger is a Button, which cannot carry the hint itself, so the
+              group does — the pattern NoticeCreate uses for its due date. */}
+          <div
+            role="group"
+            aria-labelledby={`${dateId}-label`}
+            aria-describedby={describedBy(
+              `${dateId}-hint`,
+              dateProblem === undefined ? undefined : `${dateId}-error`,
+            )}
+          >
+            <DatePicker
+              id={dateId}
+              value={fromIsoDate(state.complaintDate)}
+              onChange={(value) => {
+                onChange({ ...state, complaintDate: value ? localToday(value) : "" });
+              }}
+              disabled={disabled}
+              placeholder={labels.complaintDate.placeholder}
+              format={formatDayMonthYear}
+              disabledDates={{ after: new Date() }}
+              invalid={dateProblem !== undefined}
+              className="h-11 w-full"
+            />
+          </div>
+          <Hint id={`${dateId}-hint`}>{labels.complaintDate.hint}</Hint>
+          {dateProblem !== undefined && (
+            <FieldError id={`${dateId}-error`}>{labels.fieldError(dateProblem)}</FieldError>
+          )}
+        </div>
+      </Row>
+    </>
+  );
+}
+
+export type MoreProps = FieldGroupProps & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+/** Fields the frame does not draw but the record keeps, collapsed by default. */
+export function MoreDetails(props: MoreProps) {
+  const { labels, open, onOpenChange } = props;
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className="rounded-md border border-line-subtle"
+    >
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-auto w-full justify-between gap-3 px-4 py-3 text-left"
+        >
+          <span className="flex min-w-0 flex-col items-start gap-0.5">
+            <span className="text-sm font-semibold text-fg-strong">{labels.more.title}</span>
+            <span className="text-xs font-normal whitespace-normal text-fg-faint">
+              {labels.more.hint}
+            </span>
+          </span>
+          <Icon
+            name={open ? "form.chevronUp" : "form.chevronDown"}
+            className="size-4 shrink-0"
+          />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-4 px-4 pt-1 pb-4">
+        <Row>
+          <TextField {...props} field="ulpin" copy={labels.parcel.ulpin} maxLength={14} />
+          <TextField
+            {...props}
+            field="districtLgdCode"
+            copy={labels.parcel.districtCode}
+            inputMode="numeric"
+            maxLength={12}
+          />
+        </Row>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+export type GeoProps = FieldGroupProps & {
+  zones: Vocabulary;
+  /** Set when the land record puts the pin in a zone the officer is not assigned. */
+  zoneNote?: string;
+};
+
+/**
+ * Figma's "Geographical Details" card: the read-back, the typed coordinates the
+ * map writes into, and the zone. `zone_cd` OR a point — the server resolves the
+ * zone from the point when there is one.
+ */
+export function GeographicalDetails(props: GeoProps) {
+  const { labels, state, onChange, disabled, zones, zoneNote } = props;
+  const located = hasLocation(state);
+
+  return (
+    <section
+      aria-labelledby="complaint-geo-title"
+      className="flex min-w-0 flex-col overflow-hidden rounded-md border border-line-subtle bg-surface-sunken"
+    >
+      <header className="border-b border-line-subtle px-3.5 py-2.5">
+        <h2 id="complaint-geo-title" className="font-display text-xs font-bold text-fg-strong">
+          {labels.location.readoutTitle}
+        </h2>
+      </header>
+      <div className="flex flex-col gap-3 p-3.5">
+        <p aria-live="polite" className="font-mono text-xs break-all text-fg-link">
           {located
             ? labels.location.readout(state.latitude, state.longitude)
             : labels.location.readoutEmpty}
         </p>
+        <p className="text-2xs text-fg-faint text-pretty">{labels.location.hint}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <TextField
+            {...props}
+            field="latitude"
+            copy={labels.location.latitude}
+            inputMode="decimal"
+          />
+          <TextField
+            {...props}
+            field="longitude"
+            copy={labels.location.longitude}
+            inputMode="decimal"
+          />
+        </div>
         <div>
           <Button
             type="button"
@@ -472,291 +887,17 @@ export function LocationPanel(props: LocationProps) {
             {labels.location.clear}
           </Button>
         </div>
-        <p className="max-w-prose text-2xs text-fg-faint text-pretty">
-          {labels.location.mapDeferred}
-        </p>
-      </div>
-    </Panel>
-  );
-}
-
-export type TypeProps = FieldGroupProps & { types: Vocabulary };
-
-/**
- * The complaint type, as Figma's chip row rather than a dropdown.
- *
- * A single-select `ToggleGroup`: the vocabulary is five or six values, all of
- * them visible at once is faster than a menu, and Radix gives it arrow-key
- * movement and one tab stop for free. `other` opens the free-text box beside
- * it, because the server refuses `other` without `other_type`.
- */
-export function ComplaintTypePanel(props: TypeProps) {
-  const { labels, state, onChange, disabled, errors, types } = props;
-  const isOther = state.complaintTypeCd === OTHER_TYPE_CODE;
-
-  return (
-    <Panel title={labels.type.legend} hint={labels.type.hint}>
-      {types.loading && (
-        <p role="status" className="flex items-center gap-2 text-xs text-fg-muted">
-          <Icon name="feedback.loading" spin className="size-3.5" />
-          {labels.type.loading}
-        </p>
-      )}
-
-      {types.unavailable && (
-        <p role="status" className="max-w-prose text-xs text-status-warning-fg text-pretty">
-          {labels.type.unavailable}
-        </p>
-      )}
-
-      {types.options.length > 0 && (
-        <ToggleGroup
-          type="single"
-          spacing={2}
-          variant="outline"
-          className="flex w-full flex-wrap justify-start"
-          aria-label={labels.type.legend}
-          value={state.complaintTypeCd}
-          disabled={disabled}
-          onValueChange={(next) => {
-            // Radix answers "" when the pressed chip was the selected one,
-            // which is how a type is cleared again.
-            onChange({ ...state, complaintTypeCd: next });
-          }}
-        >
-          {types.options.map((option) => (
-            <ToggleGroupItem key={option.value} value={option.value} className="rounded-full">
-              {option.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      )}
-
-      {state.complaintTypeCd !== "" && (
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            onClick={() => {
-              onChange({ ...state, complaintTypeCd: "", otherType: "" });
-            }}
-          >
-            <Icon name="action.clear" className="size-4" />
-            {labels.type.clear}
-          </Button>
-        </div>
-      )}
-
-      {/* A server rule, surfaced as a field rather than as a 422. */}
-      {isOther && (
-        <TextField
-          {...props}
-          field="otherType"
-          copy={labels.type.other}
-          required
-          maxLength={MAX_SAFE_TEXT}
-        />
-      )}
-
-      {errors.complaintTypeCd !== undefined && (
-        <FieldError id={`${fieldId("complaintTypeCd")}-error`}>
-          {labels.fieldError(errors.complaintTypeCd)}
-        </FieldError>
-      )}
-    </Panel>
-  );
-}
-
-export type PropertyProps = FieldGroupProps & { propertyTypes: Vocabulary };
-
-/** The owner, the building and where it stands. Figma's "Property Address". */
-export function PropertyPanel(props: PropertyProps) {
-  const { labels, propertyTypes } = props;
-
-  return (
-    <Panel title={labels.property.legend}>
-      <Row>
-        <TextField
-          {...props}
-          field="ownerName"
-          copy={labels.property.ownerName}
-          maxLength={MAX_NAME}
-        />
-        <TextField
-          {...props}
-          field="ownerPhone"
-          copy={labels.property.ownerPhone}
-          inputMode="tel"
-        />
-      </Row>
-
-      <Row>
         <SelectField
           {...props}
-          field="propertyTypeCd"
-          copy={labels.property.propertyType}
-          options={propertyTypes.options}
-          loading={propertyTypes.loading}
-          unavailable={propertyTypes.unavailable}
-          unavailableText={labels.type.unavailable}
+          field="zoneCd"
+          copy={labels.location.zone}
+          options={zones.options}
+          loading={zones.loading}
+          unavailable={zones.unavailable}
+          unavailableText={labels.location.zoneUnavailable}
+          note={zoneNote}
         />
-        <TextField
-          {...props}
-          field="floorCount"
-          copy={labels.property.floors}
-          inputMode="numeric"
-        />
-      </Row>
-
-      <TextField
-        {...props}
-        field="propertyAddress"
-        copy={labels.property.address}
-        maxLength={MAX_SAFE_TEXT}
-        autoComplete="street-address"
-      />
-
-      <Row>
-        <TextField
-          {...props}
-          field="landmark"
-          copy={labels.property.landmark}
-          required
-          maxLength={MAX_NAME}
-        />
-        <TextField
-          {...props}
-          field="policeStation"
-          copy={labels.property.policeStation}
-          maxLength={MAX_NAME}
-        />
-      </Row>
-
-      <Row>
-        <TextField
-          {...props}
-          field="district"
-          copy={labels.property.district}
-          required
-          maxLength={MAX_NAME}
-        />
-        <TextField
-          {...props}
-          field="pinCode"
-          copy={labels.property.pinCode}
-          inputMode="numeric"
-          maxLength={6}
-          autoComplete="postal-code"
-        />
-      </Row>
-
-      <Row>
-        <TextField
-          {...props}
-          field="state"
-          copy={labels.property.state}
-          required
-          maxLength={MAX_NAME}
-        />
-        <TextField
-          {...props}
-          field="country"
-          copy={labels.property.country}
-          required
-          maxLength={MAX_NAME}
-        />
-      </Row>
-    </Panel>
-  );
-}
-
-/**
- * The parcel's land-records identity — Figma's "Parcel ID" slot, as real columns.
- *
- * Every one is optional. `parcelId.ts` records why: a case filed by telephone
- * about "the building behind the bus stand" genuinely has no parcel, and a
- * create screen that refused one would make a whole class of real complaint
- * unfileable.
- */
-export function ParcelPanel(props: FieldGroupProps) {
-  const { labels } = props;
-
-  return (
-    <Panel title={labels.parcel.legend} hint={labels.parcel.hint}>
-      <Row>
-        <TextField {...props} field="ulpin" copy={labels.parcel.ulpin} maxLength={14} />
-        <TextField
-          {...props}
-          field="khasraNo"
-          copy={labels.parcel.khasra}
-          maxLength={MAX_KHASRA}
-        />
-      </Row>
-      <Row>
-        <TextField
-          {...props}
-          field="villageLgdCode"
-          copy={labels.parcel.village}
-          inputMode="numeric"
-          maxLength={12}
-        />
-        <TextField
-          {...props}
-          field="districtLgdCode"
-          copy={labels.parcel.districtCode}
-          inputMode="numeric"
-          maxLength={12}
-        />
-      </Row>
-    </Panel>
-  );
-}
-
-export type DescriptionProps = FieldGroupProps & { priorities: readonly CodeOption[] };
-
-/** What was seen, and how urgently it needs looking at. */
-export function DescriptionPanel(props: DescriptionProps) {
-  const { labels, state, onChange, disabled, errors, priorities } = props;
-  const id = fieldId("detail");
-  const problem = errors.detail;
-  const described = [`${id}-hint`, problem === undefined ? undefined : `${id}-error`]
-    .filter((value) => value !== undefined)
-    .join(" ");
-
-  return (
-    <Panel title={labels.detail.legend}>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <FieldLabel
-          htmlFor={id}
-          text={labels.detail.label}
-          required
-          requiredWord={labels.required}
-        />
-        <Textarea
-          id={id}
-          rows={4}
-          value={state.detail}
-          maxLength={MAX_LONG_TEXT}
-          disabled={disabled}
-          placeholder={labels.detail.placeholder}
-          aria-required
-          aria-invalid={problem !== undefined}
-          aria-describedby={described}
-          onChange={(event) => {
-            onChange({ ...state, detail: event.target.value });
-          }}
-        />
-        <Hint id={`${id}-hint`}>{labels.detail.hint}</Hint>
-        {problem !== undefined && (
-          <FieldError id={`${id}-error`}>{labels.fieldError(problem)}</FieldError>
-        )}
       </div>
-
-      <div className="sm:max-w-xs">
-        <SelectField {...props} field="priority" copy={labels.priority} options={priorities} />
-      </div>
-    </Panel>
+    </section>
   );
 }

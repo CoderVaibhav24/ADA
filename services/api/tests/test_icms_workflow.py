@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 from ada_core.models_icms import CASE_STATUSES
 
+from app.icms import policy
 from app.icms import workflow as wf
 
 SURVEYOR = [wf.Role.FIELD_SURVEYOR]
@@ -159,6 +160,9 @@ def test_the_wrong_role_is_refused(source, action, wrong_roles, payload):
     with pytest.raises(wf.RoleNotPermitted) as exc:
         wf.check(source, action, wrong_roles, is_assignee=True, payload=payload)
     assert exc.value.status_code == 403
+    assert exc.value.permission == policy.snapshot().transition(source, action).permission
+    assert exc.value.allowed, "the refusal names the roles that could have acted"
+    assert not set(exc.value.allowed) & {str(r) for r in wrong_roles}
 
 
 def test_every_transition_has_a_denial_test():
@@ -190,9 +194,13 @@ def test_every_transition_has_a_denial_test():
 def test_super_admin_can_move_nothing():
     """Administration is a different authority from enforcement. A role that can
     do everything is the role every incident is later traced to."""
+    held = policy.snapshot().permitted(ADMIN)
     for transition in wf.TRANSITIONS:
-        assert wf.Role.SUPER_ADMIN not in transition.roles
-    assert wf.allowed_actions(wf.Status.RAISED, ADMIN) == ()
+        assert transition.permission not in held
+    assert wf.AMEND_PERMISSION not in held
+    for status in wf.Status:
+        assert wf.allowed_actions(status, ADMIN, is_assignee=True) == ()
+    assert wf.allowed_actions(None, ADMIN) == ()
 
 
 # --- assignment ------------------------------------------------------------
@@ -327,6 +335,9 @@ def test_amendment_is_refused_to_every_other_role(wrong_roles):
     with pytest.raises(wf.RoleNotPermitted) as exc:
         wf.check_amendable(wf.Status.RAISED, wrong_roles)
     assert exc.value.status_code == 403
+    assert exc.value.permission == wf.AMEND_PERMISSION
+    assert exc.value.allowed == ("pcs-nodal-officer",)
+    assert "pcs-nodal-officer" in str(exc.value)
 
 
 @pytest.mark.parametrize("status", [wf.Status.CLOSED, wf.Status.REJECTED])

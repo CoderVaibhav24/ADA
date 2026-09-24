@@ -125,13 +125,14 @@ export default function NoticeCreate() {
   const [discarding, setDiscarding] = useState(false);
 
   const gate = useNoticeGate();
-  const acts = useActOptions(!gate.loading, language);
-  const sections = useSectionOptions(state.actCd, !gate.loading, language);
-  const cases = useConfirmedCases(gate.canReadCases);
+  const mayOpen = !gate.loading && gate.canIssue;
+  const acts = useActOptions(mayOpen, language);
+  const sections = useSectionOptions(state.actCd, mayOpen, language);
+  const cases = useConfirmedCases(mayOpen && gate.canReadCases);
 
   // The case is re-read whenever the picker moves: `allowed_actions` is a
   // property of the pair (this officer, this case), not of the officer.
-  const caseQuery = useCaseForNotice(state.caseRef, state.caseRef !== "");
+  const caseQuery = useCaseForNotice(state.caseRef, mayOpen && state.caseRef !== "");
   const mayIssue = allowsIssueNotice(caseQuery.data);
 
   const create = useCreateNotice(state.caseRef);
@@ -203,15 +204,17 @@ export default function NoticeCreate() {
     );
   }
 
-  const refusal = create.error instanceof IcmsApiError ? create.error : null;
-  const caseError = caseQuery.error instanceof IcmsApiError ? caseQuery.error : null;
-  const caseMissing = caseError?.status === 404;
-  const caseStatus = toCaseStatus(caseQuery.data?.status ?? null);
-
-  return (
-    <div className="flex w-full min-w-0 flex-col gap-6">
-      {/* ---- Back ------------------------------------------------------ */}
-      <div className="flex justify-end">
+  // The per-case `issue_notice` gate below still applies once this one passes.
+  if (!gate.canIssue) {
+    return (
+      <div className="flex w-full min-w-0 flex-col gap-6">
+        <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+            <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
+              {labels.title}
+            </h1>
+  
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -221,13 +224,36 @@ export default function NoticeCreate() {
           <Icon name="action.back" className="size-4" />
           {labels.back}
         </Button>
+      </header>
+        <Alert variant="destructive" role="alert">
+          <Icon name="feedback.error" className="size-4" />
+          <AlertTitle>{labels.gate.noIssueTitle}</AlertTitle>
+          <AlertDescription>
+            <p className="text-pretty">{labels.gate.noIssueBody}</p>
+          </AlertDescription>
+        </Alert>
+        <div>
+          <Button variant="outline" size="sm" onClick={leave}>
+            <Icon name="action.back" className="size-4" />
+            {labels.back}
+          </Button>
+        </div>
       </div>
+    );
+  }
 
+  const refusal = create.error instanceof IcmsApiError ? create.error : null;
+  const caseError = caseQuery.error instanceof IcmsApiError ? caseQuery.error : null;
+  const caseMissing = caseError?.status === 404;
+  const caseStatus = toCaseStatus(caseQuery.data?.status ?? null);
+
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-6">
       <header className="min-w-0">
         <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
           {labels.title}
         </h1>
-        <p className="mt-1 text-sm text-fg-muted">{labels.subtitle}</p>
+        <p className="mt-1 text-sm text-fg-canvas-muted">{labels.subtitle}</p>
       </header>
 
       <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">

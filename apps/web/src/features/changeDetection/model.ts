@@ -80,7 +80,8 @@ export function polygonCentre(polygon: Polygon): [number, number] | null {
 
 /* --------------------------------------------------------------- the rows */
 
-export type ChangeType = "new_construction" | "extension" | "demolition" | "unchanged";
+export type ChangeType =
+  "new_construction" | "extension" | "demolition" | "unchanged";
 
 const CHANGE_TYPES: readonly string[] = [
   "new_construction",
@@ -113,13 +114,25 @@ export type DetectionRow = {
   redZoneOverlapPct: number;
   brightnessDelta: number;
   reviewedBy: string | null;
+  reviewedByName: string | null;
   reviewedAt: string | null;
+  /** The complaint already raised from this detection, if any. `status` is the raw icms_case.status. */
+  linkedCase: { ref: string; status: string } | null;
   centre: [number, number] | null;
   bounds: BBox | null;
 };
 
 function reviewStatusOf(value: unknown): ReviewStatus {
   return value === "confirmed" || value === "rejected" ? value : "pending";
+}
+
+function linkedCaseOf(
+  ref: unknown,
+  status: unknown,
+): DetectionRow["linkedCase"] {
+  return typeof ref === "string" && ref !== "" && typeof status === "string"
+    ? { ref, status }
+    : null;
 }
 
 function numberOf(value: unknown): number {
@@ -140,7 +153,9 @@ export function toDetectionRows(
     // map — three of the four things this screen does with one. Skip it rather
     // than render a row whose every action is broken.
     if (feature.id === undefined || feature.id === null) continue;
-    const props = feature.properties as ChangeFeatureProps & { change_type?: unknown };
+    const props = feature.properties as ChangeFeatureProps & {
+      change_type?: unknown;
+    };
     const confidence = numberOf(props.confidence);
 
     rows.push({
@@ -157,8 +172,15 @@ export function toDetectionRows(
       reviewStatus: reviewStatusOf(props.review_status),
       redZoneOverlapPct: numberOf(props.red_zone_overlap_pct),
       brightnessDelta: numberOf(props.brightness_delta),
-      reviewedBy: typeof props.reviewed_by === "string" ? props.reviewed_by : null,
-      reviewedAt: typeof props.reviewed_at === "string" ? props.reviewed_at : null,
+      reviewedBy:
+        typeof props.reviewed_by === "string" ? props.reviewed_by : null,
+      reviewedByName:
+        typeof props.reviewed_by_name === "string"
+          ? props.reviewed_by_name
+          : null,
+      reviewedAt:
+        typeof props.reviewed_at === "string" ? props.reviewed_at : null,
+      linkedCase: linkedCaseOf(props.case_ref, props.case_status),
       centre: polygonCentre(feature.geometry),
       bounds: polygonBounds(feature.geometry),
     });
@@ -313,23 +335,39 @@ export type LayerNode = {
 };
 
 export const LAYER_TREE: readonly LayerNode[] = [
-  { id: "detections", group: "detections", swatch: "#ff4438", hasOpacity: true },
+  {
+    id: "detections",
+    group: "detections",
+    swatch: "#ff4438",
+    hasOpacity: true,
+  },
   { id: "heatMask", group: "detections", swatch: "#ffb020", hasOpacity: true },
   { id: "redZones", group: "zones", swatch: "#ff2d55", hasOpacity: false },
   // The two imagery rows toggle but do not carry their own opacity slider: the
   // opacity of one flight against the other IS the comparison control, and the
   // frame already draws it as "Overlay Opacity" across the foot of the map.
   // Two sliders writing one value is how they end up disagreeing.
-  { id: "currentCycle", group: "imagery", swatch: "#4a9a58", hasOpacity: false },
-  { id: "referenceCycle", group: "imagery", swatch: "#00aacc", hasOpacity: false },
-  { id: "baseMap", group: "base", swatch: null, hasOpacity: false },
+  {
+    id: "currentCycle",
+    group: "imagery",
+    swatch: "#4a9a58",
+    hasOpacity: false,
+  },
+  {
+    id: "referenceCycle",
+    group: "imagery",
+    swatch: "#00aacc",
+    hasOpacity: false,
+  },
+  // Base map row parked on 2026-09-24 at the user's request; the map still draws it.
+  // { id: "baseMap", group: "base", swatch: null, hasOpacity: true },
 ];
 
 export const LAYER_GROUP_ORDER: readonly LayerGroupId[] = [
   "detections",
   "zones",
   "imagery",
-  "base",
+  // "base",
 ];
 
 /* --------------------------------------------------------- comparison mode */
@@ -357,9 +395,160 @@ export type CycleOpacities = { reference: number; current: number };
  * the officer never sees the base map through a half-transparent sandwich of
  * both.
  */
-export function cycleOpacities(mode: CompareMode, blend: number): CycleOpacities {
+export function cycleOpacities(
+  mode: CompareMode,
+  blend: number,
+): CycleOpacities {
   const clamped = Math.max(0, Math.min(1, blend));
   if (mode === "reference") return { reference: 1, current: 0 };
   if (mode === "current") return { reference: 0, current: 1 };
   return { reference: 1, current: clamped };
+}
+
+/* ---------------------------------------------------------------- flights */
+
+export type FlightChip =
+  | "uploading"
+  | "queued"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "rejected"
+  | "retrying"
+  | "archived"
+  | "restoring";
+
+// A processing raster that has reported no progress is still waiting in the worker's queue.
+export function flightChip(
+  status: Raster["status"],
+  progress: number,
+): FlightChip {
+  switch (status) {
+    case "ready":
+      return "ready";
+    case "failed":
+    case "expired":
+      return "failed";
+    case "uploading":
+      return "uploading";
+    case "rejected":
+      return "rejected";
+    case "failed_retryable":
+      return "retrying";
+    case "cold":
+      return "archived";
+    case "restoring":
+      return "restoring";
+    case "processing":
+      return Number.isFinite(progress) && progress > 0
+        ? "processing"
+        : "queued";
+  }
+}
+
+// Chunks the server holds as a whole percent; an unknown count reads as 0, never NaN.
+export function receivedPercent(
+  received: number | null | undefined,
+  count: number | null | undefined,
+): number {
+  if (!received || !count || count <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.floor((received / count) * 100)));
+}
+
+// Whole hours until a restore lands; zero, negative or unknown reads as null (no ETA shown).
+export function restoreHours(eta: number | null | undefined): number | null {
+  if (eta === null || eta === undefined || !(eta > 0)) return null;
+  return Math.max(1, Math.ceil(eta));
+}
+
+// Whole minutes for a full grid when no pair is selected; null when the runtime gives no figure.
+export function fullGridMinutes(
+  seconds: number | null | undefined,
+): number | null {
+  if (!seconds || seconds <= 0) return null;
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+const RETRYABLE_PREFIX = "retryable:";
+
+// ml-worker marks a failure it will requeue with "retryable:"; that run is retrying, not failed.
+export function isRetryingRun(
+  analysis: Pick<Analysis, "status" | "error">,
+): boolean {
+  return (
+    analysis.status === "failed" &&
+    typeof analysis.error === "string" &&
+    analysis.error.trimStart().toLowerCase().startsWith(RETRYABLE_PREFIX)
+  );
+}
+
+// The error without its "retryable:" marker, for display.
+export function runErrorText(error: string): string {
+  const trimmed = error.trimStart();
+  return trimmed.toLowerCase().startsWith(RETRYABLE_PREFIX)
+    ? trimmed.slice(RETRYABLE_PREFIX.length).trim()
+    : error;
+}
+
+const M_PER_DEG = 111_320;
+
+// Longest side in pixels of the pair's overlap at the coarser resolution; null when they do not overlap.
+export function pairLongestSidePx(
+  a: {
+    bounds: [number, number, number, number] | null;
+    resolutionM: number | null;
+  },
+  b: {
+    bounds: [number, number, number, number] | null;
+    resolutionM: number | null;
+  },
+): number | null {
+  if (!a.bounds || !b.bounds) return null;
+  const w = Math.max(a.bounds[0], b.bounds[0]);
+  const s = Math.max(a.bounds[1], b.bounds[1]);
+  const e = Math.min(a.bounds[2], b.bounds[2]);
+  const n = Math.min(a.bounds[3], b.bounds[3]);
+  if (e <= w || n <= s) return null;
+  const res = Math.max(a.resolutionM ?? 0, b.resolutionM ?? 0);
+  if (!(res > 0)) return null;
+  const midLat = ((s + n) / 2) * (Math.PI / 180);
+  const wide = ((e - w) * M_PER_DEG * Math.cos(midLat)) / res;
+  const tall = ((n - s) * M_PER_DEG) / res;
+  return Math.max(wide, tall);
+}
+
+// ETA = eta_s_per_mpx * min(longest side, grid_cap_px)^2 / 1e6, in whole minutes (at least one); null if unknown.
+export function etaMinutes(
+  secondsPerMpx: number | null | undefined,
+  longestSidePx: number | null,
+  gridCapPx: number,
+): number | null {
+  if (
+    !secondsPerMpx ||
+    secondsPerMpx <= 0 ||
+    longestSidePx === null ||
+    !(longestSidePx > 0)
+  )
+    return null;
+  const side = Math.min(longestSidePx, gridCapPx);
+  return Math.max(1, Math.round((secondsPerMpx * side * side) / 1e6 / 60));
+}
+
+// 0..1 to a whole clamped percentage; a NaN progress must not render "NaN%".
+export function progressPercent(progress: number): number {
+  if (!Number.isFinite(progress)) return 0;
+  return Math.max(0, Math.min(100, Math.round(progress * 100)));
+}
+
+// Split a worker stage "<human stage> — <backend detail>" at its first em-dash separator.
+export function splitStage(stage: string): {
+  title: string;
+  detail: string | null;
+} {
+  const at = stage.indexOf(" — ");
+  if (at < 0) return { title: stage.trim(), detail: null };
+  const title = stage.slice(0, at).trim();
+  const detail = stage.slice(at + 3).trim();
+  if (title === "") return { title: detail, detail: null };
+  return { title, detail: detail === "" ? null : detail };
 }

@@ -137,16 +137,16 @@ class TestARacingRunCannotUnfinishAJob:
 
         from app import jobs
 
-        real = jobs.require_file
+        real = jobs._epoch_source
 
-        def require_file(path, label):
+        def epoch_source(raster):
             with SessionLocal() as other:
                 other.query(models.AnalysisJob).filter(
                     models.AnalysisJob.id == job_id).update({"status": "done"})
                 other.commit()
-            return real(path, label)
+            return real(raster)
 
-        monkeypatch.setattr(jobs, "require_file", require_file)
+        monkeypatch.setattr(jobs, "_epoch_source", epoch_source)
 
     def test_the_run_stops_and_the_job_stays_done(self, db, analysis, pipeline, monkeypatch):
         from app import jobs

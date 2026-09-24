@@ -33,7 +33,7 @@ export type CheckInRecord = {
   readonly idempotencyKey: string;
   readonly state: CheckInState;
   readonly confirmed: CheckInOut | null;
-  readonly error: { readonly code: string; readonly message: string } | null;
+  readonly error: { readonly code: string; readonly message: string; readonly field?: string | null } | null;
   readonly recordedAt: string;
 };
 
@@ -95,6 +95,11 @@ function forRound(record: CheckInRecord | null, inspectionRef: string | null): C
 // The check-in for this round on this device, or null.
 export function readCheckIn(caseRef: string, inspectionRef: string | null): CheckInRecord | null {
   return forRound(readJson(draftStore, recordKey(caseRef), isRecord), inspectionRef);
+}
+
+// True once arrival is recorded or held for the round; the steps after check-in require it.
+export function hasArrived(record: CheckInRecord | null): boolean {
+  return record?.state === 'confirmed' || record?.state === 'held';
 }
 
 // The stored record as its raw string: stable by value, so React can subscribe to it.
@@ -172,7 +177,7 @@ export async function sendHeldCheckIn(caseRef: string, inspectionRef: string): P
     if (error instanceof AdaApiError) {
       // A key that belongs to another round can never succeed here; the next tap mints a new one.
       if (error.code === 'idempotency_key_reused') releaseIdempotencyKey(keyScope(caseRef));
-      return write({ ...bound, state: 'refused', error: { code: error.code, message: error.message } });
+      return write({ ...bound, state: 'refused', error: { code: error.code, message: error.message, field: error.field } });
     }
     throw error;
   }
@@ -204,4 +209,10 @@ export function adoptServerCheckIn(caseRef: string, confirmed: CheckInOut): Chec
 export function clearCheckIn(caseRef: string): void {
   draftStore.remove(recordKey(caseRef));
   for (const listener of listeners) listener();
+}
+
+// Forgets a check-in for a round the office has taken back, and the key held for it.
+export function discardCheckIn(caseRef: string): void {
+  releaseIdempotencyKey(keyScope(caseRef));
+  clearCheckIn(caseRef);
 }

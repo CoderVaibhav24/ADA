@@ -2,6 +2,7 @@ import { useQuery, type Query, type QueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import { apiRequest } from '@/services/api/client';
+import { t } from '@/services/i18n';
 
 import { resolvePath, resolveQuery } from './paths';
 import type { Scope } from './template';
@@ -47,8 +48,6 @@ export function refreshBindings(client: QueryClient): Promise<void> {
   return client.invalidateQueries({ predicate: isBindingQuery });
 }
 
-const disallowed = new Error('This block asks for data the app will not fetch.');
-
 export function useBinding(binding: SduiBinding | null, scope: Scope): BindingState {
   const path = binding === null ? null : resolvePath(binding.path, scope, 'data');
   const query = binding === null ? {} : resolveQuery(binding.query, scope);
@@ -67,7 +66,7 @@ export function useBinding(binding: SduiBinding | null, scope: Scope): BindingSt
   });
 
   if (binding === null) return { status: 'idle' };
-  if (path === null) return { status: 'error', error: disallowed };
+  if (path === null) return { status: 'error', error: new Error(t('sdui.blockNotAllowed')) };
   if (result.data !== undefined) return { status: 'ready', value: result.data };
   if (result.error !== null) return { status: 'error', error: result.error };
   return { status: 'loading' };

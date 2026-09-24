@@ -28,16 +28,19 @@ export const ROUTES = {
 
   // A path UNDER /administration rather than beside it, because officers and
   // policy are one administrative area — but its own route and its own rail
-  // entry, because the two are gated on different permissions (`user.read` and
-  // `policy.read`) and one entry would hide whichever screen the officer is not
+  // entry, because the two are gated on different permissions (`officers.access`
+  // and `administration.access`) and one entry would hide whichever screen the officer is not
   // gated for. `activeNavId` resolves the overlap on longest prefix.
   administrationUsers: "/administration/users",
 } as const;
 
-export const HOME_PATH: string = ROUTES.complaints;
+/** The preferred landing screen. `homePathFor` in nav.ts falls back when it is not permitted. */
+export const HOME_PATH: string = ROUTES.dashboard;
+/** Resolves through `HomeRedirect` to the first screen this officer may open. */
+export const ROOT_PATH = "/";
 export function safeReturnTo(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return HOME_PATH;
-  if (value === LOGIN_PATH || value.startsWith(`${LOGIN_PATH}?`)) return HOME_PATH;
-  if (value.startsWith("/auth/")) return HOME_PATH;
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return ROOT_PATH;
+  if (value === LOGIN_PATH || value.startsWith(`${LOGIN_PATH}?`)) return ROOT_PATH;
+  if (value.startsWith("/auth/")) return ROOT_PATH;
   return value;
 }

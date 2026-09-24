@@ -2,6 +2,7 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
 import { apiRequest } from '@/services/api/client';
 import { AdaApiError } from '@/services/api/errors';
+import { t } from '@/services/i18n';
 
 import { forgetCachedScreen, readCachedScreen, writeCachedScreen } from './cache';
 import { SDUI_RUNTIME, SUPPORTED_SCHEMA_VERSIONS } from './contract';
@@ -39,9 +40,9 @@ export async function fetchScreen(screenId: string, signal?: AbortSignal): Promi
       throw new Error('The server said this screen is unchanged, but no copy is saved.');
     }
     const envelope = asEnvelope(served);
-    if (envelope === null) throw new Error('The server sent a screen this app cannot read.');
+    if (envelope === null) throw new Error(t('sdui.unreadableScreen'));
     if (!SUPPORTED_SCHEMA_VERSIONS.includes(envelope.schema_version)) {
-      throw new Error('This screen needs a newer version of the app.');
+      throw new Error(t('sdui.needsNewerApp'));
     }
     writeCachedScreen(envelope);
     return envelope;

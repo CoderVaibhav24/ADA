@@ -7,6 +7,8 @@
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { scriptOf, useLocale, useT } from '@/services/i18n';
+
 import {
   colors,
   control,
@@ -43,7 +45,7 @@ export function Select<T extends string = string>({
   options,
   value,
   onChange,
-  placeholder = 'Select',
+  placeholder: placeholderProp,
   sheetTitle,
   invalid = false,
   disabled = false,
@@ -52,6 +54,9 @@ export function Select<T extends string = string>({
   style,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
+  const t = useT();
+  const locale = useLocale();
+  const placeholder = placeholderProp ?? t('common.select');
   const selected = options.find((option) => option.value === value);
   return (
     <View style={style}>
@@ -74,7 +79,7 @@ export function Select<T extends string = string>({
       >
         <Text
           numberOfLines={1}
-          style={[textStyle('body', selected ? 'ink0' : 'ink3'), styles.triggerLabel]}
+          style={[textStyle('body', selected ? 'ink0' : 'ink3', scriptOf(selected?.label ?? placeholder, locale)), styles.triggerLabel]}
         >
           {selected?.label ?? placeholder}
         </Text>
@@ -87,9 +92,9 @@ export function Select<T extends string = string>({
         animationType="fade"
         onRequestClose={() => setOpen(false)}
       >
-        <Pressable style={styles.scrim} onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel="Close" />
+        <Pressable style={styles.scrim} onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel={t('common.close')} />
         <View style={styles.sheet}>
-          <Text style={[textStyle('label', 'ink2'), styles.sheetTitle]}>
+          <Text style={[textStyle('label', 'ink2', scriptOf(sheetTitle ?? accessibilityLabel, locale)), styles.sheetTitle]}>
             {sheetTitle ?? accessibilityLabel}
           </Text>
           <ScrollView bounces={false}>
@@ -114,7 +119,7 @@ export function Select<T extends string = string>({
                     },
                   ]}
                 >
-                  <Text style={textStyle('body', isSelected ? 'brand' : 'ink1')}>{option.label}</Text>
+                  <Text style={textStyle('body', isSelected ? 'brand' : 'ink1', scriptOf(option.label, locale))}>{option.label}</Text>
                 </Pressable>
               );
             })}

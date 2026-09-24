@@ -39,7 +39,6 @@ const NAV_IDS: readonly NavId[] = [
   "reports",
   "administration",
   "users",
-  "logout",
 ];
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -80,6 +79,7 @@ export type ShellLabels = {
   notificationsLabel: (unread: number) => string;
   copyright: (year: number) => string;
   operatedBy: string;
+  navLoading: string;
 };
 
 export function useShellLabels(): ShellLabels {
@@ -107,6 +107,21 @@ export function useShellLabels(): ShellLabels {
       // The year is NOT run through the number formatter: 2,026 is not a year.
       copyright: (year: number) => t("shell.copyright", { year: String(year) }),
       operatedBy: t("shell.operatedBy"),
+      navLoading: t("shell.navLoading"),
+    }),
+    [t],
+  );
+}
+
+// The screen-level permission guard's splash and refusal card.
+export function useRouteGateLabels() {
+  const { t } = useI18n();
+  return useMemo(
+    () => ({
+      checking: t("routeGate.checking"),
+      kicker: t("routeGate.kicker"),
+      title: t("routeGate.title"),
+      body: (code: string) => t("routeGate.body", { code }),
     }),
     [t],
   );
@@ -834,6 +849,15 @@ export type PolicyLabels = {
   source: (source: string | null) => string;
   advisory: string;
   tabs: { permissions: string; roleGrants: string; transitions: string };
+  /** The three permission bands (see features/policy/bands.ts), plus the filter's "All". */
+  bands: {
+    all: string;
+    screens: string;
+    workflow: string;
+    data: string;
+    filterLabel: string;
+    chip: (band: string, n: number) => string;
+  };
   gate: { checking: string; deniedTitle: string; deniedBody: string };
   propagation: {
     title: (revision: number | null) => string;
@@ -881,6 +905,24 @@ export type PolicyLabels = {
     emptyBody: string;
   };
 
+  createRole: {
+    newRole: string;
+    title: string;
+    description: string;
+    label: string;
+    labelHi: string;
+    code: string;
+    codeHint: string;
+    copyFrom: string;
+    copyNone: string;
+    create: string;
+    creating: string;
+    cancel: string;
+    failedTitle: string;
+    labelRequired: string;
+    codeInvalid: string;
+  };
+
   grants: {
     title: string;
     subtitle: string;
@@ -890,6 +932,8 @@ export type PolicyLabels = {
     notGranted: string;
     cell: (permission: string, role: string) => string;
     roleTotal: (n: number, total: number) => string;
+    sharedScreen: string;
+    screenClosedHint: string;
     changedBadge: string;
     fullSetNote: string;
     noChanges: string;
@@ -910,6 +954,8 @@ export type PolicyLabels = {
     openRole: (role: string) => string;
     closeRole: string;
     narrowHint: string;
+    bandTotal: (band: string, n: number, total: number) => string;
+    scrollHint: string;
   };
 
   transitions: {
@@ -921,7 +967,7 @@ export type PolicyLabels = {
       action: string;
       from: string;
       to: string;
-      roles: string;
+      permission: string;
       requires: string;
       rules: string;
       edit: string;
@@ -933,7 +979,8 @@ export type PolicyLabels = {
     opensRound: string;
     active: string;
     inactive: string;
-    noRoles: string;
+    noHolders: string;
+    holdersLabel: string;
     noRequires: string;
     noteLabel: string;
     noNote: string;
@@ -941,7 +988,11 @@ export type PolicyLabels = {
     editLabel: (action: string) => string;
     fixedTitle: string;
     fixedBody: string;
-    rolesLabel: string;
+    permissionLabel: string;
+    permissionHint: string;
+    permissionPlaceholder: string;
+    holdersNow: string;
+    unknownPermission: (code: string) => string;
     requiresLabel: string;
     requiresHint: string;
     requiresAdd: string;
@@ -961,8 +1012,10 @@ export type PolicyLabels = {
     confirmBody: string;
     confirmAction: string;
     confirming: string;
-    changeRoleAdded: (role: string, action: string) => string;
-    changeRoleRemoved: (role: string, action: string) => string;
+    changePermission: (action: string, permission: string, code: string) => string;
+    changeHolderAdded: (role: string, action: string) => string;
+    changeHolderRemoved: (role: string, action: string) => string;
+    changeHoldersSame: string;
     changeAssigneeOnlyOn: (action: string) => string;
     changeAssigneeOnlyOff: (action: string) => string;
     changeActiveOff: (action: string) => string;
@@ -974,6 +1027,32 @@ export type PolicyLabels = {
     refusedTitle: string;
     emptyTitle: string;
     emptyBody: string;
+    flowchart: {
+      title: string;
+      hint: string;
+      ariaLabel: (statuses: number, steps: number) => string;
+      start: string;
+      end: string;
+      nobody: string;
+      legendStart: string;
+      legendEnd: string;
+      legendBack: string;
+      legendOff: string;
+      layoutLabel: string;
+      layoutVertical: string;
+      layoutHorizontal: string;
+      nodeAria: (status: string, out: number, into: number) => string;
+      edgeAria: (action: string, from: string, to: string, roles: string) => string;
+      filterNode: (n: number, status: string) => string;
+      filterEdge: (n: number, from: string, to: string) => string;
+      showAll: string;
+      nodeHelp: string;
+      edgeHelp: string;
+      controls: string;
+      zoomIn: string;
+      zoomOut: string;
+      fitView: string;
+    };
   };
 };
 
@@ -998,6 +1077,15 @@ export function usePolicyLabels(): PolicyLabels {
         permissions: t("policy.tabs.permissions"),
         roleGrants: t("policy.tabs.roleGrants"),
         transitions: t("policy.tabs.transitions"),
+      },
+
+      bands: {
+        all: t("policy.bands.all"),
+        screens: t("policy.bands.screens"),
+        workflow: t("policy.bands.workflow"),
+        data: t("policy.bands.data"),
+        filterLabel: t("policy.bands.filterLabel"),
+        chip: (band: string, value: number) => t("policy.bands.chip", { band, n: n(value) }),
       },
 
       gate: {
@@ -1064,6 +1152,24 @@ export function usePolicyLabels(): PolicyLabels {
         emptyBody: t("policy.permissions.emptyBody"),
       },
 
+      createRole: {
+        newRole: t("policy.createRole.newRole"),
+        title: t("policy.createRole.title"),
+        description: t("policy.createRole.description"),
+        label: t("policy.createRole.label"),
+        labelHi: t("policy.createRole.labelHi"),
+        code: t("policy.createRole.code"),
+        codeHint: t("policy.createRole.codeHint"),
+        copyFrom: t("policy.createRole.copyFrom"),
+        copyNone: t("policy.createRole.copyNone"),
+        create: t("policy.createRole.create"),
+        creating: t("policy.createRole.creating"),
+        cancel: t("policy.createRole.cancel"),
+        failedTitle: t("policy.createRole.failedTitle"),
+        labelRequired: t("policy.createRole.labelRequired"),
+        codeInvalid: t("policy.createRole.codeInvalid"),
+      },
+
       grants: {
         title: t("policy.grants.title"),
         subtitle: t("policy.grants.subtitle"),
@@ -1073,6 +1179,8 @@ export function usePolicyLabels(): PolicyLabels {
         notGranted: t("policy.grants.notGranted"),
         cell: (permission: string, role: string) =>
           t("policy.grants.cell", { permission, role }),
+        sharedScreen: t("policy.grants.sharedScreen"),
+        screenClosedHint: t("policy.grants.screenClosedHint"),
         roleTotal: (value: number, total: number) =>
           t("policy.grants.roleTotal", { n: n(value), total: n(total) }),
         changedBadge: t("policy.grants.changedBadge"),
@@ -1099,6 +1207,9 @@ export function usePolicyLabels(): PolicyLabels {
         openRole: (role: string) => t("policy.grants.openRole", { role }),
         closeRole: t("policy.grants.closeRole"),
         narrowHint: t("policy.grants.narrowHint"),
+        bandTotal: (band: string, value: number, total: number) =>
+          t("policy.grants.bandTotal", { band, n: n(value), total: n(total) }),
+        scrollHint: t("policy.grants.scrollHint"),
       },
 
       transitions: {
@@ -1110,7 +1221,7 @@ export function usePolicyLabels(): PolicyLabels {
           action: t("policy.transitions.columns.action"),
           from: t("policy.transitions.columns.from"),
           to: t("policy.transitions.columns.to"),
-          roles: t("policy.transitions.columns.roles"),
+          permission: t("policy.transitions.columns.permission"),
           requires: t("policy.transitions.columns.requires"),
           rules: t("policy.transitions.columns.rules"),
           edit: t("policy.transitions.columns.edit"),
@@ -1122,7 +1233,8 @@ export function usePolicyLabels(): PolicyLabels {
         opensRound: t("policy.transitions.opensRound"),
         active: t("policy.transitions.active"),
         inactive: t("policy.transitions.inactive"),
-        noRoles: t("policy.transitions.noRoles"),
+        noHolders: t("policy.transitions.noHolders"),
+        holdersLabel: t("policy.transitions.holdersLabel"),
         noRequires: t("policy.transitions.noRequires"),
         noteLabel: t("policy.transitions.noteLabel"),
         noNote: t("policy.transitions.noNote"),
@@ -1130,7 +1242,12 @@ export function usePolicyLabels(): PolicyLabels {
         editLabel: (action: string) => t("policy.transitions.editLabel", { action }),
         fixedTitle: t("policy.transitions.fixedTitle"),
         fixedBody: t("policy.transitions.fixedBody"),
-        rolesLabel: t("policy.transitions.rolesLabel"),
+        permissionLabel: t("policy.transitions.permissionLabel"),
+        permissionHint: t("policy.transitions.permissionHint"),
+        permissionPlaceholder: t("policy.transitions.permissionPlaceholder"),
+        holdersNow: t("policy.transitions.holdersNow"),
+        unknownPermission: (code: string) =>
+          t("policy.transitions.unknownPermission", { code }),
         requiresLabel: t("policy.transitions.requiresLabel"),
         requiresHint: t("policy.transitions.requiresHint"),
         requiresAdd: t("policy.transitions.requiresAdd"),
@@ -1150,10 +1267,13 @@ export function usePolicyLabels(): PolicyLabels {
         confirmBody: t("policy.transitions.confirmBody"),
         confirmAction: t("policy.transitions.confirmAction"),
         confirming: t("policy.transitions.confirming"),
-        changeRoleAdded: (role: string, action: string) =>
-          t("policy.transitions.changeRoleAdded", { role, action }),
-        changeRoleRemoved: (role: string, action: string) =>
-          t("policy.transitions.changeRoleRemoved", { role, action }),
+        changePermission: (action: string, permission: string, code: string) =>
+          t("policy.transitions.changePermission", { action, permission, code }),
+        changeHolderAdded: (role: string, action: string) =>
+          t("policy.transitions.changeHolderAdded", { role, action }),
+        changeHolderRemoved: (role: string, action: string) =>
+          t("policy.transitions.changeHolderRemoved", { role, action }),
+        changeHoldersSame: t("policy.transitions.changeHoldersSame"),
         changeAssigneeOnlyOn: (action: string) =>
           t("policy.transitions.changeAssigneeOnlyOn", { action }),
         changeAssigneeOnlyOff: (action: string) =>
@@ -1171,6 +1291,37 @@ export function usePolicyLabels(): PolicyLabels {
         refusedTitle: t("policy.transitions.refusedTitle"),
         emptyTitle: t("policy.transitions.emptyTitle"),
         emptyBody: t("policy.transitions.emptyBody"),
+        flowchart: {
+          title: t("policy.transitions.flowchart.title"),
+          hint: t("policy.transitions.flowchart.hint"),
+          ariaLabel: (statuses: number, steps: number) =>
+            t("policy.transitions.flowchart.ariaLabel", { statuses: n(statuses), steps: n(steps) }),
+          start: t("policy.transitions.flowchart.start"),
+          end: t("policy.transitions.flowchart.end"),
+          nobody: t("policy.transitions.flowchart.nobody"),
+          legendStart: t("policy.transitions.flowchart.legendStart"),
+          legendEnd: t("policy.transitions.flowchart.legendEnd"),
+          legendBack: t("policy.transitions.flowchart.legendBack"),
+          legendOff: t("policy.transitions.flowchart.legendOff"),
+          layoutLabel: t("policy.transitions.flowchart.layoutLabel"),
+          layoutVertical: t("policy.transitions.flowchart.layoutVertical"),
+          layoutHorizontal: t("policy.transitions.flowchart.layoutHorizontal"),
+          nodeAria: (status: string, out: number, into: number) =>
+            t("policy.transitions.flowchart.nodeAria", { status, out: n(out), in: n(into) }),
+          edgeAria: (action: string, from: string, to: string, roles: string) =>
+            t("policy.transitions.flowchart.edgeAria", { action, from, to, roles }),
+          filterNode: (value: number, status: string) =>
+            t("policy.transitions.flowchart.filterNode", { n: n(value), status }),
+          filterEdge: (value: number, from: string, to: string) =>
+            t("policy.transitions.flowchart.filterEdge", { n: n(value), from, to }),
+          showAll: t("policy.transitions.flowchart.showAll"),
+          nodeHelp: t("policy.transitions.flowchart.nodeHelp"),
+          edgeHelp: t("policy.transitions.flowchart.edgeHelp"),
+          controls: t("policy.transitions.flowchart.controls"),
+          zoomIn: t("policy.transitions.flowchart.zoomIn"),
+          zoomOut: t("policy.transitions.flowchart.zoomOut"),
+          fitView: t("policy.transitions.flowchart.fitView"),
+        },
       },
     }),
     [t, n],

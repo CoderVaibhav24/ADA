@@ -100,7 +100,7 @@ export default function Reports() {
         <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
           {labels.title}
         </h1>
-        <p className="mt-1 max-w-prose text-sm text-fg-muted text-pretty">{labels.subtitle}</p>
+        <p className="mt-1 max-w-prose text-sm text-fg-canvas-muted text-pretty">{labels.subtitle}</p>
       </header>
 
       {gate.loading ? (

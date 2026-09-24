@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import type { CodeValue } from '@/services/api/types';
 import { codeValuesQueryKey, fetchCodeValues } from '@/services/config';
 import { labelFor } from '@/services/config/labels';
+import { useLocale } from '@/services/i18n';
 
 import type { Labeller } from './template';
 
@@ -13,13 +14,15 @@ import type { Labeller } from './template';
  * status reads as the authority's label, or the re-cased code until one is seeded.
  */
 export function useLabeller(domains: readonly string[]): Labeller {
+  // The locale is a dependency so a language change hands the renderer a new labeller and it re-renders.
+  const locale = useLocale();
   const combine = useCallback(
     (results: { data?: CodeValue[] }[]): Labeller => {
       const byDomain = new Map<string, CodeValue[] | undefined>();
       domains.forEach((domain, index) => byDomain.set(domain, results[index]?.data));
-      return (domain, code) => labelFor(byDomain.get(domain), code);
+      return (domain, code) => labelFor(byDomain.get(domain), code, locale);
     },
-    [domains],
+    [domains, locale],
   );
 
   return useQueries({

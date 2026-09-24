@@ -1,67 +1,57 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import CalendarClock from 'lucide-react-native/icons/calendar-clock';
+import Hourglass from 'lucide-react-native/icons/hourglass';
+import LayoutList from 'lucide-react-native/icons/layout-list';
+import Sparkles from 'lucide-react-native/icons/sparkles';
+import X from 'lucide-react-native/icons/x';
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import {
-  Chip,
-  InProgressBlock,
-  ListScreenTemplate,
-  SearchBar,
-  StateMessage,
-  space,
-} from '@/design-system';
-import { ComplaintList } from '@/design-system/organisms/ComplaintList';
+import { ListScreenTemplate } from '@/design-system';
+import { ComplaintList, ScheduledList, type ListEmpty } from '@/design-system/organisms/ComplaintList';
+import { CaseState } from '@/design-system/organisms/cases/CaseStates';
+import { CaseTabs, type CaseTab } from '@/design-system/organisms/cases/CaseTabs';
+import { caseMetrics, casePalette } from '@/design-system/organisms/cases/palette';
+import { CaseIcon, CaseText } from '@/design-system/organisms/cases/primitives';
 import type { CaseListFilter } from '@/services/api/case-reads';
-import { errorText } from '@/services/api/error-text';
 import { useWorkStatuses, type WorkStatuses } from '@/services/config/work-statuses';
+import { useT } from '@/services/i18n';
+import { COMPLAINT_IN_COMPLAINTS } from '@/services/navigation/complaint-route';
 
 /*
- * Complaints, `170:4173`. `GET /api/icms/cases?mine=true`, one list per tab.
+ * Complaints, Figma 02 (170:4173).
  *
- * The tabs are the designs'; the statuses behind them are the officer's, read off
- * `/api/icms/me/capabilities` by `useWorkStatuses` — never a literal list here.
- *
- *   All          mine=true
+ *   All          GET /api/icms/cases?mine=true
  *   New          mine=true, status in the statuses a round can be opened from
- *   Scheduled    in progress — "scheduled" is an inspection-round status, and the
- *                case register cannot filter on a round's status
+ *   Scheduled    GET /api/icms/inspections?status=scheduled (the surveyor's own rounds)
  *   In progress  mine=true, status in the statuses only the assignee can act at
  *
- * Tabs filter, they do not navigate; each visited tab keeps its list mounted so
- * its scroll position survives a switch (ui-rules.md §7).
+ * Statuses come from /api/icms/me/capabilities via useWorkStatuses, never a literal list.
+ * A search handed over as `?q=` (Home, the header search) narrows the case tabs.
+ * Each visited tab stays mounted so its scroll position survives a switch.
  */
 type TabKey = 'all' | 'new' | 'scheduled' | 'in_progress';
 
-type Tab = {
-  readonly key: TabKey;
-  readonly label: string;
-  /** undefined for a tab with no filter the API supports. */
-  readonly statuses?: (work: WorkStatuses) => readonly string[];
+const STATUSES: Partial<Record<TabKey, (work: WorkStatuses) => readonly string[]>> = {
+  new: (work) => work.toStart,
+  in_progress: (work) => work.underway,
 };
 
-const TABS: readonly Tab[] = [
-  { key: 'all', label: 'All', statuses: () => [] },
-  { key: 'new', label: 'New', statuses: (work) => work.toStart },
-  { key: 'scheduled', label: 'Scheduled' },
-  { key: 'in_progress', label: 'In progress', statuses: (work) => work.underway },
-];
-
 export function ComplaintsScreen() {
+  const t = useT();
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string }>();
   const work = useWorkStatuses();
 
-  const incoming = typeof params.q === 'string' ? params.q : '';
-  const [draft, setDraft] = useState(incoming);
+  const incoming = typeof params.q === 'string' ? params.q.trim() : '';
   const [query, setQuery] = useState(incoming);
+  const [handedOver, setHandedOver] = useState(incoming);
   const [active, setActive] = useState<TabKey>('all');
   const [visited, setVisited] = useState<ReadonlySet<TabKey>>(() => new Set<TabKey>(['all']));
-  const [handedOver, setHandedOver] = useState(incoming);
 
-  // A search handed over from Home replaces the current one (adjusted during render, not in an effect).
+  // A search handed over from elsewhere replaces the current one (adjusted during render).
   if (handedOver !== incoming) {
     setHandedOver(incoming);
-    setDraft(incoming);
     setQuery(incoming);
   }
 
@@ -72,121 +62,146 @@ export function ComplaintsScreen() {
 
   const openCase = useCallback(
     (caseRef: string) =>
-      router.push({ pathname: '/complaint/[caseRef]', params: { caseRef, from: 'complaints' } }),
+      router.push({ pathname: COMPLAINT_IN_COMPLAINTS, params: { caseRef, from: 'complaints' } }),
     [router],
   );
 
-  const clearSearch = useCallback(() => {
-    setDraft('');
-    setQuery('');
-  }, []);
-
-  // A status tab the officer's role gives nothing to is not shown at all.
-  const tabs = useMemo(
-    () =>
-      TABS.filter((tab) => {
-        if (tab.key === 'all' || tab.statuses === undefined || work.data === undefined) return true;
-        return tab.statuses(work.data).length > 0;
-      }),
-    [work.data],
+  const allTabs = useMemo<readonly CaseTab<TabKey>[]>(
+    () => [
+      { key: 'all', label: t('cases.tab.all'), glyph: LayoutList },
+      { key: 'new', label: t('cases.tab.new'), glyph: Sparkles },
+      { key: 'scheduled', label: t('cases.tab.scheduled'), glyph: CalendarClock },
+      { key: 'in_progress', label: t('cases.tab.inProgress'), glyph: Hourglass },
+    ],
+    [t],
   );
 
-  // The register filter behind a tab, or null while the statuses are still loading.
-  const filterFor = (tab: Tab): CaseListFilter | null => {
-    if (tab.statuses === undefined) return null;
-    const q = query.trim() === '' ? undefined : query.trim();
-    if (tab.key === 'all') return { mine: true, q };
+  // A status tab the officer's role gives nothing to is not shown.
+  const tabs = useMemo(
+    () =>
+      allTabs.filter((tab) => {
+        const statuses = STATUSES[tab.key];
+        if (statuses === undefined || work.data === undefined) return true;
+        return statuses(work.data).length > 0;
+      }),
+    [allTabs, work.data],
+  );
+
+  const q = query === '' ? undefined : query;
+
+  // The register filter behind a case tab, or null while the statuses are still loading.
+  const filterFor = (key: TabKey): CaseListFilter | null => {
+    const statuses = STATUSES[key];
+    if (statuses === undefined) return { mine: true, q };
     if (work.data === undefined) return null;
-    return { mine: true, status: tab.statuses(work.data), q };
+    return { mine: true, status: statuses(work.data), q };
   };
 
-  // One tab's body: in progress, a failed filter, or the list.
-  const renderTab = (tab: Tab) => {
-    if (tab.statuses === undefined) {
-      return <InProgressBlock title={tab.label} style={styles.inProgress} />;
+  const emptyFor = (tab: CaseTab<TabKey>): ListEmpty => {
+    if (q !== undefined && tab.key !== 'scheduled') {
+      return {
+        title: t('cases.empty.search.title', { query: q }),
+        body: t('cases.empty.search.body'),
+        actionLabel: t('common.clearSearch'),
+        onAction: () => setQuery(''),
+      };
     }
+    if (tab.key === 'all') {
+      return { title: t('cases.empty.all.title'), body: t('cases.empty.all.body') };
+    }
+    if (tab.key === 'scheduled') {
+      return {
+        title: t('cases.empty.scheduled.title'),
+        body: t('cases.empty.scheduled.body'),
+        actionLabel: t('cases.empty.tab.action'),
+        onAction: () => selectTab('all'),
+      };
+    }
+    return {
+      title: t('cases.empty.tab.title', { tab: tab.label }),
+      body: t('cases.empty.tab.body'),
+      actionLabel: t('cases.empty.tab.action'),
+      onAction: () => selectTab('all'),
+    };
+  };
+
+  // One tab's body: a failed status read, the scheduled rounds, or the case list.
+  const renderTab = (tab: CaseTab<TabKey>) => {
+    if (tab.key === 'scheduled') return <ScheduledList onOpen={openCase} empty={emptyFor(tab)} />;
     if (tab.key !== 'all' && work.data === undefined && work.error !== null) {
-      const failure = errorText(work.error);
       return (
-        <StateMessage
-          tone={failure.offline ? 'offline' : 'error'}
-          title="Your work filters could not be loaded"
-          message={failure.message}
-          reference={failure.requestId}
-          actionLabel="Try again"
-          onAction={work.refetch}
-        />
+        <CaseState kind="error" title={t('cases.error.tab')} error={work.error} onAction={work.refetch} />
       );
     }
-    const filter = filterFor(tab);
-    const searched = filter?.q;
+    const filter = filterFor(tab.key);
     return (
       <ComplaintList
         filter={filter ?? { mine: true }}
         enabled={filter !== null}
         onOpen={openCase}
-        emptyTitle={
-          searched === undefined
-            ? `No complaints under ${tab.label}`
-            : `No complaints match "${searched}"`
-        }
-        emptyMessage={
-          searched === undefined ? 'Cases assigned to you appear here.' : `Searched the ${tab.label} tab.`
-        }
-        onClearFilter={searched === undefined ? undefined : clearSearch}
-        clearFilterLabel="Clear search"
+        empty={emptyFor(tab)}
       />
     );
   };
 
+  // Back returns to where the tab was entered from; with no history, Home.
+  const onBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.navigate('/home');
+  };
+
   return (
     <ListScreenTemplate
-      title="Complaints"
+      title={t('cases.list.title')}
+      headerVariant="search"
+      onBack={onBack}
       search={
-        <SearchBar
-          value={draft}
-          onChangeText={setDraft}
-          onSubmit={() => setQuery(draft)}
-          onClear={clearSearch}
-          placeholder="Search by case, parcel, address"
-          accessibilityLabel="Search complaints"
-        />
-      }
-      filters={
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabs}
-          accessibilityRole="tablist"
-        >
-          {tabs.map((tab) => (
-            <Chip
-              key={tab.key}
-              label={tab.label}
-              selected={tab.key === active}
-              tone={tab.key === active ? 'brand' : 'ink2'}
-              appearance={tab.key === active ? 'solid' : 'outline'}
-              onPress={() => selectTab(tab.key)}
-              accessibilityLabel={`${tab.label} complaints`}
-            />
-          ))}
-        </ScrollView>
-      }
-    >
-      {tabs
-        .filter((tab) => visited.has(tab.key))
-        .map((tab) => (
-          <View key={tab.key} style={tab.key === active ? styles.panel : styles.hidden}>
-            {renderTab(tab)}
+        q !== undefined ? (
+          <View style={styles.searchRow}>
+            <CaseText kind="cardMeta" numberOfLines={1} style={styles.flex}>
+              {t('cases.search.showing', { query: q })}
+            </CaseText>
+            <Pressable
+              onPress={() => setQuery('')}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.clearSearch')}
+              style={styles.clear}
+              hitSlop={8}
+            >
+              <CaseIcon glyph={X} size={18} color="white" />
+              <CaseText kind="cardMetaSmall">{t('common.clearSearch')}</CaseText>
+            </Pressable>
           </View>
-        ))}
+        ) : undefined
+      }
+      filters={<CaseTabs tabs={tabs} active={active} onSelect={selectTab} />}
+    >
+      <View style={styles.screen}>
+        {tabs
+          .filter((tab) => visited.has(tab.key))
+          .map((tab) => (
+            <View key={tab.key} style={tab.key === active ? styles.panel : styles.hidden}>
+              {renderTab(tab)}
+            </View>
+          ))}
+      </View>
     </ListScreenTemplate>
   );
 }
 
 const styles = StyleSheet.create({
-  tabs: { gap: space[2], paddingHorizontal: space[4] },
+  screen: { flex: 1, backgroundColor: casePalette.screen },
   panel: { flex: 1 },
   hidden: { display: 'none' },
-  inProgress: { marginHorizontal: space[4] },
+  flex: { flex: 1 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: caseMetrics.touch },
+  clear: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: caseMetrics.touch,
+    paddingHorizontal: 12,
+    borderRadius: caseMetrics.cardRadius,
+    backgroundColor: casePalette.secondary,
+  },
 });

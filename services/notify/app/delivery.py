@@ -56,6 +56,7 @@ from app.models import (
 )
 from app.recipients import RecipientDirectory
 from app.rendering import TemplateError, render_message
+from app.routing import routing_data
 
 logger = structlog.get_logger(__name__)
 
@@ -63,12 +64,11 @@ _TERMINAL = (DeliveryStatus.SENT, DeliveryStatus.FAILED, DeliveryStatus.DEAD)
 
 
 def push_data(*, notification_id: uuid.UUID, template_key: str, payload: dict) -> dict[str, str]:
-    """The push routing hint (push-and-permissions.md §5): type and case_ref, no detail."""
-    data = {"type": template_key, "notification_id": str(notification_id)}
-    case_ref = payload.get("case_ref")
-    if isinstance(case_ref, (str, int)) and str(case_ref):
-        data["case_ref"] = str(case_ref)[:64]
-    return data
+    """The push routing hint (push-and-permissions.md §5): type and refs, no detail."""
+    return {
+        **routing_data(template_key=template_key, payload=payload),
+        "notification_id": str(notification_id),
+    }
 
 
 class DeliveryWorker:

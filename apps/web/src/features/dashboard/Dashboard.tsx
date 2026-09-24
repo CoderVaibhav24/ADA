@@ -1,75 +1,43 @@
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { CASE_READ } from "@/api/icms/cases";
+import { INSPECTION_READ } from "@/api/icms/inspections";
+import { NOTICE_READ } from "@/api/icms/notices";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useFormats } from "@/i18n";
 import { Icon } from "@/lib/icons";
+import { ROUTES } from "@/routes/paths";
 import { useDashboardLabels } from "./labels";
 import { MetricTiles } from "./MetricTiles";
-import { StatusPanel } from "./StatusPanel";
+import { StatusFeedPanel } from "./StatusFeedPanel";
 import { TrendPanel } from "./TrendPanel";
 import { TypePanel } from "./TypePanel";
 import { ZonePanel } from "./ZonePanel";
-import { periodById, type PeriodId } from "./trendModel";
+import { PERIODS, periodById, trendTotals, type PeriodId } from "./trendModel";
 import {
   oldestLoadedAt,
   useByType,
   useByZone,
   useDashboardGate,
+  useInspectionsScheduled,
+  useNewDetections,
+  useNoticesIssued,
+  useRecentCases,
   useRefreshDashboard,
   useSummary,
   useTrend,
 } from "./useDashboard";
 
-/**
- * `/dashboard` — the five aggregate panels of ICMS Batch 5.
- *
- * ## Where gating happens, and what each place is worth
- *
- * The same three places `PolicyAdmin` and `UserAdministration` document, with
- * `dashboard.read` in them:
- *
- *   1. the rail — `navForPermissions` drops the entry without `dashboard.read`;
- *   2. here — a typed URL still reaches this component, which refuses to render
- *      any panel without it and never fires the four requests;
- *   3. **ada-api** — `require_permission("dashboard.read")` on all five routes.
- *
- * Only (3) enforces anything. `/me/capabilities` says `advisory: true` in its
- * own payload for exactly this reason. Worth stating plainly: the seed grants
- * `dashboard.read` to Super Admin, the PCS Nodal Officer and the ADA Project
- * Lead and NOT to the Field Surveyor, so a surveyor is refused here today —
- * which is a policy row an admin can change at runtime, not a fact about roles.
- *
- * ## Every number on this screen is scoped, and the page says so once
- *
- * `zone_scope` narrows all four queries to the caller's zones, and a field
- * surveyor holding no supervisory role is narrowed again to the cases assigned
- * to them. The line under the heading states that once, for the whole page,
- * rather than every panel hedging separately — and no panel title anywhere says
- * "zone total" or "district total", because for some callers it would be false.
- *
- * ## What Figma draws that this does not
- *
- * Four things, each because nothing behind it exists:
- *
- *   - the "Run Change Detection" header button — an action on the change
- *     detection console, not a dashboard endpoint;
- *   - the village and status dropdowns in the toolbar — none of the four reads
- *     takes a parameter but `trend`, whose period select therefore sits on the
- *     trend panel itself;
- *   - the "This Financial Year" and "All Time" period options — `days` is
- *     capped at 365 with no since-date and no unbounded mode;
- *   - the "Complaint Status" activity feed of individual cases — every
- *     dashboard endpoint is an aggregate by design. `StatusPanel` draws the
- *     per-status grouping that IS returned in its place.
- *
- * `GET /cases.geojson` is in the same router and is not used: this frame draws
- * no map, and an endpoint existing is not a reason to invent a panel for it.
- *
- * ## "Loaded at" is a client fact, not a server one
- *
- * Figma's subtitle reads "Data as of 07 Sep 2026, 09:15 IST". No endpoint
- * returns a generated-at timestamp, so the line here says when the browser
- * loaded it, taken from the OLDEST of the four queries — see `useDashboard`.
- */
+// `/dashboard` (Figma 3:1302). Gated on `dashboard.read` here and in the rail, but only
+// ada-api enforces it; tiles and the feed that read other registers need their own permission.
+// "Data as of" is when the browser loaded the oldest panel, not a server timestamp.
 
 const PERIOD_PARAM = "period";
 
@@ -80,14 +48,22 @@ export default function Dashboard() {
   const [params, setParams] = useSearchParams();
   const refresh = useRefreshDashboard();
 
-  // The window is in the URL so a chosen period survives a reload and can be
-  // sent to a colleague; an unknown value falls back rather than 422-ing.
+  // The window is in the URL so a chosen period survives a reload; unknown values fall back.
   const period = periodById(params.get(PERIOD_PARAM));
+  const can = {
+    cases: gate.permissions.includes(CASE_READ),
+    inspections: gate.permissions.includes(INSPECTION_READ),
+    notices: gate.permissions.includes(NOTICE_READ),
+  };
 
   const summary = useSummary(gate.canRead);
   const trend = useTrend({ days: period.days, bucket: period.bucket }, gate.canRead);
   const byType = useByType(gate.canRead);
   const byZone = useByZone(gate.canRead);
+  const newDetections = useNewDetections(gate.canRead && can.cases);
+  const inspectionsScheduled = useInspectionsScheduled(gate.canRead && can.inspections);
+  const noticesIssued = useNoticesIssued(gate.canRead && can.notices);
+  const recent = useRecentCases(gate.canRead && can.cases);
 
   const setPeriod = (next: PeriodId) => {
     setParams(
@@ -108,6 +84,12 @@ export default function Dashboard() {
   ]);
   const busy =
     summary.isFetching || trend.isFetching || byType.isFetching || byZone.isFetching;
+
+  const raisedInPeriod = trend.data
+    ? trendTotals(trend.data.points).raised
+    : trend.error
+      ? null
+      : undefined;
 
   if (gate.loading) {
     return (
@@ -134,7 +116,7 @@ export default function Dashboard() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {labels.gate.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{labels.gate.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{labels.gate.deniedBody}</p>
       </section>
     );
   }
@@ -146,46 +128,80 @@ export default function Dashboard() {
           <h1 className="font-display text-2xl font-bold tracking-tight text-balance text-fg-strong sm:text-3xl">
             {labels.heading}
           </h1>
-          <p className="mt-1 max-w-prose text-sm text-fg-muted text-pretty">
-            {labels.scopeNote}
+          <p aria-live="polite" className="mt-1 min-h-5 text-sm text-fg-canvas-muted tabular-nums">
+            {loadedAt === null ? "" : labels.subtitle(dateTime(loadedAt))}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
+            size="icon"
             disabled={busy}
+            aria-label={busy ? labels.refreshing : labels.refresh}
+            title={busy ? labels.refreshing : labels.refresh}
             onClick={() => {
               void refresh();
             }}
           >
             <Icon name="action.refresh" className="size-4" spin={busy} />
-            {busy ? labels.refreshing : labels.refresh}
           </Button>
-          <p aria-live="polite" className="text-2xs text-fg-faint tabular-nums">
-            {loadedAt === null ? "" : labels.loadedAt(dateTime(loadedAt))}
-          </p>
+          <Button asChild className="shadow-lg shadow-accent-solid/40">
+            <Link to={ROUTES.changeDetection}>
+              {labels.runChangeDetection}
+              <Icon name="map.layers" className="size-4" />
+            </Link>
+          </Button>
         </div>
       </header>
 
-      <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-2">
-        <MetricTiles
-          className="xl:col-span-2"
-          summary={summary.data}
-          pending={summary.isPending}
-          error={summary.error}
-          labels={labels}
-          onRetry={() => {
-            void summary.refetch();
-          }}
-        />
+      <div
+        role="toolbar"
+        aria-label={labels.toolbar.label}
+        className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface-2 px-4 py-2"
+      >
+        <p className="max-w-prose text-xs text-fg-faint text-pretty">{labels.scopeNote}</p>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="dashboard-period" className="text-xs text-fg-muted">
+            {labels.trend.periodLabel}
+          </Label>
+          <Select
+            value={period.id}
+            onValueChange={(next) => {
+              setPeriod(next as PeriodId);
+            }}
+          >
+            <SelectTrigger id="dashboard-period" size="sm" className="w-52">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PERIODS.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {labels.trend.period(option.id)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
+      <MetricTiles
+        summary={summary}
+        raisedInPeriod={raisedInPeriod}
+        periodLabel={labels.trend.periodShort(period.id)}
+        newDetections={newDetections}
+        inspectionsScheduled={inspectionsScheduled}
+        noticesIssued={noticesIssued}
+        can={can}
+        labels={labels}
+      />
+
+      <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-3">
         <TrendPanel
           className="xl:col-span-2"
           trend={trend.data}
           pending={trend.isPending}
           error={trend.error}
           period={period.id}
-          onPeriodChange={setPeriod}
           labels={labels}
           onRetry={() => {
             void trend.refetch();
@@ -203,6 +219,7 @@ export default function Dashboard() {
         />
 
         <ZonePanel
+          className="xl:col-span-2"
           rows={byZone.data}
           pending={byZone.isPending}
           error={byZone.error}
@@ -212,14 +229,15 @@ export default function Dashboard() {
           }}
         />
 
-        <StatusPanel
-          className="xl:col-span-2"
-          summary={summary.data}
-          pending={summary.isPending}
-          error={summary.error}
+        <StatusFeedPanel
+          page={recent.data}
+          pending={recent.isPending}
+          error={recent.error}
+          loadedAt={recent.dataUpdatedAt}
+          allowed={can.cases}
           labels={labels}
           onRetry={() => {
-            void summary.refetch();
+            void recent.refetch();
           }}
         />
       </div>

@@ -23,10 +23,13 @@ import FileText from 'lucide-react-native/icons/file-text';
 import House from 'lucide-react-native/icons/house';
 import ImageIcon from 'lucide-react-native/icons/image';
 import Images from 'lucide-react-native/icons/images';
+import EyeOff from 'lucide-react-native/icons/eye-off';
 import Info from 'lucide-react-native/icons/info';
+import Languages from 'lucide-react-native/icons/languages';
 import LandPlot from 'lucide-react-native/icons/land-plot';
 import ListChecks from 'lucide-react-native/icons/list-checks';
 import LocateFixed from 'lucide-react-native/icons/locate-fixed';
+import LogIn from 'lucide-react-native/icons/log-in';
 import LogOut from 'lucide-react-native/icons/log-out';
 import MapIcon from 'lucide-react-native/icons/map';
 import MapPin from 'lucide-react-native/icons/map-pin';
@@ -45,6 +48,28 @@ import User from 'lucide-react-native/icons/user';
 import UserRound from 'lucide-react-native/icons/user-round';
 import WifiOff from 'lucide-react-native/icons/wifi-off';
 import X from 'lucide-react-native/icons/x';
+import Ban from 'lucide-react-native/icons/ban';
+import Building from 'lucide-react-native/icons/building';
+import CircleQuestionMark from 'lucide-react-native/icons/circle-question-mark';
+import CircleX from 'lucide-react-native/icons/circle-x';
+import CloudUpload from 'lucide-react-native/icons/cloud-upload';
+import Fence from 'lucide-react-native/icons/fence';
+import FileExclamationPoint from 'lucide-react-native/icons/file-exclamation-point';
+import Gavel from 'lucide-react-native/icons/gavel';
+import Hammer from 'lucide-react-native/icons/hammer';
+import HardDrive from 'lucide-react-native/icons/hard-drive';
+import IndianRupee from 'lucide-react-native/icons/indian-rupee';
+import MessageSquareText from 'lucide-react-native/icons/message-square-text';
+import Mountain from 'lucide-react-native/icons/mountain';
+import RotateCcw from 'lucide-react-native/icons/rotate-ccw';
+import Scale from 'lucide-react-native/icons/scale';
+import Settings from 'lucide-react-native/icons/settings';
+import Signal from 'lucide-react-native/icons/signal';
+import SignalLow from 'lucide-react-native/icons/signal-low';
+import SignalMedium from 'lucide-react-native/icons/signal-medium';
+import Siren from 'lucide-react-native/icons/siren';
+import Tent from 'lucide-react-native/icons/tent';
+import Wheat from 'lucide-react-native/icons/wheat';
 import type { LucideIcon } from 'lucide-react-native';
 
 import { colors, iconSize, type ColorToken, type IconSizeToken } from '../tokens';
@@ -72,10 +97,13 @@ const glyphs = {
   forward: ChevronRight,
   gallery: Images,
   gps: LocateFixed,
+  hide: EyeOff,
   home: House,
   info: Info,
+  language: Languages,
   inspections: ListChecks,
   location: MapPin,
+  login: LogIn,
   logout: LogOut,
   map: MapIcon,
   measure: Ruler,
@@ -94,11 +122,39 @@ const glyphs = {
   verified: ShieldCheck,
   view: Eye,
   warning: TriangleAlert,
+  // States and option lists of the inspection wizard (04–07, 14–17).
+  cloudUpload: CloudUpload,
+  storage: HardDrive,
+  retake: RotateCcw,
+  settings: Settings,
+  signalGood: Signal,
+  signalFair: SignalMedium,
+  signalWeak: SignalLow,
+  note: MessageSquareText,
+  unsure: CircleQuestionMark,
+  refused: CircleX,
+  building: Building,
+  shed: Tent,
+  crop: Wheat,
+  land: Mountain,
+  fence: Fence,
+  none: Ban,
+  police: Siren,
+  legal: Scale,
+  noticeFile: FileExclamationPoint,
+  gavel: Gavel,
+  hammer: Hammer,
+  rupee: IndianRupee,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof glyphs;
 
 export const iconNames = Object.keys(glyphs) as IconName[];
+
+// The Lucide drawing behind a name, for a caller that tints it from its own token set (the wizard kit).
+export function iconGlyph(name: IconName): LucideIcon {
+  return glyphs[name];
+}
 
 export type IconProps = {
   name: IconName;

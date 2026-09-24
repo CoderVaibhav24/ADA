@@ -38,12 +38,13 @@ import { Progress } from "@/components/ui/progress";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
 
+import { ActorName } from "@/components/icms/ActorName";
 import { BAND_METER } from "./bands";
 import { toComplaintSearch } from "./complaintHandoff";
 import { DetectionPreviewDialog } from "./DetectionPreviewDialog";
 import type { ChangeDetectionLabels } from "./labels";
 import { confidencePercent, type ComparisonPair, type DetectionRow } from "./model";
-import { Field, ReviewChip } from "./parts";
+import { Field, PanelSection, ReviewChip } from "./parts";
 import type { LoadFailure } from "./useChangeDetection";
 
 export function DetectionDetails({
@@ -70,14 +71,12 @@ export function DetectionDetails({
   const [previewOpen, setPreviewOpen] = useState(false);
 
   return (
-    <section
-      aria-labelledby="cd-detail-heading"
-      className="flex min-h-44 flex-col gap-3 rounded-md border border-line bg-card p-4 shadow-xs"
+    <PanelSection
+      title={labels.detail.title}
+      headingId="cd-detail-heading"
+      className="border-b-0"
+      bodyClassName="flex flex-col gap-3"
     >
-      <h2 id="cd-detail-heading" className="font-display text-md font-bold text-fg-strong">
-        {labels.detail.title}
-      </h2>
-
       {row ? (
         <Filled
           labels={labels}
@@ -116,7 +115,7 @@ export function DetectionDetails({
           formatDateTime={formatDateTime}
         />
       )}
-    </section>
+    </PanelSection>
   );
 }
 
@@ -151,7 +150,7 @@ function Filled({
         </ReviewChip>
       </div>
 
-      <div className="grid gap-x-8 gap-y-4 lg:grid-cols-2">
+      <div className="flex flex-col gap-4">
         <dl className="flex min-w-0 flex-col gap-1">
           <Field label={labels.detail.classification}>{labels.status(row.status)}</Field>
           {row.changeType && (
@@ -183,7 +182,9 @@ function Filled({
             )}
           </Field>
           {row.reviewedBy && (
-            <Field label={labels.detail.reviewedBy}>{row.reviewedBy}</Field>
+            <Field label={labels.detail.reviewedBy}>
+              <ActorName name={row.reviewedByName} id={row.reviewedBy} />
+            </Field>
           )}
           {row.reviewedAt && (
             <Field label={labels.detail.reviewedAt} mono>
@@ -207,7 +208,7 @@ function Filled({
             />
           </div>
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 [&>*]:w-full">
             <Button variant="secondary" size="sm" onClick={onOpenPreview}>
               <Icon name="action.view" className="size-4" />
               {labels.detail.viewFull}

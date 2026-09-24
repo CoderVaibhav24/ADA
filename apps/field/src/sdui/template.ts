@@ -1,4 +1,5 @@
 import { formatAge, formatDate, formatDateTime } from '@/services/format/datetime';
+import { intlLocale, t } from '@/services/i18n';
 
 /*
  * Template strings: `{{item.case_ref}}`, `{{data|number}}`, `{{item.status|label:case_status}}`.
@@ -47,7 +48,7 @@ export function toDisplay(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'boolean') return t(value ? 'common.yes' : 'common.no');
   return '';
 }
 
@@ -62,7 +63,7 @@ function format(value: unknown, formatter: string, argument: string | undefined,
       return formatAge(toDisplay(value)) ?? '';
     case 'number': {
       const numeric = typeof value === 'number' ? value : Number(toDisplay(value));
-      return Number.isFinite(numeric) ? numeric.toLocaleString() : '';
+      return Number.isFinite(numeric) ? numeric.toLocaleString(intlLocale()) : '';
     }
     case 'label':
       return argument === undefined ? toDisplay(value) : labeller(argument, toDisplay(value));

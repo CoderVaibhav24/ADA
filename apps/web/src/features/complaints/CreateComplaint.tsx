@@ -30,10 +30,22 @@
  *     to say which, because the response carries nothing to say it with and
  *     guessing would be guessing about someone else's jurisdiction.
  *   - **a detection hands over what it actually knows, and no more.** Source,
- *     polygon and point are filled; the reference, the area and the confidence
+ *     polygon, point and a suggested type are filled; the reference, the area and the confidence
  *     are shown as the case's origin because `CaseCreate` has no column for
  *     them. Everything else is the officer's to enter, exactly as a manual
  *     complaint would be — which is the normal case, not the fallback.
+ *
+ * Two tabs, `?mode=detection|manual`, share one form state and one submit: a
+ * switch loses nothing typed, and `forMode` decides what each tab files. The
+ * detection tab files as the signed-in officer; the manual tab's complainant is
+ * typed, because a citizen may be the one complaining.
+ *
+ * A detection's before/after crops are fetched and pre-added as evidence; a
+ * failed fetch says so beside the drop zone and never blocks the submit.
+ *
+ * Photos are chosen before submit and uploaded only once the case exists, each
+ * with its own idempotency key. A failed upload never loses the case: the
+ * screen says how many failed and offers a retry and the way to the case.
  *
  * The one thing the browser is not promised: an in-app navigation away from
  * here — the rail, a link — is not intercepted. `useBlocker` needs a data
@@ -42,10 +54,12 @@
  */
 
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { newIdempotencyKey } from "@/api/icms/cases";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { newIdempotencyKey, uploadCaseEvidence } from "@/api/icms/cases";
+import type { ParcelLookup } from "@/api/icms/geo";
 import { IcmsApiError } from "@/api/icms/http";
+import { currentUser } from "@/auth/oidc";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,6 +72,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // Read-only: the hand-off contract is written down once, in the feature that
 // produces it, rather than guessed at twice.
 import { parseComplaintHandoff } from "@/features/changeDetection/complaintHandoff";
@@ -65,39 +81,81 @@ import { useFormats } from "@/i18n";
 import { usePriorityLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
+import { uploadEach } from "./complaintEvidence";
 import {
   COMPLAINT_PRIORITIES,
+  MORE_DETAIL_FIELDS,
   blankComplaintForm,
   fieldId,
   firstProblem,
+  forMode,
+  hasLocation,
   hasErrors,
+  initialMode,
+  isComplaintMode,
   isDirty,
+  officerContact,
+  requiredFields,
   seedComplaintForm,
   toComplaintBody,
   validateComplaintForm,
+  withOfficer,
+  type ComplaintField,
   type ComplaintFormErrors,
   type ComplaintFormState,
+  type OfficerContact,
 } from "./complaintForm";
 import {
-  ComplaintTypePanel,
-  DescriptionPanel,
-  LocationPanel,
+  ComplainantSection,
+  ComplaintTypeField,
+  DescriptionAndDate,
+  DetectionOriginFields,
+  GeographicalDetails,
+  MoreDetails,
   OriginPanel,
-  ParcelPanel,
-  PropertyPanel,
-  SourceAndComplainant,
+  PropertySection,
 } from "./CreateComplaintFields";
+import { EvidencePicker } from "./EvidencePicker";
+import { LocationPicker } from "./LocationPicker";
 import { useComplaintNewLabels, type ComplaintNewLabels } from "./complaintLabels";
 import {
   COMPLAINT_TYPE_DOMAIN,
-  PROPERTY_TYPE_DOMAIN,
   useComplaintVocabulary,
   useCreateCase,
   useRaiseGate,
   useZoneOptions,
 } from "./useCreateComplaint";
+import { useDetectionEvidence } from "./useDetectionEvidence";
+import { useLocationSuggestion } from "./useLocationSuggestion";
+import {
+  applySuggestion,
+  suggestedFields,
+  withoutSuggestion,
+  type LocationSuggestion,
+} from "./locationSuggestion";
+import {
+  applyParcel,
+  foreignZone,
+  parcelFields,
+  parcelIsPlot,
+  parcelSuggestionFrom,
+  withoutParcel,
+  type ParcelSuggestion,
+} from "./parcelSuggestion";
+import { useEvidenceSelection, type ChosenPhoto } from "./useEvidenceSelection";
 
 const NO_ERRORS: ComplaintFormErrors = {};
+// Nothing is read-only by account any more: the detection tab draws its locked block itself.
+const NOT_LOCKED: ReadonlySet<ComplaintField> = new Set();
+
+/** The case exists; its photos are uploading, or some of them failed. */
+type Filed = {
+  caseRef: string;
+  phase: "uploading" | "partial";
+  done: number;
+  total: number;
+  failed: readonly string[];
+};
 
 /**
  * A refusal the server made, said in the officer's language.
@@ -142,9 +200,83 @@ function RefusalAlert({
   );
 }
 
+/** Replaces the form once the case exists and photos are uploading or have partly failed. */
+function FiledPanel({
+  filed,
+  photos,
+  labels,
+  onRetry,
+  onOpen,
+}: {
+  filed: Filed;
+  photos: readonly ChosenPhoto[];
+  labels: ComplaintNewLabels;
+  onRetry: () => void;
+  onOpen: () => void;
+}) {
+  const failedNames = photos
+    .filter((photo) => filed.failed.includes(photo.id))
+    .map((photo) => photo.file.name);
+  const uploading = filed.phase === "uploading";
+
+  return (
+    <section
+      aria-labelledby="complaint-filed-title"
+      className="flex max-w-3xl flex-col gap-4 rounded-md border border-line-subtle bg-surface-1 p-5 sm:p-7"
+    >
+      <h2
+        id="complaint-filed-title"
+        className="flex items-center gap-2 font-display text-lg font-semibold text-fg-strong"
+      >
+        <Icon name="feedback.success" className="size-5 text-status-success-fg" />
+        {labels.filed.title(filed.caseRef)}
+      </h2>
+
+      {uploading ? (
+        <div role="status" className="flex flex-col gap-2">
+          <p className="flex items-center gap-2 text-sm text-fg-muted">
+            <Icon name="feedback.loading" spin className="size-4" />
+            {labels.filed.uploading(filed.done, filed.total)}
+          </p>
+          <Progress
+            value={filed.total === 0 ? 0 : (filed.done / filed.total) * 100}
+            aria-label={labels.filed.uploading(filed.done, filed.total)}
+          />
+        </div>
+      ) : (
+        <Alert role="alert" className="border-status-warning-border">
+          <Icon name="feedback.warning" className="size-4" />
+          <AlertTitle className="text-pretty">{labels.filed.failed(filed.failed.length)}</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-3">
+            <span className="text-pretty">{labels.filed.saved}</span>
+            {failedNames.length > 0 && (
+              <ul className="list-disc pl-5 text-xs text-fg-muted">
+                {failedNames.map((name, index) => (
+                  <li key={`${name}-${String(index)}`}>{name}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap gap-3">
+              <Button type="button" onClick={onOpen}>
+                <Icon name="action.forward" className="size-4" />
+                {labels.filed.open}
+              </Button>
+              <Button type="button" variant="outline" onClick={onRetry}>
+                <Icon name="action.retry" className="size-4" />
+                {labels.filed.retry}
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+    </section>
+  );
+}
+
 export default function CreateComplaint() {
   const navigate = useNavigate();
   const { search } = useLocation();
+  const [params, setParams] = useSearchParams();
   const formats = useFormats();
   const labels = useComplaintNewLabels();
   const priorityLabels = usePriorityLabels();
@@ -153,6 +285,17 @@ export default function CreateComplaint() {
   const create = useCreateCase();
 
   const handoff = useMemo(() => parseComplaintHandoff(search), [search]);
+  const mode = initialMode(params.get("mode"), handoff !== null);
+  const selectMode = useCallback(
+    (next: string) => {
+      if (!isComplaintMode(next)) return;
+      // `replace`, not push: flipping tabs must not make Back walk through each one.
+      const updated = new URLSearchParams(params);
+      updated.set("mode", next);
+      setParams(updated, { replace: true });
+    },
+    [params, setParams],
+  );
 
   // Square metres and a percentage, formatted once and used by both the origin
   // panel and the description it seeds, so the two cannot disagree.
@@ -176,7 +319,7 @@ export default function CreateComplaint() {
       ? blankComplaintForm()
       : seedComplaintForm(
           handoff,
-          labels.origin.seedDetail(handoff.detectionRef, area ?? "", confidence ?? ""),
+          labels.origin.seedDetail(handoff.detectionRef, handoff.status, area, confidence),
         ),
   );
 
@@ -184,6 +327,65 @@ export default function CreateComplaint() {
   const [attempted, setAttempted] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [filed, setFiled] = useState<Filed | null>(null);
+  const [officer, setOfficer] = useState<OfficerContact | null>(null);
+  const [located, setLocated] = useState<LocationSuggestion | null>(null);
+  const [landRecord, setLandRecord] = useState<ParcelLookup | null>(null);
+  const [parcelled, setParcelled] = useState<ParcelSuggestion | null>(null);
+
+  // The signed-in officer: the detection tab's complainant, and the manual
+  // tab's "Use my details". Never written into the state, so the manual tab
+  // starts blank and nothing here makes the form "unsaved".
+  useEffect(() => {
+    let live = true;
+    void currentUser().then((user) => {
+      if (live) setOfficer(officerContact(user?.profile));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // The chip the detection chose, until the officer picks another or clears it.
+  const suggested =
+    mode === "detection" &&
+    handoff !== null &&
+    baseline.complaintTypeCd !== "" &&
+    form.complaintTypeCd === baseline.complaintTypeCd;
+  const photos = useEvidenceSelection();
+  const addPhotos = photos.add;
+  const addDetectionPhotos = useCallback(
+    (files: File[]) => {
+      addPhotos(files, "detection");
+    },
+    [addPhotos],
+  );
+  const detectionEvidence = useDetectionEvidence(handoff, addDetectionPhotos);
+  // The detection's crops belong to the detection tab; a manual complaint files only the officer's.
+  const submittedPhotos = useMemo(
+    () =>
+      mode === "detection"
+        ? photos.items
+        : photos.items.filter((photo) => photo.origin === "officer"),
+    [mode, photos.items],
+  );
+
+  // A focus request for a field inside "More details", served once it has opened.
+  const pendingFocus = useRef<ComplaintField | null>(null);
+  useEffect(() => {
+    if (!moreOpen || pendingFocus.current === null) return;
+    document.getElementById(fieldId(pendingFocus.current))?.focus();
+    pendingFocus.current = null;
+  }, [moreOpen]);
+
+  // Uploads outlive a navigation away; they must not navigate a screen that is gone.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   /**
    * The key for ONE submit attempt, held across every retry of it.
@@ -196,21 +398,76 @@ export default function CreateComplaint() {
 
   const language = formats.language;
   const types = useComplaintVocabulary(COMPLAINT_TYPE_DOMAIN, gate.canRaise, language);
-  const propertyTypes = useComplaintVocabulary(PROPERTY_TYPE_DOMAIN, gate.canRaise, language);
   const zones = useZoneOptions(gate.canRaise, language);
+  // The zones this officer can file in; null while that is not known yet.
+  const assignable = useMemo(
+    () =>
+      zones.loading || zones.unavailable
+        ? null
+        : new Set(zones.options.map((option) => option.value)),
+    [zones],
+  );
+
+  // The pin — a hand-off's on mount, or a map click — suggests state, district, LGD code and pin
+  // code from the locator, and zone, village, khasra and ULPIN from the imported land record.
+  const lastLocated = useRef<LocationSuggestion | null>(null);
+  const lastParcel = useRef<ParcelSuggestion | null>(null);
+  const takeParcel = (answer: ParcelLookup) => {
+    const next = parcelSuggestionFrom(answer, assignable);
+    const previous = lastParcel.current;
+    lastParcel.current = next;
+    setForm((current) => applyParcel(current, previous, next));
+    setParcelled(next);
+    setLandRecord(answer);
+  };
+  useLocationSuggestion(
+    form.latitude,
+    form.longitude,
+    gate.canRaise,
+    (next) => {
+      const previous = lastLocated.current;
+      lastLocated.current = next;
+      setForm((current) => applySuggestion(current, previous, next));
+      setLocated(next);
+    },
+    takeParcel,
+  );
+  // The zone list can answer after the land record did; its zone is suggested then.
+  const retakeParcel = useEffectEvent(() => {
+    if (landRecord !== null) takeParcel(landRecord);
+  });
+  useEffect(() => {
+    retakeParcel();
+  }, [assignable]);
+  const fromLocation = useMemo(() => suggestedFields(form, located), [form, located]);
+  const fromLandRecord = useMemo(() => parcelFields(form, parcelled), [form, parcelled]);
+  const fromPlotNo = parcelIsPlot(form, parcelled);
+  const pinZone = hasLocation(form) ? foreignZone(landRecord, assignable) : null;
+  const zoneNote =
+    pinZone === null
+      ? undefined
+      : labels.location.foreignZone(
+          pinZone.name === "" ? pinZone.code : `${pinZone.name} (${pinZone.code})`,
+        );
 
   const priorities = useMemo(
     () => COMPLAINT_PRIORITIES.map((value) => ({ value, label: priorityLabels[value] })),
     [priorityLabels],
   );
 
-  const dirty = isDirty(baseline, form);
+  // The detection's own crops arrive unasked, so only the officer's photos count.
+  // A location suggestion arrives unasked too, until the officer edits it.
+  const dirty =
+    isDirty(baseline, withoutParcel(withoutSuggestion(form, located, baseline), parcelled, baseline)) ||
+    photos.items.some((photo) => photo.origin === "officer");
+  // Once the case exists, only an upload still in flight is worth a warning.
+  const guarded = filed === null ? dirty : filed.phase === "uploading";
 
   // Covers a reload and a closed tab. An in-app navigation cannot be
   // intercepted without a data router, which is why Back and Cancel ask
   // separately.
   useEffect(() => {
-    if (!dirty) return;
+    if (!guarded) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
     };
@@ -218,9 +475,12 @@ export default function CreateComplaint() {
     return () => {
       window.removeEventListener("beforeunload", warn);
     };
-  }, [dirty]);
+  }, [guarded]);
 
-  const errors = useMemo(() => validateComplaintForm(form), [form]);
+  // What the open tab would file; validation and the body both read this.
+  const filing = useMemo(() => forMode(form, mode, officer), [form, mode, officer]);
+  const errors = useMemo(() => validateComplaintForm(filing), [filing]);
+  const requiredSet = useMemo(() => requiredFields(filing), [filing]);
   // A form is not wrong before it has been used: nothing is marked until a
   // submit has actually been refused.
   const shownErrors = attempted ? errors : NO_ERRORS;
@@ -233,35 +493,73 @@ export default function CreateComplaint() {
   // button is never disabled by a validation state.
   const askSubmit = useCallback(() => {
     setAttempted(true);
-    const problems = validateComplaintForm(form);
+    const problems = validateComplaintForm(filing);
     if (hasErrors(problems)) {
-      const field = firstProblem(problems);
-      if (field !== null) document.getElementById(fieldId(field))?.focus();
+      const field = firstProblem(problems, mode);
+      if (field !== null && MORE_DETAIL_FIELDS.includes(field) && !moreOpen) {
+        pendingFocus.current = field;
+        setMoreOpen(true);
+      } else if (field !== null) {
+        document.getElementById(fieldId(field))?.focus();
+      }
       return;
     }
     setConfirming(true);
-  }, [form]);
+  }, [filing, mode, moreOpen]);
+
+  // Never throws and never blocks: the case already exists when this runs.
+  const uploadPhotos = useCallback(
+    async (caseRef: string, items: readonly ChosenPhoto[]) => {
+      setFiled({ caseRef, phase: "uploading", done: 0, total: items.length, failed: [] });
+      const outcome = await uploadEach(
+        items,
+        (item) => uploadCaseEvidence(caseRef, item.file, { idempotencyKey: item.id }),
+        (done, total) => {
+          if (mounted.current) {
+            setFiled((current) => (current === null ? current : { ...current, done, total }));
+          }
+        },
+      );
+      if (!mounted.current) return;
+      if (outcome.failed.length === 0) {
+        void navigate(ROUTES.complaint(caseRef));
+        return;
+      }
+      setFiled({
+        caseRef,
+        phase: "partial",
+        done: items.length,
+        total: items.length,
+        failed: outcome.failed,
+      });
+    },
+    [navigate],
+  );
 
   const runSubmit = useCallback(() => {
     setConfirming(false);
     submitKey.current ??= newIdempotencyKey();
-    create.mutate(toComplaintBody(form, submitKey.current), {
+    create.mutate(toComplaintBody(filing, submitKey.current), {
       onSuccess: (detail) => {
         submitKey.current = null;
         // The case exists now; its detail screen is where the assignment and
-        // everything after it lives.
-        void navigate(ROUTES.complaint(detail.case_ref));
+        // everything after it lives. Photos go first, when there are any.
+        if (submittedPhotos.length === 0) {
+          void navigate(ROUTES.complaint(detail.case_ref));
+          return;
+        }
+        void uploadPhotos(detail.case_ref, submittedPhotos);
       },
     });
-  }, [create, form, navigate]);
+  }, [create, filing, navigate, submittedPhotos, uploadPhotos]);
 
   const goBack = useCallback(() => {
-    if (dirty) {
+    if (filed === null && dirty) {
       setLeaving(true);
       return;
     }
     void navigate(ROUTES.complaints);
-  }, [dirty, navigate]);
+  }, [dirty, filed, navigate]);
 
   if (gate.loading) {
     return (
@@ -289,7 +587,7 @@ export default function CreateComplaint() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {labels.gate.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{labels.gate.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{labels.gate.deniedBody}</p>
         {gate.refused?.requestId && (
           <p className="text-2xs text-fg-faint">
             {labels.requestId}{" "}
@@ -304,13 +602,38 @@ export default function CreateComplaint() {
 
   const busy = create.isPending;
   const failure = create.error instanceof IcmsApiError ? create.error : null;
-  const fields = { labels, state: form, onChange, disabled: busy, errors: shownErrors };
+  const fields = {
+    labels,
+    state: form,
+    onChange,
+    disabled: busy,
+    errors: shownErrors,
+    requiredSet,
+    locked: NOT_LOCKED,
+    fromLocation,
+    fromLandRecord,
+    fromPlotNo,
+  };
+  // The detection tab opened by hand, with nothing handed over to raise it from.
+  const noHandoff = mode === "detection" && handoff === null;
+  const copyMine =
+    officer !== null && (officer.name !== "" || officer.email !== "")
+      ? () => {
+          setForm((current) => withOfficer(current, officer));
+        }
+      : undefined;
 
   return (
     // No gutter and no max-width here: AppShell's `main` supplies both, once,
     // for every screen.
     <div className="flex w-full min-w-0 flex-col gap-6">
-      <div className="flex justify-end">
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
+            {labels.title}
+          </h1>
+          <p className="mt-1 text-sm text-fg-canvas-muted text-pretty">{labels.subtitle}</p>
+        </div>
         <Button
           type="button"
           variant="outline"
@@ -321,16 +644,9 @@ export default function CreateComplaint() {
           <Icon name="action.back" className="size-4" />
           {labels.back}
         </Button>
-      </div>
-
-      <header className="min-w-0">
-        <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
-          {labels.title}
-        </h1>
-        <p className="mt-1 text-sm text-fg-muted text-pretty">{labels.subtitle}</p>
       </header>
 
-      {handoff !== null && (
+      {handoff !== null && filed === null && mode === "detection" && (
         <OriginPanel
           labels={labels}
           detectionRef={handoff.detectionRef}
@@ -340,72 +656,155 @@ export default function CreateComplaint() {
         />
       )}
 
-      <form
-        className="flex min-w-0 flex-col gap-6"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          askSubmit();
-        }}
-      >
-        <SourceAndComplainant {...fields} />
-        <LocationPanel {...fields} zones={zones} />
-        <ComplaintTypePanel {...fields} types={types} />
-        <PropertyPanel {...fields} propertyTypes={propertyTypes} />
-        <ParcelPanel {...fields} />
-        <DescriptionPanel {...fields} priorities={priorities} />
+      {filed !== null ? (
+        <FiledPanel
+          filed={filed}
+          photos={submittedPhotos}
+          labels={labels}
+          onOpen={() => {
+            void navigate(ROUTES.complaint(filed.caseRef));
+          }}
+          onRetry={() => {
+            void uploadPhotos(
+              filed.caseRef,
+              submittedPhotos.filter((photo) => filed.failed.includes(photo.id)),
+            );
+          }}
+        />
+      ) : (
+        <form
+          className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            askSubmit();
+          }}
+        >
+          <div className="flex min-w-0 flex-col gap-4 rounded-md border border-line-subtle bg-surface-1 p-4 sm:p-7">
+            <Tabs value={mode} onValueChange={selectMode} className="min-w-0 gap-4">
+              <TabsList aria-label={labels.mode.label} className="max-w-full">
+                <TabsTrigger value="detection" disabled={handoff === null}>
+                  <Icon name="nav.changeDetection" className="size-4" />
+                  {labels.mode.detection}
+                </TabsTrigger>
+                <TabsTrigger value="manual">
+                  <Icon name="nav.createComplaint" className="size-4" />
+                  {labels.mode.manual}
+                </TabsTrigger>
+              </TabsList>
 
-        {failure && (
-          <RefusalAlert title={labels.errorTitle} error={failure} labels={labels}>
-            {/* Retries the ATTEMPT, not the request: `submitKey` still holds the
-                key the refused attempt used, so this replays it. A replay the
-                server accepts comes back 200 with the case already raised,
-                which is a completed raise and lands in the same success path
-                the first attempt would have. */}
-            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={runSubmit}>
-              <Icon name="action.retry" className="size-4" />
-              {labels.retry}
-            </Button>
-          </RefusalAlert>
-        )}
+              <TabsContent value="detection" className="flex min-w-0 flex-col gap-4">
+                {noHandoff ? (
+                  <p role="status" className="flex items-center gap-2 text-sm text-fg-muted">
+                    <Icon name="feedback.info" className="size-4" />
+                    {labels.mode.noHandoff}
+                  </p>
+                ) : (
+                  <>
+                    <DetectionOriginFields labels={labels} state={filing} />
+                    <ComplaintTypeField {...fields} types={types} suggested={suggested} />
+                    <DescriptionAndDate {...fields} priorities={priorities} />
+                    <PropertySection {...fields} mode="detection" />
+                  </>
+                )}
+              </TabsContent>
 
-        <footer className="flex flex-col gap-3 rounded-lg border border-line-subtle bg-surface-1 p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-col gap-1">
-              {/* In words, not a colour: "unsaved" is what an officer leaving
-                  this screen has to know. */}
-              {dirty && (
-                <p role="status" className="flex items-center gap-2 text-xs text-fg-muted">
-                  <Icon name="feedback.warning" className="size-3.5" />
-                  {labels.unsaved}
-                </p>
-              )}
-              {attempted && hasErrors(errors) && (
-                <p
-                  role="status"
-                  className="max-w-prose text-xs text-status-danger-fg text-pretty"
-                >
-                  {labels.errorBody}
-                </p>
-              )}
-            </div>
+              <TabsContent value="manual" className="flex min-w-0 flex-col gap-4">
+                <ComplainantSection {...fields} onUseMine={copyMine} />
+                <PropertySection {...fields} mode="manual" />
+                <ComplaintTypeField {...fields} types={types} suggested={false} />
+                <DescriptionAndDate {...fields} priorities={priorities} />
+              </TabsContent>
+            </Tabs>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="button" variant="outline" disabled={busy} onClick={goBack}>
-                {labels.cancel}
-              </Button>
-              <Button type="submit" disabled={busy}>
-                <Icon
-                  name={busy ? "feedback.loading" : "action.send"}
-                  spin={busy}
-                  className="size-4"
+            {!noHandoff && (
+              <>
+                <MoreDetails {...fields} open={moreOpen} onOpenChange={setMoreOpen} />
+                <EvidencePicker
+                  labels={labels}
+                  items={submittedPhotos}
+                  rejected={photos.rejected}
+                  disabled={busy}
+                  detection={mode === "detection" ? detectionEvidence : "idle"}
+                  onAdd={photos.add}
+                  onRemove={photos.remove}
                 />
-                {busy ? labels.submitting : labels.submit}
-              </Button>
-            </div>
+              </>
+            )}
+
+            {failure && (
+              <RefusalAlert title={labels.errorTitle} error={failure} labels={labels}>
+                {/* Retries the ATTEMPT, not the request: `submitKey` still holds the
+                    key the refused attempt used, so this replays it. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={runSubmit}
+                >
+                  <Icon name="action.retry" className="size-4" />
+                  {labels.retry}
+                </Button>
+              </RefusalAlert>
+            )}
+
+            <footer className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <div className="flex min-w-0 flex-col gap-1">
+                {/* In words, not a colour: "unsaved" is what an officer leaving
+                    this screen has to know. */}
+                {dirty && (
+                  <p role="status" className="flex items-center gap-2 text-xs text-fg-muted">
+                    <Icon name="feedback.warning" className="size-3.5" />
+                    {labels.unsaved}
+                  </p>
+                )}
+                {attempted && hasErrors(errors) && (
+                  <p
+                    role="status"
+                    className="max-w-prose text-xs text-status-danger-fg text-pretty"
+                  >
+                    {labels.errorBody}
+                  </p>
+                )}
+              </div>
+
+              <div className="ml-auto flex flex-wrap items-center gap-3">
+                <Button type="submit" disabled={busy || noHandoff} className="h-11 px-4">
+                  <Icon
+                    name={busy ? "feedback.loading" : "feedback.success"}
+                    spin={busy}
+                    className="size-4"
+                  />
+                  {busy ? labels.submitting : labels.submit}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={goBack}
+                  className="h-11"
+                >
+                  {labels.cancel}
+                </Button>
+              </div>
+            </footer>
           </div>
-        </footer>
-      </form>
+
+          <aside className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4">
+            <LocationPicker
+              labels={labels}
+              latitude={form.latitude}
+              longitude={form.longitude}
+              disabled={busy}
+              onPick={(latitude, longitude) => {
+                setForm((current) => ({ ...current, latitude, longitude }));
+              }}
+            />
+            <GeographicalDetails {...fields} zones={zones} zoneNote={zoneNote} />
+          </aside>
+        </form>
+      )}
 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>

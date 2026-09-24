@@ -67,3 +67,35 @@ def submit_ingest(raster_id: int) -> None:
 
 def submit_analysis(job_id: int) -> None:
     _post("/v1/analyses", {"job_id": job_id}, f"analysis job {job_id}")
+
+
+class MLUnavailable(RuntimeError):
+    """ada-ml did not answer /health/ready with a 200 inside the timeout."""
+
+
+# Three seconds: this backs a UI chip and the sweeper's go/no-go, neither of which may hang.
+def runtime(timeout: float = 3.0) -> dict:
+    try:
+        response = httpx.get(
+            f"{settings.ml_service_url.rstrip('/')}/health/ready",
+            headers=_headers(),
+            timeout=timeout,
+        )
+    except httpx.HTTPError as exc:
+        raise MLUnavailable(str(exc)) from exc
+    if response.status_code != 200:
+        raise MLUnavailable(f"ada-ml /health/ready answered {response.status_code}")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise MLUnavailable("ada-ml /health/ready answered a non-JSON body") from exc
+    return body if isinstance(body, dict) else {"status": "ok"}
+
+
+def ready() -> bool:
+    try:
+        runtime()
+    except MLUnavailable as exc:
+        log.info("ada-ml not ready: %s", exc)
+        return False
+    return True

@@ -45,6 +45,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useInspectionActionLabels, useResurveyDecisionLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
+import { actorLabel } from "@/lib/actor";
 import type { InspectionDetailLabels } from "./detailLabels";
 import { decidedResurveys, pendingResurvey } from "./detailModel";
 import { DetailPanel, WriteOutcome } from "./detailParts";
@@ -171,6 +172,8 @@ function RequestRow({
 }) {
   const decisionLabels = useResurveyDecisionLabels();
   const settled = request.decision !== "pending";
+  const requester = actorLabel(request.requested_by_name, request.requested_by);
+  const decider = actorLabel(request.decided_by_name, request.decided_by);
   const decisionLabel =
     decisionLabels[request.decision as ResurveyDecision] ?? request.decision;
 
@@ -191,13 +194,13 @@ function RequestRow({
 
       <p className="text-sm text-fg-strong text-pretty">{request.reason}</p>
 
-      <p className="text-2xs text-fg-muted">
-        {labels.resurvey.requestedBy(request.requested_by, formatDateTime(request.requested_at))}
+      <p className="text-2xs text-fg-muted" title={requester.title}>
+        {labels.resurvey.requestedBy(requester.text, formatDateTime(request.requested_at))}
       </p>
 
       {request.decided_by != null && request.decided_at != null && (
-        <p className="text-2xs text-fg-muted">
-          {labels.resurvey.decidedBy(request.decided_by, formatDateTime(request.decided_at))}
+        <p className="text-2xs text-fg-muted" title={decider.title}>
+          {labels.resurvey.decidedBy(decider.text, formatDateTime(request.decided_at))}
         </p>
       )}
 

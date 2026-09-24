@@ -47,9 +47,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from ada_core.database import get_db
 from ada_core.datetimes import now_ist
+from ada_core.models_icms import PolicyRole, Zone, ZoneAssignment
 from ada_platform import Principal
 from fastapi import APIRouter, Depends, Path, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..clients.keycloak import (
     KeycloakAdmin,
@@ -61,16 +65,19 @@ from ..errors import ApiError
 from ..icms.collection import Page, PageResult
 from ..icms.security import require_permission
 from ..icms.user_schemas import (
-    ASSIGNABLE_ROLES,
     KeycloakUserId,
     PasswordReset,
     PasswordResetOut,
+    ReportingMember,
+    ReportingRole,
+    ReportingZone,
     UserCreate,
     UserDetail,
     UserQuery,
     UserRolesUpdate,
     UserRow,
     UserUpdate,
+    assignable_roles,
     user_detail,
     user_row,
 )
@@ -88,6 +95,16 @@ UPDATE_PASSWORD = "UPDATE_PASSWORD"  # noqa: S105
 # The role that reaches both administration screens, and so the one the guard
 # below counts holders of.
 SUPER_ADMIN = "super-admin"
+
+# Most senior first; each rung reports to the one above. Derived from the
+# workflow's hand-offs (surveyor submits to nodal, nodal hands over to the lead);
+# see docs/icms/ICMS-Access-Control.md §8.
+REPORTING_LADDER = (
+    "super-admin", "ada-project-lead", "pcs-nodal-officer", "field-surveyor",
+)
+
+# Keycloak's page size for one role's members. Well above the realm's headcount.
+ROLE_MEMBER_LIMIT = 1000
 
 
 @router.get(
@@ -120,6 +137,10 @@ def list_users(
     )
 
 
+# Toggling `enabled` either way is the disable authority, checked inside the PATCH.
+_require_disable = require_permission("user.disable")
+
+
 @router.post(
     "/admin/users",
     response_model=UserDetail,
@@ -128,7 +149,7 @@ def list_users(
 )
 def create_user(
     body: UserCreate,
-    user: Principal = Depends(require_permission("user.manage")),
+    user: Principal = Depends(require_permission("user.create")),
     admin: KeycloakAdmin = Depends(get_admin_client),
 ) -> UserDetail:
     """Created disabled, enabled last. See the module docstring for why."""
@@ -198,6 +219,78 @@ def get_user(
     return _detail(admin, user_id)
 
 
+@router.get(
+    "/admin/reporting",
+    response_model=list[ReportingRole],
+    summary="The reporting structure: each ICMS role, its holders and their zones",
+)
+def reporting_structure(
+    user: Principal = Depends(require_permission("user.read")),
+    admin: KeycloakAdmin = Depends(get_admin_client),
+    db: Session = Depends(get_db),
+) -> list[ReportingRole]:
+    """One Keycloak call per role and one query for every holder's zones."""
+    ours = assignable_roles()
+    rows = db.execute(
+        select(PolicyRole)
+        .where(PolicyRole.active.is_(True))
+        .order_by(PolicyRole.sort_order, PolicyRole.role_cd)
+    ).scalars().all()
+    rank = {code: index for index, code in enumerate(REPORTING_LADDER)}
+    roles = sorted(
+        (row for row in rows if row.role_cd in ours),
+        key=lambda row: rank.get(row.role_cd, len(REPORTING_LADDER)),
+    )
+
+    holders = {
+        row.role_cd: admin.role_members(row.role_cd, limit=ROLE_MEMBER_LIMIT)
+        for row in roles
+    }
+    zones = _active_zones(db, {m["id"] for ms in holders.values() for m in ms if m.get("id")})
+
+    placed = [code for code in REPORTING_LADDER if code in holders]
+    out: list[ReportingRole] = []
+    for row in roles:
+        on_ladder = row.role_cd in placed
+        level = placed.index(row.role_cd) if on_ladder else len(placed)
+        members = sorted(
+            (
+                ReportingMember(
+                    id=m["id"],
+                    username=m.get("username", ""),
+                    first_name=m.get("firstName") or None,
+                    last_name=m.get("lastName") or None,
+                    enabled=bool(m.get("enabled", False)),
+                    zones=zones.get(m["id"], []),
+                )
+                for m in holders[row.role_cd] if m.get("id")
+            ),
+            key=lambda member: (not member.enabled, member.username),
+        )
+        out.append(ReportingRole(
+            role_cd=row.role_cd, label=row.label, label_hi=row.label_hi, level=level,
+            reports_to=placed[level - 1] if on_ladder and level > 0 else None,
+            members=members,
+        ))
+    return out
+
+
+def _active_zones(db: Session, user_ids: set[str]) -> dict[str, list[ReportingZone]]:
+    if not user_ids:
+        return {}
+    found: dict[str, list[ReportingZone]] = {}
+    for user_id, zone_id, zone_cd, name, name_hi in db.execute(
+        select(ZoneAssignment.user_id, Zone.id, Zone.zone_cd, Zone.name, Zone.name_hi)
+        .join(Zone, Zone.id == ZoneAssignment.zone_id)
+        .where(ZoneAssignment.active.is_(True), ZoneAssignment.user_id.in_(user_ids))
+        .order_by(Zone.name, Zone.id)
+    ).all():
+        found.setdefault(user_id, []).append(ReportingZone(
+            id=zone_id, zone_cd=zone_cd, name=name, name_hi=name_hi,
+        ))
+    return found
+
+
 @router.patch(
     "/admin/users/{user_id}",
     response_model=UserDetail,
@@ -206,15 +299,18 @@ def get_user(
 def update_user(
     user_id: UserIdPath,
     body: UserUpdate,
-    user: Principal = Depends(require_permission("user.manage")),
+    user: Principal = Depends(require_permission("user.update")),
     admin: KeycloakAdmin = Depends(get_admin_client),
 ) -> UserDetail:
     """`enabled: false` is how an officer leaves. There is no delete."""
+    changes = body.model_dump(exclude_unset=True)
+    if "enabled" in changes:
+        _require_disable(user)
+
     representation = admin.get_user(user_id)
     if representation is None:
         raise ApiError(404, "user_not_found", f"no officer {user_id}")
 
-    changes = body.model_dump(exclude_unset=True)
     if changes.get("enabled") is False:
         _refuse_lockout(admin, user_id, field="enabled")
 
@@ -248,7 +344,7 @@ def update_user(
 def set_user_roles(
     user_id: UserIdPath,
     body: UserRolesUpdate,
-    user: Principal = Depends(require_permission("user.manage")),
+    user: Principal = Depends(require_permission("user.roles")),
     admin: KeycloakAdmin = Depends(get_admin_client),
 ) -> UserDetail:
     """The whole set, not a delta: add/remove deltas from two admins editing the
@@ -265,9 +361,10 @@ def set_user_roles(
     # account's standard client scopes; stripping it breaks the login itself.
     current = admin.user_realm_roles(user_id)
     held = {role.get("name") for role in current}
+    ours = assignable_roles()
     stale = [
         role for role in current
-        if role.get("name") in ASSIGNABLE_ROLES and role["name"] not in wanted_names
+        if role.get("name") in ours and role["name"] not in wanted_names
     ]
     admin.remove_realm_roles(user_id, stale)
     admin.add_realm_roles(user_id, [r for r in wanted if r["name"] not in held])
@@ -283,7 +380,7 @@ def set_user_roles(
 def reset_password(
     user_id: UserIdPath,
     body: PasswordReset,
-    user: Principal = Depends(require_permission("user.manage")),
+    user: Principal = Depends(require_permission("user.password")),
     admin: KeycloakAdmin = Depends(get_admin_client),
 ) -> PasswordResetOut:
     """The answer carries no credential. Hand the one you sent over out of band."""
@@ -310,18 +407,19 @@ def reset_password(
 
 # Refused rather than passed through: Keycloak would happily assign
 # realm-management roles to an officer, and this endpoint is reachable by
-# anybody holding user.manage.
+# anybody holding user.create or user.roles.
 def _resolve_roles(admin: KeycloakAdmin, names: list[str]) -> list[dict]:
     """The Keycloak representations of `names`, or a 422 naming what is allowed."""
     wanted = sorted(set(names))
-    unknown = [name for name in wanted if name not in ASSIGNABLE_ROLES]
+    ours = assignable_roles()
+    unknown = [name for name in wanted if name not in ours]
     if unknown:
         raise ApiError(
             422,
             "unknown_role",
             f"not an ICMS role: {', '.join(unknown)}",
             field="realm_roles",
-            allowed=sorted(ASSIGNABLE_ROLES),
+            allowed=sorted(ours),
         )
     if not wanted:
         return []

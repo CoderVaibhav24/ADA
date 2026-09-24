@@ -270,7 +270,7 @@ async def test_push_channel_routes_by_platform_and_refuses_unconfigured_ones() -
 
 def test_absent_credentials_disable_push_without_failing_startup() -> None:
     channels = create_channels(_settings(push_provider="native"))
-    assert set(channels) == {"email", "push"}
+    assert set(channels) == {"email", "push", "inapp"}
     assert channels["push"]._fcm is None
     assert channels["push"]._apns is None
 

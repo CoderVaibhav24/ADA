@@ -25,7 +25,10 @@ FIELDS = {
     "device_timestamp_max_age_hours",
     "minimum_photo_count",
     "maximum_photo_count",
+    "geofence_enforced",
+    "geofence_radius_m",
 }
+BOOLEANS = {"geofence_enforced"}
 
 
 class TestTheShape:
@@ -40,6 +43,9 @@ class TestTheShape:
         body = icms_client.sign_in(SURVEYOR).get(PATH).json()
 
         for name, value in body.items():
+            if name in BOOLEANS:
+                assert isinstance(value, bool), f"{name} arrived as {value!r}"
+                continue
             assert isinstance(value, (int, float)) and not isinstance(value, bool), (
                 f"{name} arrived as {type(value).__name__}: {value!r}"
             )

@@ -31,11 +31,7 @@ const ENTRIES = [
 
 export function MapLegend({ labels }: { labels: ChangeDetectionLabels }) {
   return (
-    <PanelSection
-      title={labels.legend.title}
-      headingId="cd-legend-heading"
-      className="border-b-0"
-    >
+    <PanelSection title={labels.legend.title} headingId="cd-legend-heading">
       <ul className="flex flex-col gap-1.5">
         {ENTRIES.map((entry) => (
           <li key={entry.key} className="flex items-center gap-2">

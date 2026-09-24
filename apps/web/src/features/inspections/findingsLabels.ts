@@ -34,15 +34,8 @@ export type FindingsListLabels = {
 
 export type FindingsSectionLabels = {
   label: string;
-  hint: string;
-  actLabel: string;
-  actPlaceholder: string;
-  sectionLabel: string;
-  sectionPlaceholder: string;
-  add: string;
-  remove: (act: string, section: string) => string;
-  duplicate: string;
-  none: string;
+  chooseAct: string;
+  noneForAct: string;
   unavailable: string;
 };
 
@@ -59,19 +52,24 @@ export type FindingsLabels = {
     phoneHint: string;
     phoneInvalid: string;
   };
+  owner: { nameLabel: string; phoneLabel: string };
   measurement: {
     legend: string;
     areaTypeLabel: string;
     areaTypePlaceholder: string;
     areaLabel: string;
     areaInvalid: string;
+    stageLabel: string;
+    lengthLabel: string;
+    widthLabel: string;
+    sideInvalid: string;
+    derivedArea: (value: string) => string;
   };
   notice: {
     legend: string;
     requiredLabel: string;
     actLabel: string;
     actPlaceholder: string;
-    actRequired: string;
   };
   note: { label: string; hint: string };
   save: string;
@@ -150,16 +148,8 @@ export function useFindingsLabels(): FindingsLabels {
 
       sections: {
         label: t("inspectionFindings.sections.label"),
-        hint: t("inspectionFindings.sections.hint"),
-        actLabel: t("inspectionFindings.sections.actLabel"),
-        actPlaceholder: t("inspectionFindings.sections.actPlaceholder"),
-        sectionLabel: t("inspectionFindings.sections.sectionLabel"),
-        sectionPlaceholder: t("inspectionFindings.sections.sectionPlaceholder"),
-        add: t("inspectionFindings.sections.add"),
-        remove: (act: string, section: string) =>
-          t("inspectionFindings.sections.remove", { act, section }),
-        duplicate: t("inspectionFindings.sections.duplicate"),
-        none: t("inspectionFindings.sections.none"),
+        chooseAct: t("inspectionFindings.sections.chooseAct"),
+        noneForAct: t("inspectionFindings.sections.noneForAct"),
         unavailable: t("inspectionFindings.sections.unavailable"),
       },
 
@@ -171,12 +161,23 @@ export function useFindingsLabels(): FindingsLabels {
         phoneInvalid: t("inspectionFindings.occupant.phoneInvalid"),
       },
 
+      owner: {
+        nameLabel: t("inspectionFindings.owner.nameLabel"),
+        phoneLabel: t("inspectionFindings.owner.phoneLabel"),
+      },
+
       measurement: {
         legend: t("inspectionFindings.measurement.legend"),
         areaTypeLabel: t("inspectionFindings.measurement.areaTypeLabel"),
         areaTypePlaceholder: t("inspectionFindings.measurement.areaTypePlaceholder"),
         areaLabel: t("inspectionFindings.measurement.areaLabel"),
         areaInvalid: t("inspectionFindings.measurement.areaInvalid"),
+        stageLabel: t("inspectionFindings.measurement.stageLabel"),
+        lengthLabel: t("inspectionFindings.measurement.lengthLabel"),
+        widthLabel: t("inspectionFindings.measurement.widthLabel"),
+        sideInvalid: t("inspectionFindings.measurement.sideInvalid"),
+        derivedArea: (value: string) =>
+          t("inspectionFindings.measurement.derivedArea", { value }),
       },
 
       notice: {
@@ -184,7 +185,6 @@ export function useFindingsLabels(): FindingsLabels {
         requiredLabel: t("inspectionFindings.notice.requiredLabel"),
         actLabel: t("inspectionFindings.notice.actLabel"),
         actPlaceholder: t("inspectionFindings.notice.actPlaceholder"),
-        actRequired: t("inspectionFindings.notice.actRequired"),
       },
 
       note: {

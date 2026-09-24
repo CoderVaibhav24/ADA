@@ -6,6 +6,8 @@
 
 import { StyleSheet, View } from 'react-native';
 
+import { useT } from '@/services/i18n';
+
 import { Icon, Text } from '../atoms';
 import { colors, control, radius, space, type LayoutStyle } from '../tokens';
 
@@ -18,15 +20,15 @@ export type InProgressBlockProps = {
   style?: LayoutStyle;
 };
 
-export const IN_PROGRESS_LINE = 'This feature is in progress.';
-
 // A dashed, muted panel so it reads as absent content rather than an empty result.
 export function InProgressBlock({ title, compact = false, testID, style }: InProgressBlockProps) {
+  const t = useT();
+  const line = t('common.inProgress');
   return (
     <View
       testID={testID}
       accessible
-      accessibilityLabel={`${title}. ${IN_PROGRESS_LINE}`}
+      accessibilityLabel={`${title}. ${line}`}
       style={[styles.frame, compact ? styles.compact : styles.regular, style]}
     >
       <View style={styles.heading}>
@@ -36,7 +38,7 @@ export function InProgressBlock({ title, compact = false, testID, style }: InPro
         </Text>
       </View>
       <Text variant="caption" color="ink3">
-        {IN_PROGRESS_LINE}
+        {line}
       </Text>
     </View>
   );

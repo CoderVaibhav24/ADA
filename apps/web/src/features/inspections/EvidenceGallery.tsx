@@ -41,6 +41,7 @@ import {
   type InspectionEvidenceLabels,
 } from "@/i18n/labels";
 import { Icon, type IconKey } from "@/lib/icons";
+import { actorLabel } from "@/lib/actor";
 import { geoStateOf } from "./detailModel";
 import { DetailPanel, Mono } from "./detailParts";
 import { usePhotoRuleLabels, type PhotoRuleLabels } from "./photoRuleLabels";
@@ -74,7 +75,7 @@ function save(blob: Blob, filename: string): void {
 }
 
 /** One image's bytes as an object URL, revoked when the tile goes away. */
-function useThumbnail(evidenceId: number, enabled: boolean): string | null {
+function useThumbnail(evidenceId: number, enabled: boolean, stamped: boolean): string | null {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,7 +83,7 @@ function useThumbnail(evidenceId: number, enabled: boolean): string | null {
     const controller = new AbortController();
     let objectUrl: string | null = null;
 
-    void fetchEvidenceContent(evidenceId, controller.signal)
+    void fetchEvidenceContent(evidenceId, controller.signal, stamped)
       .then((blob) => {
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
@@ -99,7 +100,7 @@ function useThumbnail(evidenceId: number, enabled: boolean): string | null {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setUrl(null);
     };
-  }, [evidenceId, enabled]);
+  }, [evidenceId, enabled, stamped]);
 
   return url;
 }
@@ -117,9 +118,10 @@ function EvidenceTile({
   const sourceLabels = useCaptureSourceLabels();
   const [downloading, setDownloading] = useState(false);
   const image = isImage(evidence);
-  const thumbnail = useThumbnail(evidence.id, image);
+  const thumbnail = useThumbnail(evidence.id, image, evidence.stamped_url != null);
   const geo = geoStateOf(evidence);
   const filename = evidence.original_filename ?? String(evidence.id);
+  const uploader = actorLabel(evidence.uploaded_by_name, evidence.uploaded_by);
 
   const download = async () => {
     setDownloading(true);
@@ -182,7 +184,9 @@ function EvidenceTile({
         </div>
         <div className="min-w-0">
           <dt className="sr-only">{labels.uploadedBy("")}</dt>
-          <dd className="truncate">{labels.uploadedBy(evidence.uploaded_by)}</dd>
+          <dd className="truncate" title={uploader.title}>
+            {labels.uploadedBy(uploader.text)}
+          </dd>
         </div>
         {evidence.capture_source != null && (
           <div className="min-w-0">

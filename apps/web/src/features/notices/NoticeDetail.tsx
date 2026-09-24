@@ -46,6 +46,7 @@ import { Button } from "@/components/ui/button";
 import { useFormats } from "@/i18n";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
+import { ActorName } from "@/components/icms/ActorName";
 import {
   useNoticeDetailLabels,
   useNoticeStatusLabels,
@@ -122,7 +123,7 @@ export default function NoticeDetail() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {registerLabels.gate.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{registerLabels.gate.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{registerLabels.gate.deniedBody}</p>
       </section>
     );
   }
@@ -160,28 +161,13 @@ export default function NoticeDetail() {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
-      {/* ---- Back ------------------------------------------------------ */}
-      <div className="flex justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
-          onClick={() => {
-            void navigate(-1);
-          }}
-        >
-          <Icon name="action.back" className="size-4" />
-          {labels.back}
-        </Button>
-      </div>
-
       {/* ---- heading --------------------------------------------------- */}
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
             {data.notice_ref}
           </h1>
-          <p className="mt-1 text-sm text-fg-muted">{labels.subtitle(data.case_ref)}</p>
+          <p className="mt-1 text-sm text-fg-canvas-muted">{labels.subtitle(data.case_ref)}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -213,6 +199,17 @@ export default function NoticeDetail() {
           >
             <Icon name="nav.complaints" className="size-4" />
             {labels.openCase}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
+            onClick={() => {
+              void navigate(-1);
+            }}
+          >
+            <Icon name="action.back" className="size-4" />
+            {labels.back}
           </Button>
         </div>
       </header>
@@ -313,7 +310,7 @@ export default function NoticeDetail() {
               </Field>
               <Field label={labels.summary.issuedBy}>
                 {data.issued_by ? (
-                  <Mono>{data.issued_by}</Mono>
+                  <ActorName name={data.issued_by_name} id={data.issued_by} />
                 ) : (
                   <Absent>{labels.summary.absent}</Absent>
                 )}

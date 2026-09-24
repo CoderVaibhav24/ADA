@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 import { sid, useStore } from "../state/store";
 import { deleteRaster } from "../state/actions";
@@ -93,7 +94,34 @@ function RasterStatusChip({ raster }: { raster: Raster }) {
       </span>
     );
   }
+  if (raster.status !== "ready") return <LifecycleChip raster={raster} />;
   return <span className="chip chip-ready">ready</span>;
+}
+
+const LIFECYCLE_CHIP = {
+  uploading: { key: "uploading", tone: "chip-processing" },
+  rejected: { key: "rejected", tone: "chip-failed" },
+  failed_retryable: { key: "retrying", tone: "chip-processing" },
+  cold: { key: "archived", tone: "chip-processing" },
+  restoring: { key: "restoring", tone: "chip-processing" },
+  expired: { key: "failed", tone: "chip-failed" },
+} as const;
+
+// The upload and storage statuses, in the Change Detection screen's words.
+function LifecycleChip({ raster }: { raster: Raster }) {
+  const { t } = useTranslation();
+  const chip =
+    raster.status in LIFECYCLE_CHIP
+      ? LIFECYCLE_CHIP[raster.status as keyof typeof LIFECYCLE_CHIP]
+      : { key: "processing", tone: "chip-processing" };
+  return (
+    <span
+      className={`chip ${chip.tone}`}
+      title={raster.reject_reason ?? raster.error ?? raster.stage ?? undefined}
+    >
+      {t(`changeDetection.flight.${chip.key}`)}
+    </span>
+  );
 }
 
 /**

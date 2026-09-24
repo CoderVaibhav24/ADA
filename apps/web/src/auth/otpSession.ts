@@ -113,8 +113,8 @@ function write(tokens: OtpTokens, persist: boolean): void {
 /**
  * The ID token's claims, read for display only.
  *
- * Never a security decision: ada-api verifies every token it is given, and
- * auth/roles.ts reads roles from the access token. This only feeds a name into
+ * Never a security decision: ada-api verifies every token it is given, and the
+ * screens gate on /me/capabilities. This only feeds a name into
  * the top bar, so an unreadable token is a missing name, not a failed sign-in.
  */
 function idTokenClaims(idToken: string): Record<string, unknown> | null {
@@ -261,12 +261,12 @@ function isPersisted(): boolean {
  * renewed is over, and pretending otherwise produces a 401 on every later
  * request instead of a sign-in prompt.
  */
-export async function otpAccessToken(): Promise<string | null> {
+export async function otpAccessToken(force = false): Promise<string | null> {
   const tokens = read();
   if (!tokens) return null;
 
   const now = Math.floor(Date.now() / 1000);
-  if (now < tokens.expires_at - HEADROOM_SECONDS) {
+  if (!force && now < tokens.expires_at - HEADROOM_SECONDS) {
     return tokens.access_token;
   }
 

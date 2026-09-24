@@ -18,9 +18,20 @@
 
 import { cn } from "cn";
 
-import { EmptyState, LoadingState, NoResultsState } from "@/components/icms/states";
+import {
+  EmptyState,
+  LoadingState,
+  NoResultsState,
+} from "@/components/icms/states";
+import { StatusChip } from "@/components/icms/StatusChip";
 import { Button } from "@/components/ui/button";
+import { useCaseStatusLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
+
+import {
+  CASE_STATUS_META,
+  toCaseStatus,
+} from "@/features/complaints/caseStatus";
 
 import type { ChangeDetectionLabels } from "./labels";
 import {
@@ -70,11 +81,14 @@ export function DetectionList({
     <PanelSection
       title={heading}
       headingId="cd-detections-heading"
-      className="min-h-0 flex-1"
-      bodyClassName="flex min-h-0 flex-1 flex-col overflow-y-auto"
+      bodyClassName="max-h-[28rem] overflow-y-auto"
     >
       {status === "loading" && (
-        <LoadingState label={labels.detections.loading} lines={4} className="p-0" />
+        <LoadingState
+          label={labels.detections.loading}
+          lines={4}
+          className="p-0"
+        />
       )}
 
       {status === "error" && error && (
@@ -179,6 +193,10 @@ function DetectionCard({
   const percent = confidencePercent(row.confidence);
   const percentText = labels.detections.confidence(formatNumber(percent));
   const bandText = labels.band(row.band);
+  const caseLabels = useCaseStatusLabels();
+  const caseStatus = row.linkedCase
+    ? toCaseStatus(row.linkedCase.status)
+    : null;
 
   return (
     <li>
@@ -206,12 +224,17 @@ function DetectionCard({
             band={row.band}
             percentText={percentText}
             bandText={bandText}
-            srText={labels.detections.confidenceLabel(formatNumber(percent), bandText)}
+            srText={labels.detections.confidenceLabel(
+              formatNumber(percent),
+              bandText,
+            )}
           />
         </span>
 
         {row.description !== "" && (
-          <span className="line-clamp-2 text-sm text-fg-muted">{row.description}</span>
+          <span className="line-clamp-2 text-sm text-fg-muted">
+            {row.description}
+          </span>
         )}
 
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5">
@@ -221,7 +244,9 @@ function DetectionCard({
           <span aria-hidden className="text-fg-faint">
             ·
           </span>
-          <span className="text-sm text-fg-muted">{labels.status(row.status)}</span>
+          <span className="text-sm text-fg-muted">
+            {labels.status(row.status)}
+          </span>
           {row.reviewStatus !== "pending" && (
             <ReviewChip status={row.reviewStatus}>
               {labels.review.label(row.reviewStatus)}
@@ -231,7 +256,25 @@ function DetectionCard({
 
         {row.redZoneOverlapPct > 0 && (
           <span className="text-2xs text-status-danger-fg">
-            {labels.detections.redZone(formatNumber(Math.round(row.redZoneOverlapPct)))}
+            {labels.detections.redZone(
+              formatNumber(Math.round(row.redZoneOverlapPct)),
+            )}
+          </span>
+        )}
+
+        {row.linkedCase && (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5">
+            <span className="font-mono text-2xs text-fg-muted tabular">
+              {labels.detections.linkedCase(row.linkedCase.ref)}
+            </span>
+            <StatusChip
+              status={
+                caseStatus ? CASE_STATUS_META[caseStatus].chip : "unknown"
+              }
+              size="sm"
+            >
+              {caseStatus ? caseLabels[caseStatus] : row.linkedCase.status}
+            </StatusChip>
           </span>
         )}
       </button>

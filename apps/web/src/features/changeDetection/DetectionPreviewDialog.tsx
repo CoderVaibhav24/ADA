@@ -31,6 +31,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/lib/icons";
 
+import { ActorName } from "@/components/icms/ActorName";
 import type { ChangeDetectionLabels } from "./labels";
 import { confidencePercent, type DetectionRow } from "./model";
 import { Failure, Field, ReviewChip } from "./parts";
@@ -139,7 +140,11 @@ export function DetectionPreviewDialog({
             {formatNumber(row.brightnessDelta)}
           </Field>
           <Field label={labels.detail.reviewedBy}>
-            {row.reviewedBy ?? labels.detail.unreviewed}
+            {row.reviewedBy ? (
+              <ActorName name={row.reviewedByName} id={row.reviewedBy} />
+            ) : (
+              labels.detail.unreviewed
+            )}
           </Field>
           {row.reviewedAt && (
             <Field label={labels.detail.reviewedAt} mono>

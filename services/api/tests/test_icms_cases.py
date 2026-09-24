@@ -585,6 +585,23 @@ class TestAssign:
         assert error["code"] == "assignee_not_a_surveyor"
         assert error["field"] == "assignee_user_id"
 
+    def test_the_surveyor_check_reads_the_check_in_permission(
+        self, icms_client, cases, db, policy_tables
+    ):
+        """Whoever the grants let check in may be assigned, whatever the role is named."""
+        from ada_core.models_icms import RolePermission
+
+        from app.icms import policy
+
+        db.add(RolePermission(role_cd="pcs-nodal-officer", permission_cd="inspection.check_in"))
+        db.commit()
+        policy.reload(db)
+
+        response = icms_client.sign_in(NODAL).post(
+            f"{CASES}/CMP-2026-0001/assign", json={"assignee_user_id": NODAL_ID})
+
+        assert response.status_code == 200, response.text
+
     def test_a_field_surveyor_the_realm_knows_is_assignable(
         self, icms_client, cases, zones, db
     ):
@@ -620,6 +637,29 @@ class TestAssign:
             f"{CASES}/CMP-2026-0001/assign", json={"assignee_user_id": SURVEYOR_B_ID})
 
         assert response.status_code == 200
+
+    def test_the_assignee_picker_lists_zone_surveyors_by_role(
+        self, icms_client, cases, directory
+    ):
+        """Surveyor A holds the role but not TAJ, so only surveyor B is offered."""
+        directory.users[SURVEYOR_B_ID] = {
+            "id": SURVEYOR_B_ID, "username": "surveyor.b", "firstName": "Surveyor",
+            "lastName": "B", "enabled": True,
+        }
+
+        response = icms_client.sign_in(NODAL).get(f"{CASES}/CMP-2026-0001/assignees")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [r["role_cd"] for r in body["roles"]] == ["field-surveyor"]
+        assert [c["user_id"] for c in body["candidates"]] == [SURVEYOR_B_ID]
+        assert body["candidates"][0]["role_cds"] == ["field-surveyor"]
+        assert body["candidates"][0]["name"] == "Surveyor B"
+
+    def test_a_surveyor_cannot_list_assignees(self, icms_client, cases):
+        response = icms_client.sign_in(SURVEYOR).get(f"{CASES}/CMP-2026-0001/assignees")
+
+        assert response.status_code == 403
 
     def test_a_surveyor_cannot_assign(self, icms_client, cases):
         response = icms_client.sign_in(SURVEYOR).post(
@@ -817,3 +857,98 @@ class TestParcelOnRaise:
         assert response.status_code == 200
         assert response.json()["khasra_no"] == "50/2"
         assert response.json()["priority"] == "low"
+
+
+# ---------------------------------------------------------------- stage 2: the assignee is told
+class _FakeNotify:
+    def __init__(self, fail: bool = False):
+        self.calls: list[dict] = []
+        self.fail = fail
+
+    def send(self, **kwargs):
+        from ada_platform.notify import SendOutcome
+
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("ada-notify is down")
+        return SendOutcome(accepted=True, status_code=202)
+
+
+class TestAssignNotifies:
+    @pytest.fixture(autouse=True)
+    def _directory(self, directory):
+        return directory
+
+    @pytest.fixture
+    def notify(self, monkeypatch):
+        from app.config import settings
+        from app.icms import notifier
+
+        fake = _FakeNotify()
+        monkeypatch.setattr(settings, "notify_enabled", True)
+        monkeypatch.setattr(notifier, "_client", fake)
+        return fake
+
+    def _assignment_id(self, db, case):
+        from ada_core.models_icms import CaseAssignment
+        from sqlalchemy import select
+
+        return db.execute(
+            select(CaseAssignment.id).where(
+                CaseAssignment.case_id == case.id, CaseAssignment.active.is_(True))
+        ).scalar_one()
+
+    def test_assign_sends_one_push_to_the_assignee(self, icms_client, cases, db, notify):
+        response = icms_client.sign_in(NODAL).post(
+            f"{CASES}/CMP-2026-0001/assign", json={"assignee_user_id": SURVEYOR_B_ID})
+
+        assert response.status_code == 200
+        assignment_id = self._assignment_id(db, cases["CMP-2026-0001"])
+        assert notify.calls == [{
+            "idempotency_key": f"case_assigned-CMP-2026-0001-{assignment_id}",
+            "recipient": SURVEYOR_B_ID,
+            "template_key": "case_assigned",
+            "payload": {"case_ref": "CMP-2026-0001", "route": "/complaint/CMP-2026-0001"},
+            "channels": ["push", "inapp"],
+        }]
+
+    def test_reassign_notifies_the_new_assignee(self, icms_client, cases, db, notify):
+        response = icms_client.sign_in(NODAL).post(
+            f"{CASES}/CMP-2026-0002/assign",
+            json={"assignee_user_id": SURVEYOR_B_ID, "reason": "workload"})
+
+        assert response.status_code == 200
+        assert len(notify.calls) == 1
+        assert notify.calls[0]["recipient"] == SURVEYOR_B_ID
+        assignment_id = self._assignment_id(db, cases["CMP-2026-0002"])
+        assert notify.calls[0]["idempotency_key"] == (
+            f"case_assigned-CMP-2026-0002-{assignment_id}")
+
+    def test_a_refused_assignment_sends_nothing(self, icms_client, cases, notify):
+        response = icms_client.sign_in(NODAL).post(
+            f"{CASES}/CMP-2026-0002/assign", json={"assignee_user_id": SURVEYOR_B_ID})
+
+        assert response.status_code == 422
+        assert notify.calls == []
+
+    def test_a_notify_failure_does_not_fail_the_assignment(
+        self, icms_client, cases, db, notify
+    ):
+        notify.fail = True
+        response = icms_client.sign_in(NODAL).post(
+            f"{CASES}/CMP-2026-0001/assign", json={"assignee_user_id": SURVEYOR_B_ID})
+
+        assert response.status_code == 200
+        assert response.json()["assignment"]["assignee_user_id"] == SURVEYOR_B_ID
+        assert len(notify.calls) == 1
+        assert self._assignment_id(db, cases["CMP-2026-0001"]) is not None
+
+    def test_disabled_sends_nothing(self, icms_client, cases, notify, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "notify_enabled", False)
+        response = icms_client.sign_in(NODAL).post(
+            f"{CASES}/CMP-2026-0001/assign", json={"assignee_user_id": SURVEYOR_B_ID})
+
+        assert response.status_code == 200
+        assert notify.calls == []

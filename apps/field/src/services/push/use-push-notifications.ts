@@ -9,7 +9,13 @@ import { getSession, onBeforeSignOut, subscribeToSession, type SessionSnapshot }
 import { enablePushFromSettings as askFromSettings, ensureNotificationChannel, primeAndRequestPushPermission } from './permission';
 import { NOTIFY_PATHS } from './constants';
 import { forgetRegistration, notifyRequest, syncRegistration, unregisterDevice } from './registration';
-import { invalidateForNotification, routeFromPayload, type NotificationRoute } from './routing';
+import {
+  invalidateForNotification,
+  notificationHref,
+  notificationTarget,
+  routeFromPayload,
+  type NotificationRoute,
+} from './routing';
 
 /*
  * Push, wired into the app in one call from the root layout.
@@ -136,11 +142,7 @@ export function usePushNotifications(): void {
         if (route.notificationId !== null) {
           void notifyRequest(NOTIFY_PATHS.markRead(route.notificationId));
         }
-        if (route.caseRef !== null) {
-          router.push({ pathname: '/complaint/[caseRef]', params: { caseRef: route.caseRef } });
-        } else {
-          router.push('/notifications');
-        }
+        router.push(notificationHref(notificationTarget(route.type, route.caseRef)), { withAnchor: true });
       });
     return () => {
       cancelled = true;

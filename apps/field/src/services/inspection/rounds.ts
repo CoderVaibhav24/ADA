@@ -30,8 +30,8 @@ import { draftStore, readJson, writeJson } from '@/services/storage/kv';
 export const WIZARD_STEPS = ['check-in', 'photos', 'findings', 'review', 'done'] as const;
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
-// The four step names the stepper shows, in order (ui-registry.md §1).
-export const STEP_TITLES = ['Check-in', 'Photographs', 'Findings', 'Review'] as const;
+// The wizard has four steps; the fifth route is the confirmation.
+export const STEP_COUNT = 4;
 
 export type LocalRound = {
   readonly caseRef: string;
@@ -114,6 +114,11 @@ export function rememberStep(caseRef: string, step: WizardStep): void {
   });
 }
 
+// Forgets the remembered round when it is the one named; the next open asks the server again.
+export function forgetRound(caseRef: string, inspectionRef: string): void {
+  if (localRound(caseRef)?.inspectionRef === inspectionRef) draftStore.remove(roundKey(caseRef));
+}
+
 // Updates the remembered status from a fresher server answer (a submit, a GET).
 export function rememberRoundDetail(caseRef: string, detail: InspectionDetail): void {
   rememberRound(caseRef, detail);
@@ -162,30 +167,21 @@ export async function resolveRound(caseRef: string, surveyorUserId: string): Pro
 }
 
 /*
- * The line a wizard step shows about its round, or null when there is nothing to
- * say. `placeholder` is true while the remembered round is shown during a fetch,
- * which is not "offline" and gets no notice.
+ * What a wizard step says about its round, or null when there is nothing to say.
+ * `placeholder` is true while the remembered round is shown during a fetch, which
+ * is not "offline" and gets no notice. The screen turns the kind into words.
  */
+export type RoundNotice = 'offlineResumed' | 'offlineNotOpen' | 'refused';
+
 export function roundNotice(
   round: ResolvedRound | undefined,
   error: Error | null,
   placeholder: boolean,
-): string | null {
-  if (round !== undefined && round.source === 'device' && !placeholder) {
-    return (
-      `No signal — working on ${round.inspectionRef} as saved on this device. Everything you ` +
-      'capture is kept here and sent when you are back in coverage.'
-    );
-  }
+): RoundNotice | null {
+  if (round !== undefined && round.source === 'device' && !placeholder) return 'offlineResumed';
   if (round !== undefined || error === null) return null;
-  if (error instanceof AdaApiError && error.isOffline) {
-    return (
-      'No signal — the inspection round cannot be opened yet. You can still check in, photograph ' +
-      'the site and record findings; they are kept on this device and sent once the round opens.'
-    );
-  }
-  const code = error instanceof AdaApiError ? ` (${error.code})` : '';
-  return `The inspection round could not be opened: ${error.message}${code}`;
+  if (error instanceof AdaApiError && error.isOffline) return 'offlineNotOpen';
+  return 'refused';
 }
 
 // True when the round failed for a reason other than coverage — the server said no.

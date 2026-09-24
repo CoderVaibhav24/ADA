@@ -182,7 +182,7 @@ def extract(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray, settings,
         if area_px < min_px:
             continue                       # segmenter speck, not a structure
 
-        def frac(mask):
+        def frac(mask, comp=comp, sl=sl, area_px=area_px):
             return float((comp & mask[sl]).sum()) / area_px if mask is not None else 0.0
 
         # Best-matching T1 instance: the one covering most of this footprint.

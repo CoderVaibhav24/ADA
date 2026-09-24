@@ -127,10 +127,8 @@ class TestWhoMayIssue:
         assert response.status_code == 403, response.text
         error = error_of(response)
         assert error["code"] == "role_not_permitted"
-        # The prose and not `allowed`: workflow.RoleNotPermitted consumes the
-        # `required` generator building its message, so the machine-readable list
-        # is empty. Pinned as an xfail in test_contract_errors.py, not fixed here.
         assert "ada-project-lead" in error["message"]
+        assert error["allowed"] == ["ada-project-lead"]
 
     def test_a_surveyor_may_not_read_the_register_at_all(self, icms_client,
                                                          notice_world):

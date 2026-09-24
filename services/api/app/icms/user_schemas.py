@@ -29,10 +29,13 @@ from pydantic import (
 from .collection import CollectionParams
 
 __all__ = [
-    "ASSIGNABLE_ROLES",
+    "assignable_roles",
     "KeycloakUserId",
     "PasswordReset",
     "PasswordResetOut",
+    "ReportingMember",
+    "ReportingRole",
+    "ReportingZone",
     "UserCreate",
     "UserDetail",
     "UserQuery",
@@ -43,11 +46,12 @@ __all__ = [
     "user_row",
 ]
 
-# The four the realm declares. `default-roles-pcsmcpl` and `offline_access` are
-# in every account and are not ours to hand out or take away.
-ASSIGNABLE_ROLES: frozenset[str] = frozenset({
-    "super-admin", "pcs-nodal-officer", "field-surveyor", "ada-project-lead",
-})
+# The active ICMS roles, read from the policy table. `default-roles-pcsmcpl` and
+# `offline_access` are in every account and are not ours to hand out or take away.
+def assignable_roles() -> frozenset[str]:
+    from .security import icms_roles
+
+    return icms_roles()
 
 # Keycloak ids are UUIDs. Pinning the shape in the path stops a crafted id from
 # reaching the Admin API as extra path segments.
@@ -183,6 +187,34 @@ class PasswordResetOut(BaseModel):
     reset_at: IstDateTime
 
 
+class ReportingZone(BaseModel):
+    id: int
+    zone_cd: str
+    name: str
+    name_hi: str | None = None
+
+
+class ReportingMember(BaseModel):
+    id: str
+    username: str
+    first_name: str | None = None
+    last_name: str | None = None
+    enabled: bool
+    zones: list[ReportingZone]
+
+
+class ReportingRole(BaseModel):
+    role_cd: str
+    label: str
+    label_hi: str | None = None
+    level: int = Field(description="0 is the most senior rung of the ladder.")
+    reports_to: str | None = Field(
+        description="The role_cd one rung up, or null for the top and for a role "
+                    "created from Administration that has no place on the ladder yet."
+    )
+    members: list[ReportingMember]
+
+
 # Keycloak stamps creation in epoch milliseconds UTC; the rest of ADA is IST.
 def _created_at(representation: dict) -> datetime | None:
     stamp = representation.get("createdTimestamp")
@@ -213,7 +245,7 @@ def user_row(representation: dict) -> UserRow:
 # invite a client to send it back and have it refused.
 def user_detail(representation: dict, realm_roles: list[dict]) -> UserDetail:
     held = sorted(
-        role["name"] for role in realm_roles if role.get("name") in ASSIGNABLE_ROLES
+        role["name"] for role in realm_roles if role.get("name") in assignable_roles()
     )
     return UserDetail(
         **_row_fields(representation),

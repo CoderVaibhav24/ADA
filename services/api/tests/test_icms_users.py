@@ -55,6 +55,7 @@ WRITES = (
 READS = (
     ("GET", USERS, None),
     ("GET", f"{USERS}/{NODAL_ID}", None),
+    ("GET", "/api/icms/admin/reporting", None),
 )
 
 ALL_OPERATIONS = READS + WRITES
@@ -78,7 +79,7 @@ class TestTheGuards:
     def test_only_super_admin_reaches_officer_administration(
         self, icms_client, policy_tables, keycloak, method, path, body, role
     ):
-        """`user.read` and `user.manage` are granted to super-admin alone in 0003.
+        """`user.read` and every user.* write code are granted to super-admin alone.
         An officer who can mint officers can give themselves every role there is."""
         response = icms_client.sign_in(role).request(method, path, json=body)
 
@@ -206,13 +207,78 @@ class TestCreatingAnOfficer:
         self, icms_client, policy_tables, keycloak
     ):
         """realm-admin exists in the realm. Passing it through would let anybody
-        holding user.manage promote an officer to a realm administrator."""
+        holding user.create promote an officer to a realm administrator."""
         response = icms_client.sign_in(SUPER_ADMIN).post(
             USERS, json={**NEW_OFFICER, "realm_roles": [FORBIDDEN_ROLE]})
 
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "unknown_role"
         assert keycloak.called("create_user") == [], "nothing may be created first"
+
+
+USER_CODES = frozenset({
+    "user.manage", "user.create", "user.update", "user.roles", "user.password",
+    "user.disable",
+})
+
+# Each write, and the codes it needs; toggling `enabled` needs user.disable too.
+WRITE_CODES = (
+    (("POST", USERS, NEW_OFFICER), {"user.create"}),
+    (("PATCH", f"{USERS}/{NODAL_ID}", {"first_name": "Renamed"}), {"user.update"}),
+    (("PATCH", f"{USERS}/{NODAL_ID}", {"enabled": False}), {"user.update", "user.disable"}),
+    (("PUT", f"{USERS}/{NODAL_ID}/roles", {"realm_roles": ["field-surveyor"]}),
+     {"user.roles"}),
+    (("POST", f"{USERS}/{NODAL_ID}/reset-password", {"password": PROBE_PASSWORD}),
+     {"user.password"}),
+)
+
+
+def grant_lead(db, codes):
+    from ada_core.models_icms import RolePermission
+
+    from app.icms import policy
+
+    db.add_all([RolePermission(role_cd=LEAD, permission_cd=code) for code in codes])
+    db.commit()
+    policy.reload(db)
+
+
+def write_id(value):
+    if isinstance(value, tuple):
+        method, path, body = value
+        return f"{method} {path.removeprefix(USERS)} {sorted(body)}"
+    return "+".join(sorted(value))
+
+
+class TestEachWriteHasItsOwnCode:
+    @pytest.mark.parametrize(
+        "operation,missing",
+        [(op, code) for op, needed in WRITE_CODES for code in sorted(needed)],
+        ids=lambda v: write_id(v) if isinstance(v, tuple) else f"without {v}",
+    )
+    def test_every_other_user_code_is_not_enough(
+        self, icms_client, policy_tables, keycloak, db, operation, missing
+    ):
+        """user.manage included: it no longer guards any write."""
+        grant_lead(db, USER_CODES - {missing})
+        method, path, body = operation
+
+        response = icms_client.sign_in(LEAD).request(method, path, json=body)
+
+        assert response.status_code == 403, response.text[:200]
+        assert response.json()["error"]["code"] == "role_not_permitted"
+        assert keycloak.calls == [], "a refused caller must not reach Keycloak at all"
+
+    @pytest.mark.parametrize("operation,needed", WRITE_CODES, ids=write_id)
+    def test_its_own_code_is_enough(
+        self, icms_client, policy_tables, keycloak, db, operation, needed
+    ):
+        grant_lead(db, needed)
+        method, path, body = operation
+
+        response = icms_client.sign_in(LEAD).request(method, path, json=body)
+
+        assert response.status_code in (200, 201), response.text[:200]
 
 
 class TestCreationIsNotAtomic:

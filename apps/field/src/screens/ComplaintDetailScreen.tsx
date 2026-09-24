@@ -1,421 +1,289 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import ClipboardCheck from 'lucide-react-native/icons/clipboard-check';
+import { useState } from 'react';
+import { Alert, StyleSheet, View } from 'react-native';
 
+import { DetailScreenTemplate } from '@/design-system';
+import { CaseState } from '@/design-system/organisms/cases/CaseStates';
 import {
-  Button,
-  Chip,
-  DetailScreenTemplate,
-  DistanceMeta,
-  Icon,
-  InProgressBlock,
-  ListRow,
-  SectionCard,
-  Skeleton,
-  StateMessage,
-  Text,
-  layout,
-  space,
-} from '@/design-system';
-import { CasePriorityChip, CaseStatusChip } from '@/design-system/organisms/ComplaintCard';
-import { EvidenceStrip } from '@/design-system/organisms/EvidenceStrip';
+  AttributeCard,
+  FindingsCard,
+  InstructionCard,
+  MapCard,
+  ResurveyCard,
+  TextCard,
+  type AttributeRow,
+  type FindingRow,
+} from '@/design-system/organisms/cases/DetailSections';
+import { EvidenceGrid, type EvidenceItem } from '@/design-system/organisms/cases/EvidenceGrid';
+import { caseMetrics } from '@/design-system/organisms/cases/palette';
+import {
+  BackGlyph,
+  CaseIcon,
+  CaseText,
+  NavigateGlyph,
+  PrimaryButton,
+  PriorityBadge,
+  SecondaryButton,
+  SectionHeading,
+  SkeletonBlock,
+  distanceText,
+  type StatusTone,
+} from '@/design-system/organisms/cases/primitives';
+import { useComplaintTypeLabel, useSqmLabel } from '@/design-system/organisms/ComplaintCard';
 import {
   caseCoordinates,
   useCaseDetail,
+  useCaseEvidence,
   useResurveyRequests,
   type CaseDetail,
-  type ResurveyRequest,
 } from '@/services/api/case-reads';
-import { errorText, isNotFound } from '@/services/api/error-text';
+import { isNotFound } from '@/services/api/error-text';
 import {
   useCaseInspections,
   useInspectionDetail,
+  useInspectionEvidence,
   type InspectionDetail,
   type InspectionRow,
 } from '@/services/api/inspection-reads';
 import { dataAge } from '@/services/api/query-client';
 import { useCapabilities } from '@/services/config/capabilities';
 import { LABEL_DOMAINS, useCodeLabel } from '@/services/config/labels';
-import { fieldEntryFor } from '@/services/config/work-statuses';
-import { formatAge, formatArea, formatDateTime } from '@/services/format/datetime';
+import { fieldEntryFor, phaseOf, useWorkStatuses, type WorkPhase } from '@/services/config/work-statuses';
+import { areaParts } from '@/services/format/area-units';
+import { formatAge, formatDate, formatDateTime } from '@/services/format/datetime';
+import { useT, type TFunction } from '@/services/i18n';
 import { haversineMeters, useLastKnownPosition } from '@/services/location/last-known';
+import { dialNumber, openInMaps } from '@/services/location/open-maps';
 
 /*
- * Complaint Detail — `174:4991`, `195:2657` and `202:3867` are one screen with two
- * entry points. `from` names the list it was opened from; only the back action
- * differs.
+ * Complaint Detail — Figma 03 (174:4991, open case), 10 (195:2657) and 11 (202:3867)
+ * are one screen. Open case: map, Navigate to site, the office's instruction, facts,
+ * description, evidence, and "Start Ground Inspection" as the one dominant action.
+ * Completed: the same plus Inspection Findings and Remark, then a back button whose
+ * words depend on where the screen was opened (`from`): the Inspections list gets
+ * "Back to Inspection List" (10); the submitted screen's "View Full Report" passes
+ * `from=report` and gets a plain "Back" (11). `round` picks which round's findings show.
  *
- *   GET /api/icms/cases/{case_ref}
- *   GET /api/icms/inspections?case_ref={case_ref}    the case's rounds
- *   GET /api/icms/inspections/{ref}/evidence         per round, in EvidenceStrip
- *   GET /api/icms/evidence/{id}/content              the bytes, with the bearer
- *   GET /api/icms/inspections/{ref}                  the latest submitted round's findings
- *   GET /api/icms/cases/{case_ref}/resurvey-requests
- *
- * The map thumbnail is in progress: there is no static tile endpoint for a parcel.
- * "Start Ground Inspection" appears only when the case's own `allowed_actions` holds
- * an action the capabilities say opens or runs the round.
+ *   GET /api/icms/cases/{ref}               GET /api/icms/cases/{ref}/evidence
+ *   GET /api/icms/inspections?case_ref=     GET /api/icms/inspections/{ref}(/evidence)
+ *   GET /api/icms/cases/{ref}/resurvey-requests
  */
-type Origin = 'complaints' | 'inspections' | 'home';
+type Origin = 'complaints' | 'inspections' | 'home' | 'report';
 
-const BACK: Record<Origin, { label: string; href: '/complaints' | '/inspections' | '/home' }> = {
-  complaints: { label: 'Back to Complaints', href: '/complaints' },
-  inspections: { label: 'Back to Inspection List', href: '/inspections' },
-  home: { label: 'Back to Home', href: '/home' },
+const BACK = {
+  complaints: { key: 'caseDetail.backToComplaints', href: '/complaints' },
+  inspections: { key: 'caseDetail.backToList', href: '/inspections' },
+  home: { key: 'caseDetail.backToHome', href: '/home' },
+  report: { key: 'common.back', href: '/inspections' },
+} as const;
+
+const DOMAINS = {
+  encroachment: 'encroachment_confirmed',
+  support: 'external_support',
+  recommendation: 'recommendation',
+} as const;
+
+const phaseTone: Record<WorkPhase, StatusTone> = {
+  to_start: 'new',
+  underway: 'in_progress',
+  handed_in: 'completed',
+  other: 'other',
 };
 
-// The entry point, from the route param; anything unrecognised returns to Complaints.
 function originOf(value: string | string[] | undefined): Origin {
-  return value === 'inspections' || value === 'home' ? value : 'complaints';
-}
-
-type RowSpec = { label: string; value: string | null | undefined; mono?: boolean };
-
-// ListRows for the values the payload carries; an absent value is left out, not blanked.
-function Rows({ rows }: { rows: readonly RowSpec[] }) {
-  const present = rows.filter(
-    (row): row is RowSpec & { value: string } => typeof row.value === 'string' && row.value !== '',
-  );
-  return (
-    <>
-      {present.map((row, index) => (
-        <ListRow
-          key={row.label}
-          label={row.label}
-          value={row.value}
-          monospaceValue={row.mono === true}
-          showDivider={index < present.length - 1}
-        />
-      ))}
-    </>
-  );
-}
-
-// "Yes" / "No" for a recorded boolean; null when nothing was recorded.
-function yesNo(value: boolean | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  return value ? 'Yes' : 'No';
-}
-
-// The case's own facts: what, where, when, how big, and how far from the last known fix.
-function OverviewCard({ detail }: { detail: CaseDetail }) {
-  const propertyType = useCodeLabel(LABEL_DOMAINS.propertyType);
-  const coordinates = caseCoordinates(detail);
-  const position = useLastKnownPosition(coordinates !== null);
-  const distance =
-    coordinates !== null && position !== null ? haversineMeters(position, coordinates) : null;
-
-  return (
-    <SectionCard
-      title="Complaint"
-      accessory={
-        <View style={styles.chips}>
-          <CasePriorityChip priority={detail.priority} />
-          <CaseStatusChip status={detail.status} />
-        </View>
-      }
-    >
-      <Rows
-        rows={[
-          { label: 'Type', value: detail.complaint_type_label ?? detail.other_type },
-          { label: 'Parcel', value: detail.parcel_id, mono: true },
-          { label: 'Khasra', value: detail.khasra_no, mono: true },
-          { label: 'ULPIN', value: detail.ulpin, mono: true },
-          { label: 'Zone', value: detail.zone_name },
-          { label: 'Address', value: detail.property_address },
-          { label: 'Landmark', value: detail.landmark },
-          { label: 'Police station', value: detail.police_station },
-          { label: 'District', value: detail.district },
-          { label: 'PIN code', value: detail.pin_code, mono: true },
-          {
-            label: 'Property type',
-            value: detail.property_type_cd ? propertyType(detail.property_type_cd) : null,
-          },
-          {
-            label: 'Floors',
-            value:
-              detail.floor_count === null || detail.floor_count === undefined
-                ? null
-                : String(detail.floor_count),
-          },
-          { label: 'Measured area', value: formatArea(detail.measured_area_sqm) },
-          { label: 'Raised', value: formatDateTime(detail.raised_at) },
-        ]}
-      />
-      {distance !== null ? <DistanceMeta distanceMeters={distance} stale /> : null}
-    </SectionCard>
-  );
-}
-
-// Who complained, as far as the case records it.
-function ComplainantCard({ detail }: { detail: CaseDetail }) {
-  const recorded = detail.complainant_name ?? detail.complainant_phone ?? detail.complainant_email;
-  return (
-    <SectionCard title="Complainant">
-      {recorded ? (
-        <Rows
-          rows={[
-            { label: 'Name', value: detail.complainant_name },
-            { label: 'Phone', value: detail.complainant_phone, mono: true },
-            { label: 'Email', value: detail.complainant_email, mono: true },
-          ]}
-        />
-      ) : (
-        <Text variant="body" color="ink3">
-          No complainant details are recorded on this case.
-        </Text>
-      )}
-    </SectionCard>
-  );
-}
-
-// One round with its evidence strip. Append-only: nothing here removes a capture.
-function RoundBlock({ round, statusLabel }: { round: InspectionRow; statusLabel: string }) {
-  const when = formatDateTime(round.submitted_at ?? round.started_at ?? round.scheduled_for);
-  return (
-    <View style={styles.block}>
-      <View style={styles.inline}>
-        <Text variant="subheading" style={styles.flex}>
-          {`Round ${round.round_no}`}
-        </Text>
-        <Chip label={statusLabel} tone="ink2" dot size="sm" />
-      </View>
-      <Text variant="mono" color="ink2" selectable>
-        {round.inspection_ref}
-      </Text>
-      {when ? (
-        <Text variant="caption" color="ink3">
-          {when}
-        </Text>
-      ) : null}
-      <EvidenceStrip inspectionRef={round.inspection_ref} />
-    </View>
-  );
-}
-
-// Every round on the case, oldest first, each with what was captured on it.
-function RoundsCard({ caseRef }: { caseRef: string }) {
-  const rounds = useCaseInspections(caseRef);
-  const statusLabel = useCodeLabel(LABEL_DOMAINS.inspectionStatus);
-
-  let body: React.ReactNode;
-  if (rounds.isPending) {
-    body = <Skeleton height={layout.touchMin * 2} />;
-  } else if (rounds.error !== null && rounds.data === undefined) {
-    const failure = errorText(rounds.error);
-    body = (
-      <StateMessage
-        tone={failure.offline ? 'offline' : 'error'}
-        title="Rounds could not be loaded"
-        message={failure.message}
-        reference={failure.requestId}
-        actionLabel="Try again"
-        onAction={() => void rounds.refetch()}
-      />
-    );
-  } else if ((rounds.data ?? []).length === 0) {
-    body = (
-      <Text variant="body" color="ink3">
-        No inspection round has been opened on this case yet.
-      </Text>
-    );
-  } else {
-    body = (rounds.data ?? []).map((round) => (
-      <RoundBlock
-        key={round.inspection_ref}
-        round={round}
-        statusLabel={statusLabel(round.status)}
-      />
-    ));
-  }
-
-  return <SectionCard title="Submitted evidence">{body}</SectionCard>;
-}
-
-// The findings and remark of one submitted round (`195:2657`).
-function FindingsCard({ inspection }: { inspection: InspectionDetail }) {
-  const areaType = useCodeLabel(LABEL_DOMAINS.areaType);
-  const findings = inspection.findings ?? [];
-  return (
-    <SectionCard title={`Inspection findings · Round ${inspection.round_no}`}>
-      <Rows
-        rows={[
-          { label: 'Submitted', value: formatDateTime(inspection.submitted_at) },
-          { label: 'Measured area', value: formatArea(inspection.measured_area_sqm) },
-          {
-            label: 'Area type',
-            value: inspection.area_type_cd ? areaType(inspection.area_type_cd) : null,
-          },
-          { label: 'Occupant', value: inspection.occupant_name },
-          { label: 'Occupant phone', value: inspection.occupant_phone, mono: true },
-          { label: 'Notice required', value: yesNo(inspection.notice_required) },
-        ]}
-      />
-      {findings.length > 0 ? (
-        <View style={styles.block}>
-          <Text variant="label">Findings</Text>
-          {findings.map((finding) => (
-            <View key={finding.seq} style={styles.inline}>
-              <Icon name="check" size="sm" color="ink2" />
-              <Text variant="body" style={styles.flex}>
-                {finding.finding}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
-      {inspection.officer_note ? (
-        <View style={styles.block}>
-          <Text variant="label">Remark</Text>
-          <Text variant="body">{inspection.officer_note}</Text>
-        </View>
-      ) : null}
-    </SectionCard>
-  );
+  return value === 'inspections' || value === 'home' || value === 'report' ? value : 'complaints';
 }
 
 // The latest round that has been submitted, or null.
 function latestSubmitted(rounds: readonly InspectionRow[] | undefined): InspectionRow | null {
-  const submitted = (rounds ?? []).filter(
-    (round) => round.submitted_at !== null && round.submitted_at !== undefined,
-  );
+  const submitted = (rounds ?? []).filter((round) => round.submitted_at);
   return submitted.length === 0 ? null : submitted[submitted.length - 1];
 }
 
-// Loads the latest submitted round and shows its findings; nothing while no round is submitted.
-function LatestFindings({ caseRef }: { caseRef: string }) {
-  const rounds = useCaseInspections(caseRef);
-  const latest = latestSubmitted(rounds.data);
-  const detail = useInspectionDetail(latest?.inspection_ref ?? null);
-
-  if (latest === null) return null;
-  if (detail.isPending) {
-    return (
-      <SectionCard title="Inspection findings">
-        <Skeleton height={layout.touchMin * 2} />
-      </SectionCard>
-    );
-  }
-  if (detail.error !== null && detail.data === undefined) {
-    // Narrowed away from this caller (a reassigned round, or a stale cached reference):
-    // this block degrades on its own; the rest of the case still reads fine.
-    if (isNotFound(detail.error)) {
-      return (
-        <SectionCard title="Inspection findings">
-          <Text variant="body" color="ink3">
-            Not available to you.
-          </Text>
-        </SectionCard>
-      );
-    }
-    const failure = errorText(detail.error);
-    return (
-      <SectionCard title="Inspection findings">
-        <StateMessage
-          tone={failure.offline ? 'offline' : 'error'}
-          title="Findings could not be loaded"
-          message={failure.message}
-          reference={failure.requestId}
-          actionLabel="Try again"
-          onAction={() => void detail.refetch()}
-        />
-      </SectionCard>
-    );
-  }
-  return detail.data ? <FindingsCard inspection={detail.data} /> : null;
+// "Permanent Structure (RCC)" -> ["Permanent Structure", "(RCC)"], as 10 draws it.
+function splitCaption(label: string): { main: string; caption: string | null } {
+  const match = /^(.*?)\s*(\([^)]*\))\s*$/.exec(label);
+  return match && match[1] !== '' ? { main: match[1], caption: match[2] } : { main: label, caption: null };
 }
 
-// One re-survey request: why, when, and what was decided.
-function ResurveyItem({
-  request,
-  decisionLabel,
-}: {
-  request: ResurveyRequest;
-  decisionLabel: string;
-}) {
-  const requested = formatDateTime(request.requested_at);
+// "2,000 sq ft (185.8 sq.m)", or a dash when nothing was measured.
+function areaBoth(sqm: number | null | undefined, t: TFunction): string {
+  const parts = areaParts(sqm);
+  if (parts === null) return '—';
+  return t('cases.area.both', {
+    sqft: t('cases.area.sqft', { value: parts.sqft }),
+    sqm: t('cases.area.sqm', { value: parts.sqm }),
+  });
+}
+
+// The rows of the Inspection Findings card, from the structured answers.
+function useFindingRows(detail: CaseDetail, inspection: InspectionDetail | undefined): FindingRow[] {
+  const t = useT();
+  const areaType = useCodeLabel(LABEL_DOMAINS.areaType);
+  const encroachment = useCodeLabel(DOMAINS.encroachment);
+  const support = useCodeLabel(DOMAINS.support);
+  const recommendation = useCodeLabel(DOMAINS.recommendation);
+  const rows: FindingRow[] = [];
+  if (inspection === undefined) return rows;
+  if (detail.parcel_id) rows.push({ label: t('caseDetail.findings.parcel'), value: detail.parcel_id });
+  rows.push({ label: t('caseDetail.findings.area'), value: areaBoth(inspection.measured_area_sqm, t) });
+  if (inspection.area_type_cd) {
+    const split = splitCaption(areaType(inspection.area_type_cd));
+    rows.push({ label: t('caseDetail.findings.type'), value: split.main, caption: split.caption });
+  }
+  if (inspection.encroachment_confirmed_cd) {
+    rows.push({
+      label: t('caseDetail.findings.confirmed'),
+      value: encroachment(inspection.encroachment_confirmed_cd),
+    });
+  }
+  if (inspection.external_support_cd) {
+    rows.push({ label: t('caseDetail.findings.support'), value: support(inspection.external_support_cd) });
+  }
+  if (inspection.recommendation_cd) {
+    rows.push({
+      label: t('caseDetail.findings.recommendation'),
+      value: recommendation(inspection.recommendation_cd),
+      pill: true,
+    });
+  }
+  if (inspection.occupant_name) {
+    rows.push({ label: t('caseDetail.findings.occupant'), value: inspection.occupant_name });
+  }
+  const submitted = formatDateTime(inspection.submitted_at);
+  if (submitted) rows.push({ label: t('caseDetail.findings.submitted'), value: submitted });
+  return rows;
+}
+
+// Findings, site photos and remark for one round (10's lower half).
+function RoundReport({ detail, roundRef }: { detail: CaseDetail; roundRef: string }) {
+  const t = useT();
+  const inspection = useInspectionDetail(roundRef);
+  const evidence = useInspectionEvidence(roundRef);
+  const rows = useFindingRows(detail, inspection.data);
+
+  if (inspection.isPending) return <SkeletonBlock height={240} />;
+  if (inspection.error !== null && inspection.data === undefined) {
+    if (isNotFound(inspection.error)) {
+      return (
+        <View style={styles.section}>
+          <SectionHeading>{t('caseDetail.findings')}</SectionHeading>
+          <TextCard text={t('caseDetail.findings.hidden')} />
+        </View>
+      );
+    }
+    return (
+      <CaseState
+        kind="error"
+        title={t('caseDetail.findings.error')}
+        error={inspection.error}
+        onAction={() => void inspection.refetch()}
+      />
+    );
+  }
+  const data = inspection.data;
+  if (data === undefined) return null;
+  // Rounds from before the structured answers carry only the free-text lines.
+  const notes = data.encroachment_confirmed_cd ? [] : (data.findings ?? []).map((finding) => finding.finding);
+  const photos: EvidenceItem[] = (evidence.data ?? [])
+    .filter((item) => item.kind === 'photo')
+    .map((item) => ({
+      id: item.id,
+      contentUrl: item.content_url,
+      isImage: item.content_type?.startsWith('image/') === true,
+      name: item.original_filename ?? null,
+    }));
   return (
-    <View style={styles.block}>
-      <View style={styles.inline}>
-        <Text variant="subheading" style={styles.flex}>
-          {`After round ${request.from_round}`}
-        </Text>
-        <Chip label={decisionLabel} tone="ink2" size="sm" />
+    <>
+      <View style={styles.section}>
+        <SectionHeading>{t('caseDetail.findings')}</SectionHeading>
+        <FindingsCard rows={rows} notes={notes} />
       </View>
-      <Text variant="body">{request.reason}</Text>
-      {requested ? (
-        <Text variant="caption" color="ink3">
-          {`Requested ${requested}`}
-        </Text>
+      {photos.length > 0 ? (
+        <View style={styles.section}>
+          <SectionHeading>{t('caseDetail.sitePhotos')}</SectionHeading>
+          <EvidenceGrid items={photos} />
+        </View>
       ) : null}
-      {request.decision_note ? (
-        <Text variant="body" color="ink2">
-          {request.decision_note}
-        </Text>
-      ) : null}
-      {request.resulting_round !== null && request.resulting_round !== undefined ? (
-        <Text variant="caption" color="ink3">
-          {`Opened round ${request.resulting_round}`}
-        </Text>
-      ) : null}
+      <View style={styles.section}>
+        <SectionHeading>{t('caseDetail.remark')}</SectionHeading>
+        <TextCard text={data.officer_note?.trim() ? data.officer_note : t('caseDetail.remarkNone')} />
+      </View>
+    </>
+  );
+}
+
+// The complaint's own attachments, as 2-column tiles.
+function ComplaintEvidence({ caseRef }: { caseRef: string }) {
+  const t = useT();
+  const evidence = useCaseEvidence(caseRef);
+  let body: React.ReactNode;
+  if (evidence.isPending) {
+    body = <SkeletonBlock height={caseMetrics.evidenceHeight} />;
+  } else if (evidence.error !== null && evidence.data === undefined) {
+    body = (
+      <CaseText kind="cardFoot" color="statusSentBack" accessibilityRole="alert">
+        {t('caseDetail.evidenceError')}
+      </CaseText>
+    );
+  } else if ((evidence.data ?? []).length === 0) {
+    body = (
+      <CaseText kind="panelSub" color="viewInk">
+        {t('caseDetail.evidenceNone')}
+      </CaseText>
+    );
+  } else {
+    body = (
+      <EvidenceGrid
+        items={(evidence.data ?? []).map((item) => ({
+          id: item.id,
+          contentUrl: item.content_url,
+          isImage: item.content_type?.startsWith('image/') === true,
+          name: item.filename ?? item.caption ?? null,
+        }))}
+      />
+    );
+  }
+  return (
+    <View style={styles.section}>
+      <SectionHeading>{t('caseDetail.evidence')}</SectionHeading>
+      {body}
     </View>
   );
 }
 
-// Every re-survey request on the case, newest first; absent when there are none.
-function ResurveyCard({ caseRef }: { caseRef: string }) {
-  const requests = useResurveyRequests(caseRef);
-  const decisionLabel = useCodeLabel(LABEL_DOMAINS.resurveyDecision);
-
-  if (requests.isPending) {
-    return (
-      <SectionCard title="Re-survey requests">
-        <Skeleton height={layout.touchMin} />
-      </SectionCard>
-    );
-  }
-  if (requests.error !== null && requests.data === undefined) {
-    return (
-      <SectionCard title="Re-survey requests">
-        <Text variant="body" color="ink1" accessibilityRole="alert">
-          {errorText(requests.error).message}
-        </Text>
-      </SectionCard>
-    );
-  }
-  const items = requests.data ?? [];
-  if (items.length === 0) return null;
-  return (
-    <SectionCard title="Re-survey requests">
-      {items.map((request) => (
-        <ResurveyItem
-          key={request.id}
-          request={request}
-          decisionLabel={decisionLabel(request.decision)}
-        />
-      ))}
-    </SectionCard>
-  );
-}
-
 export function ComplaintDetailScreen() {
+  const t = useT();
   const router = useRouter();
-  const params = useLocalSearchParams<{ caseRef: string; from?: string }>();
+  const params = useLocalSearchParams<{ caseRef: string; from?: string; round?: string }>();
   const caseRef = typeof params.caseRef === 'string' ? params.caseRef : '';
   const origin = originOf(params.from);
   const back = BACK[origin];
 
   const detail = useCaseDetail(caseRef);
   const capabilities = useCapabilities();
+  const work = useWorkStatuses();
   const rounds = useCaseInspections(caseRef);
   const resurvey = useResurveyRequests(caseRef);
+  const caseStatus = useCodeLabel(LABEL_DOMAINS.caseStatus);
+  const typeLabel = useComplaintTypeLabel();
+  const sqm = useSqmLabel();
+  const [mapProblem, setMapProblem] = useState<string | null>(null);
 
-  // Returns to the list the screen was opened from.
+  const coordinates = caseCoordinates(detail.data);
+  const position = useLastKnownPosition(coordinates !== null);
+
   const onBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace(back.href);
   };
+  // 10's button goes to the list itself, whatever the stack holds.
+  const onBottomBack = () => {
+    if (origin === 'inspections') router.navigate('/inspections');
+    else onBack();
+  };
 
-  // Refetches the case and everything hanging off it.
   const onRefresh = () => {
     void detail.refetch();
     void rounds.refetch();
@@ -423,86 +291,166 @@ export function ComplaintDetailScreen() {
     void capabilities.refetch();
   };
 
-  const entry = detail.data
-    ? fieldEntryFor(capabilities.data, detail.data.allowed_actions, detail.data.status)
-    : null;
+  const data = detail.data;
+  const entry = data ? fieldEntryFor(capabilities.data, data.allowed_actions, data.status) : null;
+  const requested = typeof params.round === 'string' && params.round !== '' ? params.round : null;
+  const roundRef = requested ?? latestSubmitted(rounds.data)?.inspection_ref ?? null;
+  const completed = data !== undefined && entry === null && roundRef !== null;
 
   const age = dataAge(detail.dataUpdatedAt);
   const freshness =
-    age.isStale && age.fetchedAt ? `Updated ${formatAge(age.fetchedAt) ?? ''}` : undefined;
+    age.isStale && age.fetchedAt ? t('cases.updated', { age: formatAge(age.fetchedAt) ?? '' }) : undefined;
+
+  const target = {
+    latitude: coordinates?.latitude,
+    longitude: coordinates?.longitude,
+    address: [data?.property_address, data?.landmark, data?.district].filter(Boolean).join(', '),
+  };
+  const openMap = async (mode: 'directions' | 'show') => {
+    setMapProblem(null);
+    if (coordinates === null && target.address === '') {
+      setMapProblem(t('caseDetail.navigateNothing'));
+      return;
+    }
+    const opened = await openInMaps(target, mode);
+    if (!opened) setMapProblem(t('caseDetail.navigateFailed'));
+  };
 
   let body: React.ReactNode;
   if (detail.isPending) {
     body = (
-      <>
-        <Skeleton height={layout.touchMin * 3} shape="md" />
-        <Skeleton height={layout.touchMin * 4} shape="md" />
-        <Skeleton height={layout.touchMin * 2} shape="md" />
-      </>
+      <View style={styles.column} accessibilityLabel={t('common.loading')}>
+        <SkeletonBlock height={250} />
+        <SkeletonBlock height={220} />
+        <SkeletonBlock height={100} />
+      </View>
     );
-  } else if (detail.error !== null && detail.data === undefined) {
-    const failure = errorText(detail.error);
-    body = (
-      <StateMessage
-        tone={failure.offline ? 'offline' : 'error'}
-        title="This complaint could not be loaded"
-        message={failure.message}
-        reference={failure.requestId}
-        actionLabel="Try again"
+  } else if (detail.error !== null && data === undefined) {
+    body = isNotFound(detail.error) ? (
+      <CaseState kind="empty" title={t('caseDetail.error.title')} body={t('caseDetail.error.gone')} />
+    ) : (
+      <CaseState
+        kind="error"
+        title={t('caseDetail.error.title')}
+        error={detail.error}
         onAction={() => void detail.refetch()}
       />
     );
-  } else if (detail.data) {
-    const data = detail.data;
+  } else if (data) {
+    const status = completed && roundRef ? 'completed' : phaseTone[phaseOf(work.data, data.status)];
+    const distance =
+      coordinates !== null && position !== null ? distanceText(haversineMeters(position, coordinates), t) : null;
+    const attributes: AttributeRow[] = [{ label: t('caseDetail.row.complaintId'), value: data.case_ref }];
+    if (data.complainant_name) attributes.push({ label: t('caseDetail.row.complainant'), value: data.complainant_name });
+    if (data.complainant_phone) {
+      const number = data.complainant_phone;
+      attributes.push({
+        label: t('caseDetail.row.contact'),
+        value: number,
+        callLabel: t('caseDetail.callA11y', { number }),
+        onCall: () =>
+          void dialNumber(number).then((ok) => {
+            if (!ok) Alert.alert(t('caseDetail.callFailed', { number }));
+          }),
+      });
+    }
+    if (data.parcel_id) attributes.push({ label: t('caseDetail.row.parcel'), value: data.parcel_id });
+    const reported = sqm(data.measured_area_sqm);
+    if (reported) attributes.push({ label: t('caseDetail.row.reportedArea'), value: reported });
+    if (data.landmark) attributes.push({ label: t('caseDetail.row.landmark'), value: data.landmark });
+
+    const openRound = (rounds.data ?? []).filter((round) => !round.submitted_at).at(-1);
+    const assignment = data.assignment?.active ? data.assignment : null;
+    const visit = formatDateTime(openRound?.scheduled_for);
+    const given = formatDate(assignment?.assigned_at);
+    const instructionRows = [
+      ...(visit ? [{ label: t('caseDetail.visitDate'), value: visit }] : []),
+      ...(given ? [{ label: t('caseDetail.givenOn'), value: given }] : []),
+    ];
+    const showInstruction = !completed && (Boolean(assignment?.note) || visit !== null);
+    const resurveyItems = (resurvey.data ?? []).map((request) => ({
+      key: String(request.id),
+      reason: request.reason,
+      when: formatDate(request.requested_at),
+    }));
+
     body = (
-      <>
-        {detail.error !== null ? (
-          <Text variant="caption" color="statusOverdue" accessibilityRole="alert">
-            {errorText(detail.error).message}
-          </Text>
+      <View style={styles.column}>
+        <MapCard
+          title={typeLabel(data)}
+          statusTone={status}
+          statusLabel={caseStatus(data.status)}
+          address={data.property_address ?? null}
+          distance={distance}
+          point={coordinates}
+          onOpenMap={() => void openMap('show')}
+        />
+        {!completed ? (
+          <SecondaryButton
+            label={t('caseDetail.navigate')}
+            accessibilityHint={t('caseDetail.navigateHint')}
+            onPress={() => void openMap('directions')}
+            icon={<NavigateGlyph size={20} />}
+            fullWidth
+            style={styles.navigate}
+          />
         ) : null}
-        <InProgressBlock title="Parcel map" />
-        <OverviewCard detail={data} />
-        <ComplainantCard detail={data} />
-        <SectionCard title="Description">
-          <Text variant="body" color={data.detail ? 'ink1' : 'ink3'}>
-            {data.detail ?? 'No description is recorded on this case.'}
-          </Text>
-        </SectionCard>
-        <RoundsCard caseRef={caseRef} />
-        <LatestFindings caseRef={caseRef} />
-        <ResurveyCard caseRef={caseRef} />
-      </>
+        {mapProblem ? (
+          <CaseText kind="cardMeta" color="statusSentBack" accessibilityRole="alert">
+            {mapProblem}
+          </CaseText>
+        ) : null}
+        {!completed && resurveyItems.length > 0 ? <ResurveyCard items={resurveyItems} /> : null}
+        {showInstruction ? <InstructionCard note={assignment?.note ?? null} rows={instructionRows} /> : null}
+        <AttributeCard
+          rows={attributes}
+          labelColor={completed ? 'rowLabelDone' : 'rowLabel'}
+          trailingDivider={completed}
+          footer={!completed && data.priority ? <PriorityBadge priority={data.priority} /> : undefined}
+        />
+        <View style={styles.section}>
+          <SectionHeading>{t('caseDetail.description')}</SectionHeading>
+          <TextCard text={data.detail?.trim() ? data.detail : t('caseDetail.descriptionNone')} trailingDivider />
+        </View>
+        <ComplaintEvidence caseRef={caseRef} />
+        {completed && roundRef ? <RoundReport detail={data} roundRef={roundRef} /> : null}
+        {entry === null ? (
+          <SecondaryButton
+            label={t(back.key)}
+            onPress={onBottomBack}
+            ink={origin === 'inspections' ? 'secondaryInk' : 'white'}
+            icon={<BackGlyph color={origin === 'inspections' ? 'secondaryInk' : 'white'} />}
+            style={styles.bottomBack}
+          />
+        ) : null}
+      </View>
     );
   }
 
   return (
     <DetailScreenTemplate
-      title="Complaint Details"
+      title={t(completed ? 'caseDetail.title.done' : 'caseDetail.title.open')}
       onBack={onBack}
-      backAccessibilityLabel={back.label}
+      backAccessibilityLabel={t(back.key)}
       subtitle={
         caseRef !== '' ? (
-          <Text variant="mono" color="ink2" selectable>
+          <CaseText kind="panelSub" color="muted" selectable>
             {caseRef}
-          </Text>
+          </CaseText>
         ) : undefined
       }
+      showPendingBanner
       freshnessLabel={freshness}
       onRefresh={onRefresh}
       refreshing={detail.isRefetching}
       footer={
         entry !== null ? (
-          <Button
-            label={entry.kind === 'start' ? 'Start Ground Inspection' : 'Continue Ground Inspection'}
-            size="lg"
-            onPress={() =>
-              router.push({ pathname: '/inspection/[caseRef]', params: { caseRef } })
-            }
-            leadingIcon={<Icon name="navigate" size="md" color="inkOnMuted" />}
+          <PrimaryButton
+            label={t(entry.kind === 'start' ? 'caseDetail.start' : 'caseDetail.resume')}
+            accessibilityHint={t('caseDetail.startHint')}
+            onPress={() => router.push({ pathname: '/inspection/[caseRef]', params: { caseRef } })}
+            icon={<CaseIcon glyph={ClipboardCheck} size={20} color="white" />}
           />
-        ) : origin === 'inspections' ? (
-          <Button label={back.label} variant="secondary" onPress={onBack} />
         ) : undefined
       }
     >
@@ -512,8 +460,8 @@ export function ComplaintDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  chips: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  inline: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  flex: { flex: 1 },
-  block: { gap: space[2], paddingTop: space[2] },
+  column: { gap: caseMetrics.sectionGap },
+  section: { gap: caseMetrics.headingGap },
+  navigate: { minHeight: caseMetrics.primaryHeight },
+  bottomBack: { marginTop: 10 },
 });

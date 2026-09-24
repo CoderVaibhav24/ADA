@@ -54,7 +54,7 @@ export type UserLabels = {
   };
 
   /** The realm role code, in words. Falls back to the code itself. */
-  role: (roleCd: string) => string;
+  role: (roleCd: string, fallback?: string) => string;
   /** One line on what the role is for. Empty for a code we do not know. */
   roleHint: (roleCd: string) => string;
   /** A Keycloak required action, in words. Falls back to the raw name. */
@@ -194,6 +194,21 @@ export type UserLabels = {
     denied: string;
   };
 
+  zones: {
+    title: string;
+    subtitle: string;
+    none: string;
+    remove: string;
+    removeLabel: (zone: string) => string;
+    addLabel: string;
+    addPlaceholder: string;
+    loadingZones: string;
+    noneLeft: string;
+    add: string;
+    adding: string;
+    denied: string;
+  };
+
   password: {
     title: string;
     subtitle: string;
@@ -238,7 +253,8 @@ export function useUserLabels(): UserLabels {
         refusedTitle: t("users.error.refusedTitle"),
       },
 
-      role: (roleCd: string) => t(`users.roleLabels.${roleCd}`, { defaultValue: roleCd }),
+      role: (roleCd: string, fallback?: string) =>
+        t(`users.roleLabels.${roleCd}`, { defaultValue: fallback ?? roleCd }),
       roleHint: (roleCd: string) => t(`users.roleHints.${roleCd}`, { defaultValue: "" }),
       requiredAction: (action: string) =>
         t(`users.requiredActions.${action}`, { defaultValue: action }),
@@ -380,6 +396,21 @@ export function useUserLabels(): UserLabels {
         savedTitle: t("users.roles.savedTitle"),
         savedBody: (name: string) => t("users.roles.savedBody", { name }),
         denied: t("users.roles.denied"),
+      },
+
+      zones: {
+        title: t("users.zones.title"),
+        subtitle: t("users.zones.subtitle"),
+        none: t("users.zones.none"),
+        remove: t("users.zones.remove"),
+        removeLabel: (zone: string) => t("users.zones.removeLabel", { zone }),
+        addLabel: t("users.zones.addLabel"),
+        addPlaceholder: t("users.zones.addPlaceholder"),
+        loadingZones: t("users.zones.loadingZones"),
+        noneLeft: t("users.zones.noneLeft"),
+        add: t("users.zones.add"),
+        adding: t("users.zones.adding"),
+        denied: t("users.zones.denied"),
       },
 
       password: {

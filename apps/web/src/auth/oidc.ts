@@ -127,6 +127,16 @@ export async function accessToken(): Promise<string | null> {
   return renewOnce();
 }
 
+// After a server 401 the cached token is the one it refused; this always asks the issuer for a new one.
+export async function renewAccessToken(): Promise<string | null> {
+  if (hasOtpSession()) {
+    const renewed = await otpAccessToken(true);
+    cached = renewed;
+    return renewed;
+  }
+  return renewOnce();
+}
+
 let renewing: Promise<string | null> | null = null;
 
 function renewOnce(): Promise<string | null> {
@@ -158,17 +168,20 @@ export type LoginAction = "CONFIGURE_TOTP";
 
 export interface LoginOptions {
   action?: LoginAction;
+  /** Prefills Keycloak's username field so the officer is not asked for it twice. */
+  loginHint?: string;
 }
 
-// kc_action rides on the authorize request; it is omitted rather than sent
-// empty, because Keycloak rejects a blank kc_action instead of ignoring it.
+// kc_action and login_hint are omitted rather than sent empty: Keycloak rejects a blank kc_action.
 export async function login(returnTo?: string, options?: LoginOptions): Promise<void> {
   const m = await auth();
   const target = safeReturnTo(
     returnTo ?? window.location.pathname + window.location.search,
   );
+  const hint = options?.loginHint?.trim();
   await m.signinRedirect({
     state: { returnTo: target },
+    ...(hint ? { login_hint: hint } : {}),
     ...(options?.action ? { extraQueryParams: { kc_action: options.action } } : {}),
   });
 }

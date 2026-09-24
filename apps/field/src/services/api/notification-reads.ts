@@ -6,6 +6,7 @@ import {
 
 import type { components } from '@ada/api-types/notify-api';
 
+import { useLocale, type Locale } from '@/services/i18n';
 import { NOTIFY_PATHS, NOTIFY_PROJECT, pushEnv } from '@/services/push/constants';
 import { notifyRequest } from '@/services/push/registration';
 
@@ -21,7 +22,15 @@ type NotifySchemas = components['schemas'];
  * An item is a routing hint plus display text. Nothing in it is case data: a tap
  * opens the case, and the case screen reads the case from ada-api.
  */
-export type InboxItem = NotifySchemas['InboxItem'];
+export type InboxItemData = {
+  readonly type?: string | null;
+  readonly case_ref?: string | null;
+  readonly inspection_ref?: string | null;
+  readonly notice_ref?: string | null;
+  readonly route?: string | null;
+};
+// `data` is absent on older ada-notify builds; readers fall back to the top-level type and case_ref.
+export type InboxItem = Omit<NotifySchemas['InboxItem'], 'data'> & { data?: InboxItemData | null };
 export type InboxPage = NotifySchemas['InboxPage'];
 
 export const INBOX_PAGE_SIZE = 20;
@@ -34,19 +43,20 @@ export const notificationKeys = {
 // False in a build without `notifyBaseUrl`; the inbox then has nothing to call.
 export const inboxConfigured = pushEnv.notifyBaseUrl !== null;
 
-// One page of the inbox, newest first; `cursor` is the server's opaque `next_cursor`.
-export function fetchInboxPage(cursor: string | null, signal?: AbortSignal): Promise<InboxPage> {
+// One page of the inbox, newest first, text in `locale`; `cursor` is the server's opaque `next_cursor`.
+export function fetchInboxPage(cursor: string | null, locale: Locale, signal?: AbortSignal): Promise<InboxPage> {
   return authenticatedRequest<InboxPage>(pushEnv.notifyBaseUrl ?? '', NOTIFY_PATHS.notifications, {
-    query: { limit: INBOX_PAGE_SIZE, cursor, project: NOTIFY_PROJECT },
+    query: { limit: INBOX_PAGE_SIZE, cursor, project: NOTIFY_PROJECT, locale },
     signal,
   });
 }
 
 // The whole inbox as cursor pages. Home reads the first page; the Notifications screen scrolls on.
 export function useInbox(): UseInfiniteQueryResult<InfiniteData<InboxPage, string | null>, Error> {
+  const locale = useLocale();
   return useInfiniteQuery({
-    queryKey: notificationKeys.list,
-    queryFn: ({ pageParam, signal }) => fetchInboxPage(pageParam, signal),
+    queryKey: [...notificationKeys.list, locale],
+    queryFn: ({ pageParam, signal }) => fetchInboxPage(pageParam, locale, signal),
     initialPageParam: null as string | null,
     getNextPageParam: (last: InboxPage) => last.next_cursor ?? undefined,
     enabled: inboxConfigured,
@@ -55,7 +65,7 @@ export function useInbox(): UseInfiniteQueryResult<InfiniteData<InboxPage, strin
 
 // Flips one cached item to read and takes it off the unread count, until the refetch confirms.
 function markReadInCache(id: string): void {
-  queryClient.setQueryData<InfiniteData<InboxPage, string | null>>(notificationKeys.list, (data) => {
+  queryClient.setQueriesData<InfiniteData<InboxPage, string | null>>({ queryKey: notificationKeys.list }, (data) => {
     if (data === undefined) return data;
     return {
       ...data,

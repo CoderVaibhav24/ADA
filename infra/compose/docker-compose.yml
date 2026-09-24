@@ -180,6 +180,59 @@ services:
       start_period: 15s
     networks: [ada]
 
+  # Cold-tier object store for dev (docs/ADA-Upload-and-ML-Runtime-Design.md §5).
+  # `docker compose --profile cold up -d` starts it; ada-api's COLD_STORE_ENDPOINT
+  # must then point at it (see .env.example). Off by default: no profile, no cost.
+  minio:
+    image: minio/minio:latest
+    container_name: ada-minio
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["cold"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${COLD_STORE_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${COLD_STORE_SECRET_KEY:-minioadmin}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [ada]
+
+  # One-shot: creates the cold bucket with Object Lock + versioning. Re-running
+  # against an existing bucket is a no-op (mb failure is swallowed).
+  minio-init:
+    image: minio/mc
+    container_name: ada-minio-init
+    restart: "no"
+    logging: *default-logging
+    profiles: ["cold"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      COLD_STORE_ENDPOINT: ${COLD_STORE_ENDPOINT:-http://minio:9000}
+      COLD_STORE_BUCKET: ${COLD_STORE_BUCKET:-ada-cold}
+      COLD_STORE_ACCESS_KEY: ${COLD_STORE_ACCESS_KEY:-minioadmin}
+      COLD_STORE_SECRET_KEY: ${COLD_STORE_SECRET_KEY:-minioadmin}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        mc alias set cold "$$COLD_STORE_ENDPOINT" "$$COLD_STORE_ACCESS_KEY" "$$COLD_STORE_SECRET_KEY" &&
+        (mc mb --with-lock "cold/$$COLD_STORE_BUCKET" || echo "bucket exists, skipping") &&
+        mc version enable "cold/$$COLD_STORE_BUCKET" &&
+        exit 0
+    # MinIO purges incomplete multipart uploads after 24 h on its own; on AWS S3 add an AbortIncompleteMultipartUpload lifecycle rule (1 day) to the bucket.
+    networks: [ada]
+
   ada-auth:
     profiles: ["full"]
     build:
@@ -273,7 +326,7 @@ services:
       ADA_LOG_LEVEL: ${ADA_LOG_LEVEL:-INFO}
       ADA_REQUIRED_SCOPE: ${ADA_REQUIRED_SCOPE:-notify:send}
       # Clients whose end-user tokens may call /v1/me (device registration, inbox).
-      ADA_USER_CLIENT_IDS: ${ADA_USER_CLIENT_IDS:-ada-field}
+      ADA_USER_CLIENT_IDS: ${ADA_USER_CLIENT_IDS:-ada-field,ada-web,ada-auth}
     ports:
       - "127.0.0.1:${ADA_NOTIFY_PORT:-8001}:8001"
     healthcheck:
@@ -470,6 +523,23 @@ services:
       # Clients whose access tokens ada-api accepts (azp), comma-separated.
       OIDC_ALLOWED_AZP: ${OIDC_ALLOWED_AZP:-ada-web,ada-field,ada-auth}
       WEBSITE_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+      # Case-assigned push + inbox. Sent as ada-ml: ada-notify binds one client per project.
+      NOTIFY_ENABLED: ${NOTIFY_ENABLED:-true}
+      NOTIFY_URL: ${NOTIFY_URL:-http://ada-notify:8001}
+      NOTIFY_ISSUER: ${ADA_INTERNAL_ISSUER_URL:-http://keycloak:${KC_HTTP_PORT:-8090}${KC_HTTP_RELATIVE_PATH:-/idp}/realms/${ADA_REALM:-pcsmcpl}}
+      NOTIFY_CLIENT_ID: ${NOTIFY_CLIENT_ID:-ada-ml}
+      NOTIFY_CLIENT_SECRET: ${ADA_ML_CLIENT_SECRET:-}
+      # Cold tier (docs/ADA-Upload-and-ML-Runtime-Design.md §5). Empty endpoint
+      # disables it; `docker compose --profile cold` runs a MinIO dev target.
+      COLD_STORE_ENDPOINT: ${COLD_STORE_ENDPOINT:-}
+      COLD_STORE_BUCKET: ${COLD_STORE_BUCKET:-ada-cold}
+      COLD_STORE_REGION: ${COLD_STORE_REGION:-us-east-1}
+      COLD_STORE_ACCESS_KEY: ${COLD_STORE_ACCESS_KEY:-}
+      COLD_STORE_SECRET_KEY: ${COLD_STORE_SECRET_KEY:-}
+      COLD_STORE_STORAGE_CLASS: ${COLD_STORE_STORAGE_CLASS:-STANDARD}
+      COLD_AFTER_DAYS: ${COLD_AFTER_DAYS:-180}
+      COLD_RESTORE_ETA_HOURS: ${COLD_RESTORE_ETA_HOURS:-5}
+      COLD_OBJECT_LOCK_DAYS: ${COLD_OBJECT_LOCK_DAYS:-0}
     volumes:
       - ../../data:${ADA_DATA_PATH:-/app/data}
     ports:
@@ -515,6 +585,7 @@ volumes:
   ada_pgdata:
   ada_redisdata:
   ada_mailpitdata:
+  minio-data:
 
 networks:
   ada:

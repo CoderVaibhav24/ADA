@@ -101,6 +101,8 @@ def sniff(head: bytes) -> str | None:
         return "image/png"
     if head.startswith(b"%PDF-"):
         return "application/pdf"
+    if len(head) >= 12 and head[0:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
     if len(head) >= 12 and head[4:8] == b"ftyp":
         return _ISOBMFF_BRANDS.get(head[8:12].decode("ascii", "replace").lower())
     return None
@@ -112,6 +114,23 @@ def dimensions(media_type: str, head: bytes) -> tuple[int, int] | None:
         return (int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big"))
     if media_type == "image/jpeg":
         return _jpeg_dimensions(head)
+    if media_type == "image/webp":
+        return _webp_dimensions(head)
+    return None
+
+
+# The first chunk after the RIFF header is VP8X, VP8 (lossy) or VP8L (lossless).
+def _webp_dimensions(head: bytes) -> tuple[int, int] | None:
+    chunk = head[12:16]
+    if chunk == b"VP8X" and len(head) >= 30:
+        return (1 + int.from_bytes(head[24:27], "little"),
+                1 + int.from_bytes(head[27:30], "little"))
+    if chunk == b"VP8 " and len(head) >= 30:
+        return (int.from_bytes(head[26:28], "little") & 0x3FFF,
+                int.from_bytes(head[28:30], "little") & 0x3FFF)
+    if chunk == b"VP8L" and len(head) >= 25:
+        bits = int.from_bytes(head[21:25], "little")
+        return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
     return None
 
 
@@ -143,6 +162,8 @@ def _is_complete(media_type: str, head: bytes, tail: bytes, size: int) -> bool:
         return b"IEND" in tail
     if media_type == "application/pdf":
         return b"%%EOF" in tail
+    if media_type == "image/webp":
+        return size >= int.from_bytes(head[4:8], "little") + 8
     if media_type in ("video/mp4", "video/quicktime", "image/heic"):
         declared = int.from_bytes(head[0:4], "big")
         return declared <= 1 or declared <= size

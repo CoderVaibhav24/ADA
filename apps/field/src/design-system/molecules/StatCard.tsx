@@ -1,25 +1,19 @@
 /**
- * StatCard — one of the three Home counts: assigned, completed today, overdue.
- * ui-registry.md §3.
+ * StatCard — one Home count tile (170:3830): JetBrains Mono number over a Poppins
+ * label on `#30281F`. The icon beside the number is the field rule (an icon with every
+ * label); the frame draws none.
  */
 
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, Text, type IconName } from '../atoms';
-import {
-  colors,
-  layout,
-  radius,
-  space,
-  type ColorToken,
-  type LayoutStyle,
-} from '../tokens';
+import { colors, control, figCard, radius, space, type ColorToken, type LayoutStyle } from '../tokens';
 
 export type StatCardProps = {
   label: string;
   value: string | number;
   icon?: IconName;
-  /** Tints the value and the icon. Overdue is the only count that reads red. */
+  /** Tints the value and the icon: `#C87820` assigned, `#4A9A58` completed, `#D85A38` overdue. */
   tone?: ColorToken;
   onPress?: () => void;
   accessibilityHint?: string;
@@ -27,12 +21,12 @@ export type StatCardProps = {
   style?: LayoutStyle;
 };
 
-// The card is a button only when it filters something; otherwise it is a plain readout.
+// The card is a button only when it opens something; otherwise it is a plain readout.
 export function StatCard({
   label,
   value,
   icon,
-  tone = 'ink0',
+  tone = 'figAccent',
   onPress,
   accessibilityHint,
   testID,
@@ -40,18 +34,20 @@ export function StatCard({
 }: StatCardProps) {
   const body = (
     <>
-      {icon ? <Icon name={icon} size="md" color={tone} /> : null}
-      <Text variant="title" color={tone}>
-        {value}
-      </Text>
-      <Text variant="label" color="ink2" numberOfLines={2}>
+      <View style={styles.valueRow}>
+        {icon ? <Icon name={icon} size="sm" color={tone} /> : null}
+        <Text variant="figMetric" color={tone} numberOfLines={1}>
+          {value}
+        </Text>
+      </View>
+      <Text variant="figMetricLabel" color="figBeige" align="center" numberOfLines={2} style={styles.label}>
         {label}
       </Text>
     </>
   );
   if (!onPress) {
     return (
-      <View accessible accessibilityLabel={`${label}: ${value}`} style={[styles.card, style]}>
+      <View testID={testID} accessible accessibilityLabel={`${label}: ${value}`} style={[styles.card, style]}>
         {body}
       </View>
     );
@@ -65,7 +61,7 @@ export function StatCard({
       accessibilityHint={accessibilityHint}
       style={({ pressed }) => [
         styles.card,
-        { backgroundColor: colors[pressed ? 'surface2' : 'surface1'] },
+        { backgroundColor: colors[pressed ? 'figControl' : 'figTile'] },
         style,
       ]}
     >
@@ -77,10 +73,15 @@ export function StatCard({
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    minHeight: layout.touchMin,
-    gap: space[1],
-    padding: space[4],
+    minHeight: figCard.metricTileHeight,
+    padding: figCard.metricPad,
     borderRadius: radius.md,
-    backgroundColor: colors.surface1,
+    borderWidth: control.hairline,
+    borderColor: colors.figTileBorder,
+    backgroundColor: colors.figTile,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  valueRow: { flexDirection: 'row', alignItems: 'center', gap: space[1] },
+  label: { paddingTop: figCard.labelGap },
 });

@@ -34,7 +34,7 @@ from ..icms.screen_schemas import (
     ScreenOut,
     ScreenVersionOut,
 )
-from ..icms.security import ICMS_ROLES, require_icms_user, require_super_admin
+from ..icms.security import icms_roles, require_icms_user, require_super_admin
 
 # Revalidate on every use and never share: the answer depends on the caller's capabilities.
 CACHE_CONTROL = "private, no-cache"
@@ -173,7 +173,7 @@ def get_screen(
     if row is None:
         raise ApiError(404, "screen_not_found", f"no published screen '{screen_id}'")
     if not _may_see(row, _permissions_of(user)):
-        allowed = policy.snapshot().roles_holding({row.required_capability}) & ICMS_ROLES
+        allowed = policy.snapshot().roles_holding({row.required_capability}) & icms_roles()
         raise ApiError(403, "role_not_permitted",
                        f"this screen requires one of: {', '.join(sorted(allowed)) or 'none'}",
                        allowed=allowed)

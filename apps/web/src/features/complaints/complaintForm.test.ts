@@ -2,18 +2,25 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
-  MAX_FLOORS,
   blankComplaintForm,
   firstProblem,
+  forMode,
+  initialMode,
   hasErrors,
   isDirty,
   isKhasraValid,
   isPhoneValid,
+  localToday,
+  lockedByProfile,
+  officerContact,
   normalisePhone,
+  requiredFields,
+  detectionSentence,
   seedComplaintForm,
   setSource,
   toComplaintBody,
   validateComplaintForm,
+  withOfficer,
   type ComplaintFormState,
   type DetectionSeed,
 } from "./complaintForm.ts";
@@ -47,6 +54,7 @@ const DETECTION: DetectionSeed = {
   lat: 27.1767,
   lon: 78.0081,
   status: "illegal",
+  changeType: "new_construction",
 };
 
 test("a blank form is not fileable, and says so field by field", () => {
@@ -124,6 +132,8 @@ test("the detection hand-off seeds the four fields it can actually fill", () => 
   assert.equal(state.latitude, "27.176700");
   assert.equal(state.longitude, "78.008100");
   assert.equal(state.detail, "Raised from change detection DET-7-0042.");
+  // A red-zone overlap is an encroachment, whatever the change type says.
+  assert.equal(state.complaintTypeCd, "encroachment");
   // The officer still enters the rest; a detection knows none of it.
   assert.equal(state.complainantName, "");
   assert.equal(state.landmark, "");
@@ -199,16 +209,71 @@ test("the land-record identifiers are optional but validated when given", () => 
   assert.equal(body.khasra_no, "142/3-B");
 });
 
-test("floor count is a whole number inside the column's range", () => {
-  assert.equal(
-    validateComplaintForm({ ...fileable(), floorCount: "2.5" }).floorCount,
-    "invalid",
-  );
-  assert.equal(
-    validateComplaintForm({ ...fileable(), floorCount: String(MAX_FLOORS + 1) }).floorCount,
-    "range",
-  );
-  assert.equal(toComplaintBody({ ...fileable(), floorCount: "3" }, KEY).floor_count, 3);
+test("the surveyor's fields are neither asked for nor sent", () => {
+  const body = toComplaintBody(fileable(), KEY);
+  for (const key of ["owner_name", "owner_phone", "property_type_cd", "floor_count", "police_station"]) {
+    assert.equal(key in body, false, key);
+  }
+});
+
+test("the tab opens on the query string's choice, else detection only with a hand-off", () => {
+  assert.equal(initialMode(null, true), "detection");
+  assert.equal(initialMode(null, false), "manual");
+  assert.equal(initialMode("manual", true), "manual");
+  assert.equal(initialMode("detection", false), "detection");
+  assert.equal(initialMode("bogus", false), "manual");
+});
+
+test("the detection tab files as the officer, with no address, landmark or phone", () => {
+  const officer = officerContact({ name: "Priya Verma", email: "priya@ada.gov.in" });
+  const shared: ComplaintFormState = {
+    ...seedComplaintForm(DETECTION, "Detected."),
+    // Typed on the Manual tab, then the officer switched back.
+    complainantName: "Ramesh Lal",
+    complainantPhone: "9876543210",
+    propertyAddress: "12 Mall Road",
+    district: "Agra",
+    state: "Uttar Pradesh",
+  };
+
+  const detected = forMode(shared, "detection", officer);
+  const errors = validateComplaintForm(detected);
+  // Landmark is a Manual-tab field: a detection case is fileable without it.
+  assert.equal(errors.landmark, undefined);
+  assert.equal(hasErrors(errors), false);
+  assert.equal(requiredFields(detected).has("landmark"), false);
+  assert.equal(requiredFields(detected).has("district"), true);
+
+  const body = toComplaintBody(detected, KEY);
+  assert.equal(body.source, "detection");
+  assert.equal(body.detection_id, 4471);
+  assert.equal(body.complainant_name, "Priya Verma");
+  assert.equal(body.complainant_email, "priya@ada.gov.in");
+  assert.equal("complainant_phone" in body, false);
+  assert.equal(body.property_address, undefined);
+  // The shared state is untouched, so the Manual tab still has what was typed.
+  assert.equal(shared.complainantName, "Ramesh Lal");
+});
+
+test("the manual tab never carries the polygon, and needs a landmark", () => {
+  const seeded: ComplaintFormState = {
+    ...seedComplaintForm(DETECTION, "Detected."),
+    district: "Agra",
+    state: "Uttar Pradesh",
+  };
+  const manual = forMode(seeded, "manual");
+
+  assert.equal(manual.source, "office");
+  assert.equal(manual.detectionId, "");
+  const errors = validateComplaintForm(manual);
+  assert.equal(errors.landmark, "required");
+  assert.equal(errors.complainantName, "required");
+  assert.equal(firstProblem(errors, "manual"), "complainantName");
+  assert.equal("detection_id" in toComplaintBody(manual, KEY), false);
+  // Back on the detection tab, the polygon id is still there.
+  assert.equal(forMode(seeded, "detection").detectionId, "4471");
+  // A chosen manual source survives.
+  assert.equal(forMode({ ...seeded, source: "public" }, "manual").source, "public");
 });
 
 test("the body carries the key it is given, so a retry replays one attempt", () => {
@@ -227,4 +292,108 @@ test("the unsaved guard sees typing and ignores an untouched form", () => {
   assert.equal(isDirty(baseline, blankComplaintForm()), false);
   assert.equal(isDirty(baseline, { ...baseline, landmark: "Bus stand" }), true);
   assert.equal(isDirty(baseline, setSource(baseline, "public")), true);
+});
+
+test("the complaint date defaults to today and may not be in the future", () => {
+  const today = "2026-09-23";
+  const state: ComplaintFormState = { ...fileable(), complaintDate: today };
+  assert.equal(blankComplaintForm(today).complaintDate, today);
+  assert.equal(validateComplaintForm(state, today).complaintDate, undefined);
+  assert.equal(toComplaintBody(state, KEY).complaint_date, today);
+
+  const back = { ...state, complaintDate: "2026-09-01" };
+  assert.equal(validateComplaintForm(back, today).complaintDate, undefined);
+  assert.equal(toComplaintBody(back, KEY).complaint_date, "2026-09-01");
+
+  assert.equal(
+    validateComplaintForm({ ...state, complaintDate: "2026-09-24" }, today).complaintDate,
+    "future",
+  );
+  assert.equal(
+    validateComplaintForm({ ...state, complaintDate: "2026-02-30" }, today).complaintDate,
+    "invalid",
+  );
+
+  // Blank is absent: the server dates the complaint itself.
+  const blank = { ...state, complaintDate: "" };
+  assert.equal(validateComplaintForm(blank, today).complaintDate, undefined);
+  assert.equal("complaint_date" in toComplaintBody(blank, KEY), false);
+});
+
+test("localToday uses the local calendar day, zero-padded", () => {
+  assert.equal(localToday(new Date(2026, 0, 5, 23, 59)), "2026-01-05");
+});
+
+test("the asterisks come from the same rules the validator applies", () => {
+  const manual = requiredFields(blankComplaintForm());
+  assert.equal(manual.has("complainantName"), true);
+  assert.equal(manual.has("landmark"), true);
+  assert.equal(manual.has("country"), false);
+  // Parcel ID (khasra) stays optional: a parcel-less complaint is still fileable.
+  assert.equal(manual.has("khasraNo"), false);
+
+  const detected = requiredFields(seedComplaintForm(DETECTION, "Detected."));
+  assert.equal(detected.has("complainantName"), false);
+  assert.equal(detected.has("landmark"), false);
+  assert.equal(requiredFields({ ...fileable(), complaintTypeCd: "other" }).has("otherType"), true);
+});
+
+test("the detection sentence leaves out what the detection does not know", () => {
+  assert.equal(
+    detectionSentence("From DET-7-0042", ["overlaps a red zone", "about 318 sq.m", "94% confidence"], ". "),
+    "From DET-7-0042: overlaps a red zone, about 318 sq.m, 94% confidence. ",
+  );
+  assert.equal(detectionSentence("From DET-7-0042", [null, "", "94% confidence"], "."), "From DET-7-0042: 94% confidence.");
+  assert.equal(detectionSentence("From DET-7-0042", [null, null], "."), "From DET-7-0042.");
+});
+
+test("the suggested type: red zone first, then the change type, else blank", () => {
+  const typeOf = (status: DetectionSeed["status"], changeType: string | null) =>
+    seedComplaintForm({ ...DETECTION, status, changeType }, "").complaintTypeCd;
+
+  assert.equal(typeOf("illegal", "demolition"), "encroachment");
+  assert.equal(typeOf("illegal", null), "encroachment");
+  assert.equal(typeOf("change", "new_construction"), "unauthorised_construction");
+  assert.equal(typeOf("change", "extension"), "deviation_from_plan");
+  assert.equal(typeOf("change", "demolition"), "other");
+  assert.equal(typeOf("change", "unchanged"), "");
+  assert.equal(typeOf("change", null), "");
+  assert.equal(typeOf(null, null), "");
+});
+
+test("the officer's profile becomes the complainant, and only valid claims count", () => {
+  const officer = officerContact({
+    name: "  Priya   Verma ",
+    email: "Priya.Verma@ADA.gov.in",
+    phone_number: "+91 98765 43210",
+  });
+  assert.deepEqual(officer, {
+    name: "Priya Verma",
+    email: "priya.verma@ada.gov.in",
+    phone: "9876543210",
+  });
+
+  // Name claims fall back as the header does, but never to an email local-part.
+  assert.equal(officerContact({ given_name: "Priya", family_name: "Verma" }).name, "Priya Verma");
+  assert.equal(officerContact({ preferred_username: "pverma" }).name, "pverma");
+  assert.equal(officerContact({ preferred_username: "p@ada.gov.in" }).name, "");
+  // A value the server would refuse is not locked into a read-only box.
+  assert.equal(officerContact({ name: "<b>x</b>", email: "admin@localhost" }).name, "");
+  assert.equal(officerContact({ email: "admin@localhost" }).email, "");
+  assert.deepEqual(officerContact(undefined), { name: "", email: "", phone: "" });
+});
+
+test("a prefilled complainant validates and is submitted", () => {
+  const officer = officerContact({ name: "Priya Verma", email: "priya@ada.gov.in" });
+  const state = withOfficer({ ...fileable(), complainantName: "", complainantEmail: "" }, officer);
+
+  assert.equal(hasErrors(validateComplaintForm(state)), false);
+  const body = toComplaintBody(state, KEY);
+  assert.equal(body.complainant_name, "Priya Verma");
+  assert.equal(body.complainant_email, "priya@ada.gov.in");
+  // No phone claim: the one the officer typed stays, and stays editable.
+  assert.equal(body.complainant_phone, "9876543210");
+  assert.deepEqual([...lockedByProfile(officer)], ["complainantName", "complainantEmail"]);
+  assert.equal(lockedByProfile(officerContact({})).size, 0);
+  assert.equal(lockedByProfile(null).size, 0);
 });

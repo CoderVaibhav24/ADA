@@ -42,10 +42,19 @@ POLICY_TABLES = frozenset({
     "icms_workflow_transition_role",
     "icms_policy_revision",
     "icms_upload_policy",
+    # 0018: Super Admin runtime switches (the check-in geofence).
+    "icms_runtime_setting",
+    # 0021: the deadline-reminder ledger, operational state beside the settings.
+    "icms_reminder_sent",
 })
 
+# The authority's boundary layers and their import log, from 0015. Reference
+# geography rather than cases, counted apart for the same reason as the policy.
+BOUNDARY_TABLES = frozenset({"icms_village", "icms_parcel", "icms_boundary_import"})
+
 DOMAIN_TABLES = {
-    name: table for name, table in ICMS_TABLES.items() if name not in POLICY_TABLES
+    name: table for name, table in ICMS_TABLES.items()
+    if name not in POLICY_TABLES | BOUNDARY_TABLES
 }
 
 BASELINE = (ALEMBIC_DIR / "versions" / "0001_baseline.py").read_text(encoding="utf-8")
@@ -57,6 +66,15 @@ UPLOAD_MIGRATION = (
 ).read_text(encoding="utf-8")
 SCREEN_MIGRATION = (
     ALEMBIC_DIR / "versions" / "0005_app_screen.py"
+).read_text(encoding="utf-8")
+BOUNDARY_MIGRATION = (
+    ALEMBIC_DIR / "versions" / "0015_boundary_layers.py"
+).read_text(encoding="utf-8")
+RUNTIME_SETTING_MIGRATION = (
+    ALEMBIC_DIR / "versions" / "0018_runtime_setting.py"
+).read_text(encoding="utf-8")
+REMINDER_MIGRATION = (
+    ALEMBIC_DIR / "versions" / "0021_reminder_settings.py"
 ).read_text(encoding="utf-8")
 
 
@@ -70,6 +88,11 @@ def _scripts() -> ScriptDirectory:
 
 def test_all_seventeen_domain_tables_are_mapped():
     assert len(DOMAIN_TABLES) == 17, sorted(DOMAIN_TABLES)
+
+
+def test_the_three_boundary_tables_are_mapped_and_created_by_0015():
+    created = set(re.findall(r"op\.create_table\(\s*[\"\'](\w+)[\"\']", BOUNDARY_MIGRATION))
+    assert created == BOUNDARY_TABLES <= set(ICMS_TABLES)
 
 
 def test_all_seven_policy_tables_are_mapped():
@@ -229,7 +252,8 @@ def test_the_migrations_create_every_mapped_table():
     suite and nowhere else."""
     created = set(re.findall(
         r"op\.create_table\(\s*[\"\'](\w+)[\"\']",
-        BASELINE + POLICY_MIGRATION + UPLOAD_MIGRATION + SCREEN_MIGRATION))
+        BASELINE + POLICY_MIGRATION + UPLOAD_MIGRATION + SCREEN_MIGRATION
+        + BOUNDARY_MIGRATION + RUNTIME_SETTING_MIGRATION + REMINDER_MIGRATION))
     assert created == set(Base.metadata.tables)
 
 

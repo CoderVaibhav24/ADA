@@ -7,6 +7,7 @@ import {
   amendDiff,
   assignActionOf,
   draftFromCase,
+  endingIncomplete,
   evidenceRound,
   hasChanges,
   orderedCaseActions,
@@ -15,6 +16,7 @@ import {
   reasonRequired,
   requirementsOf,
   roundsAscending,
+  surveyedRound,
   telHref,
 } from "./ComplaintDetailModel.ts";
 
@@ -71,23 +73,33 @@ function action(over: Partial<CapabilityAction> & Pick<CapabilityAction, "action
 test("orderedCaseActions splits what this screen builds from what it does not", () => {
   const set = orderedCaseActions(["verify_accept", "assign", "reject"]);
   assert.deepEqual(set.built, ["assign"]);
-  assert.deepEqual(set.offered, ["reject", "verify_accept"]);
+  assert.deepEqual(set.endings, ["reject"]);
+  assert.deepEqual(set.offered, ["verify_accept"]);
 });
 
 test("orderedCaseActions draws in a fixed order, not the server's", () => {
-  const set = orderedCaseActions(["close", "hand_over", "reject"]);
-  assert.deepEqual(set.offered, ["reject", "hand_over", "close"]);
+  const set = orderedCaseActions(["close", "hand_over", "reject", "confirm"]);
+  assert.deepEqual(set.endings, ["reject", "close"]);
+  assert.deepEqual(set.offered, ["hand_over", "confirm"]);
 });
 
 test("orderedCaseActions keeps a code this build has never seen", () => {
-  const set = orderedCaseActions(["reject", "verify_escalate"]);
-  assert.deepEqual(set.offered, ["reject", "verify_escalate"]);
+  const set = orderedCaseActions(["hand_over", "verify_escalate"]);
+  assert.deepEqual(set.offered, ["hand_over", "verify_escalate"]);
 });
 
 test("orderedCaseActions offers nothing when the server offered nothing", () => {
   const set = orderedCaseActions([]);
   assert.deepEqual(set.built, []);
+  assert.deepEqual(set.endings, []);
   assert.deepEqual(set.offered, []);
+});
+
+test("endingIncomplete asks for a code, and remarks only when the code is other", () => {
+  assert.equal(endingIncomplete("", ""), true);
+  assert.equal(endingIncomplete("duplicate", ""), false);
+  assert.equal(endingIncomplete("other", "too short"), true);
+  assert.equal(endingIncomplete("other", "Owner produced a sanction."), false);
 });
 
 /* ---- which transition the assign endpoint will run ----------------------- */
@@ -280,4 +292,16 @@ test("otherTypeMissing catches the one pairing the create model already refuses"
     false,
   );
   assert.equal(otherTypeMissing(base), false);
+});
+
+test("surveyedRound picks the newest round that recorded occupant or property facts", () => {
+  const rounds = [
+    round({ inspection_ref: "INS-1", round_no: 1, police_station: "Tajganj", floor_count: 2 }),
+    round({ inspection_ref: "INS-2", round_no: 2, occupant_name: "R Kumar" }),
+    round({ inspection_ref: "INS-3", round_no: 3 }),
+  ];
+  assert.equal(surveyedRound(rounds)?.inspection_ref, "INS-2");
+  assert.equal(surveyedRound([round({ inspection_ref: "INS-1", round_no: 1, floor_count: 0 })])?.round_no, 1);
+  assert.equal(surveyedRound([round({ inspection_ref: "INS-1", round_no: 1 })]), null);
+  assert.equal(surveyedRound([]), null);
 });

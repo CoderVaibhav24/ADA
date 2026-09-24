@@ -22,12 +22,20 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CASE_AMEND,
+  CASE_READ,
   amendCase,
   assignCase,
+  closeCase,
+  fetchAssignees,
   fetchCase,
+  rejectCase,
+  type AssigneeOptions,
   type CaseAmend,
   type CaseAssign,
+  type CaseClose,
   type CaseDetail,
+  type CaseReject,
 } from "@/api/icms/cases";
 import { IcmsApiError } from "@/api/icms/http";
 import {
@@ -35,13 +43,6 @@ import {
   type Capabilities,
   type CapabilityAction,
 } from "@/api/icms/policy";
-
-/**
- * The permission both case reads are guarded on, seeded by migration 0003.
- * Read here to decide whether the screen is drawn; `require_permission`
- * decides every request again regardless.
- */
-export const CASE_READ = "case.read";
 
 /** Distinct from the register's `["icms","cases",…]`, which keys a page of rows. */
 export function caseKey(caseRef: string): readonly unknown[] {
@@ -58,6 +59,9 @@ export type CaseGate = {
   loading: boolean;
   /** True only once capabilities have answered. Never optimistic. */
   canRead: boolean;
+  /** `case.amend`. The case's own `allowed_actions` still decides per case. */
+  canAmend: boolean;
+  permissions: readonly string[];
   /** The caller's own id, for marking their own assignment on the screen. */
   userId: string | null;
   /** The live transition table for this caller — the source of every `requires`. */
@@ -75,9 +79,12 @@ export function useCaseGate(): CaseGate {
     retry: shouldRetry,
   });
 
+  const permissions = data?.permissions ?? [];
   return {
     loading: isPending,
-    canRead: (data?.permissions ?? []).includes(CASE_READ),
+    canRead: permissions.includes(CASE_READ),
+    canAmend: permissions.includes(CASE_AMEND),
+    permissions,
     userId: data?.user_id ?? null,
     actions: data?.actions,
   };
@@ -90,6 +97,17 @@ export function useCase(caseRef: string, enabled: boolean) {
     queryFn: ({ signal }) => fetchCase(caseRef, signal),
     enabled: enabled && caseRef !== "",
     staleTime: 15_000,
+    retry: shouldRetry,
+  });
+}
+
+/** Who the assign dialog may offer; fetched only while the dialog is open. */
+export function useCaseAssignees(caseRef: string, enabled: boolean) {
+  return useQuery<AssigneeOptions, Error>({
+    queryKey: [...caseKey(caseRef), "assignees"],
+    queryFn: ({ signal }) => fetchAssignees(caseRef, signal),
+    enabled: enabled && caseRef !== "",
+    staleTime: 30_000,
     retry: shouldRetry,
   });
 }
@@ -107,6 +125,8 @@ function useSettleCase(caseRef: string) {
     // A reassignment closes one assignment row and opens another, which the
     // inspection register reads as the case's surveyor.
     void client.invalidateQueries({ queryKey: ["icms", "inspections"] });
+    // Reject and close move a case out of the open counts.
+    void client.invalidateQueries({ queryKey: ["icms", "dashboard"] });
   };
 }
 
@@ -124,6 +144,24 @@ export function useAmendCase(caseRef: string) {
   const settle = useSettleCase(caseRef);
   return useMutation<CaseDetail, Error, CaseAmend>({
     mutationFn: (body) => amendCase(caseRef, body),
+    onSuccess: settle,
+  });
+}
+
+/** `POST /cases/{ref}/reject` — terminal; releases the survey assignment. */
+export function useRejectCase(caseRef: string) {
+  const settle = useSettleCase(caseRef);
+  return useMutation<CaseDetail, Error, CaseReject>({
+    mutationFn: (body) => rejectCase(caseRef, body),
+    onSuccess: settle,
+  });
+}
+
+/** `POST /cases/{ref}/close` — terminal, after the notice. */
+export function useCloseCase(caseRef: string) {
+  const settle = useSettleCase(caseRef);
+  return useMutation<CaseDetail, Error, CaseClose>({
+    mutationFn: (body) => closeCase(caseRef, body),
     onSuccess: settle,
   });
 }

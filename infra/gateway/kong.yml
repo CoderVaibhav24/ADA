@@ -30,12 +30,32 @@ services:
         plugins:
           - name: request-size-limiting
             config:
-              allowed_payload_size: 2048
+              # Uploads now go in 64 MB chunks (PUT .../chunks/{n}), so this is a
+              # per-request cap, not a whole-file cap.
+              allowed_payload_size: 128
               size_unit: megabytes
               require_content_length: true
           - name: rate-limiting
             config:
               minute: 30
+              policy: local
+              limit_by: ip
+      - name: api-upload-chunk
+        methods: [PUT]
+        paths: ["~/api/uploads/[^/]+/(chunks|sidecars)/[^/]+$"]
+        strip_path: false
+        preserve_host: true
+        # One 64 MiB chunk per request; streamed, capped above the chunk size, never above the global 20 MB default.
+        request_buffering: false
+        plugins:
+          - name: request-size-limiting
+            config:
+              allowed_payload_size: 128
+              size_unit: megabytes
+              require_content_length: true
+          - name: rate-limiting
+            config:
+              minute: 600
               policy: local
               limit_by: ip
       - name: api-analysis-submit

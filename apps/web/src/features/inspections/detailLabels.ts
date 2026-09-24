@@ -73,6 +73,7 @@ export type InspectionDetailLabels = {
   };
 
   occupant: { title: string; name: string; phone: string; none: string };
+  owner: { title: string; none: string };
 
   measurement: {
     title: string;
@@ -85,6 +86,12 @@ export type InspectionDetailLabels = {
     no: string;
     undecided: string;
     none: string;
+    stage: string;
+    dimensions: string;
+    dimensionsValue: (length: string, width: string) => string;
+    mismatch: string;
+    source: string;
+    sourceValue: (source: "field" | "web") => string;
   };
 
   findings: {
@@ -222,6 +229,10 @@ export function useInspectionDetailLabels(): InspectionDetailLabels {
         phone: t("inspectionDetail.occupant.phone"),
         none: t("inspectionDetail.occupant.none"),
       },
+      owner: {
+        title: t("inspectionDetail.owner.title"),
+        none: t("inspectionDetail.owner.none"),
+      },
 
       measurement: {
         title: t("inspectionDetail.measurement.title"),
@@ -235,6 +246,16 @@ export function useInspectionDetailLabels(): InspectionDetailLabels {
         no: t("inspectionDetail.measurement.no"),
         undecided: t("inspectionDetail.measurement.undecided"),
         none: t("inspectionDetail.measurement.none"),
+        stage: t("inspectionDetail.measurement.stage"),
+        dimensions: t("inspectionDetail.measurement.dimensions"),
+        dimensionsValue: (length: string, width: string) =>
+          t("inspectionDetail.measurement.dimensionsValue", { length, width }),
+        mismatch: t("inspectionDetail.measurement.mismatch"),
+        source: t("inspectionDetail.measurement.source"),
+        sourceValue: (source: "field" | "web") =>
+          t(source === "field"
+            ? "inspectionDetail.measurement.sourceField"
+            : "inspectionDetail.measurement.sourceWeb"),
       },
 
       findings: {

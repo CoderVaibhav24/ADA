@@ -10,15 +10,20 @@
  * between "open Change Detection, find DET-7-0042, press Create Complaint" and
  * sending someone the URL.
  *
+ * `changeType` is the model's own reading of the change (new construction,
+ * extension, demolition). It travels so the form can SUGGEST a complaint type;
+ * it is omitted when the model named none, and the officer can change the
+ * suggestion like any other choice.
+ *
  * Only fields the API really has travel. A change polygon has no parcel id, no
  * khasra number, no village and no tehsil — see features/complaints/parcelId.ts
  * on why the frame's `RJ-JPR-1007` is not one either — so none is sent. The
  * complaint form collects those from the officer, which it would have had to do
  * regardless.
  *
- * `parseComplaintHandoff` is exported for the Create Complaint screen, which is
- * still a placeholder. Nothing in this feature calls it; it is here so both
- * halves of the contract are written down once rather than guessed at twice.
+ * `parseComplaintHandoff` is read by the Create Complaint screen. Nothing in
+ * this feature calls it; it is here so both halves of the contract are written
+ * down once rather than guessed at twice.
  */
 
 import type { DetectionRow } from "./model";
@@ -35,7 +40,18 @@ export type ComplaintHandoff = {
   lat: number | null;
   lon: number | null;
   status: "change" | "illegal" | null;
+  /** The ML worker's `change_type`; null when the model named none. */
+  changeType: HandoffChangeType | null;
 };
+
+/** `change_type` values the hand-off carries, as `analysis_schemas.py` spells them. */
+export const HANDOFF_CHANGE_TYPES = [
+  "new_construction",
+  "extension",
+  "demolition",
+  "unchanged",
+] as const;
+export type HandoffChangeType = (typeof HANDOFF_CHANGE_TYPES)[number];
 
 const KEYS = {
   ref: "detectionRef",
@@ -46,6 +62,7 @@ const KEYS = {
   lat: "lat",
   lon: "lon",
   status: "status",
+  changeType: "changeType",
 } as const;
 
 /** Six decimal places is about a tenth of a metre; more is false precision. */
@@ -61,6 +78,7 @@ export function toComplaintSearch(row: DetectionRow): string {
   params.set(KEYS.area, String(Math.round(row.areaM2)));
   params.set(KEYS.confidence, row.confidence.toFixed(3));
   params.set(KEYS.status, row.status);
+  if (row.changeType !== null) params.set(KEYS.changeType, row.changeType);
   if (row.centre) {
     params.set(KEYS.lon, coordinate(row.centre[0]));
     params.set(KEYS.lat, coordinate(row.centre[1]));
@@ -88,6 +106,7 @@ export function parseComplaintHandoff(search: string): ComplaintHandoff | null {
   if (!detectionRef || !jobId || !polygonId) return null;
 
   const status = params.get(KEYS.status);
+  const changeType = params.get(KEYS.changeType);
   return {
     detectionRef,
     jobId,
@@ -97,5 +116,8 @@ export function parseComplaintHandoff(search: string): ComplaintHandoff | null {
     lat: numberOrNull(params.get(KEYS.lat)),
     lon: numberOrNull(params.get(KEYS.lon)),
     status: status === "change" || status === "illegal" ? status : null,
+    changeType: (HANDOFF_CHANGE_TYPES as readonly (string | null)[]).includes(changeType)
+      ? (changeType as HandoffChangeType)
+      : null,
   };
 }

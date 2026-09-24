@@ -33,10 +33,11 @@ import {
 import { useInspectionStatusLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
+import { ActorName } from "@/components/icms/ActorName";
 import { INSPECTION_STATUS_META } from "../inspections/inspectionStatus";
 import type { ComplaintDetailLabels } from "./ComplaintDetailLabels";
 import { roundsAscending, type CaseRound } from "./ComplaintDetailModel";
-import { Absent, DetailPanel, Mono } from "./ComplaintDetailParts";
+import { Absent, DetailPanel } from "./ComplaintDetailParts";
 
 const COLUMNS = 6;
 
@@ -157,7 +158,7 @@ export function ComplaintDetailRounds({
                       </TableCell>
 
                       <TableCell>
-                        <Mono>{round.surveyor_user_id}</Mono>
+                        <ActorName name={round.surveyor_name} id={round.surveyor_user_id} />
                       </TableCell>
 
                       <TableCell>

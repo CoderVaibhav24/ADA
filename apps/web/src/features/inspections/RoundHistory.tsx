@@ -34,6 +34,7 @@ import {
 import { useInspectionStatusLabels, useInspectionsLabels } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
+import { ActorName } from "@/components/icms/ActorName";
 import type { InspectionDetailLabels } from "./detailLabels";
 import { DetailPanel } from "./detailParts";
 import { INSPECTION_STATUS_META } from "./inspectionStatus";
@@ -151,7 +152,7 @@ export function RoundHistory({
                       </TableCell>
 
                       <TableCell className="text-fg-base">
-                        {round.surveyor_name ?? round.surveyor_user_id}
+                        <ActorName name={round.surveyor_name} id={round.surveyor_user_id} />
                       </TableCell>
 
                       <TableCell>

@@ -19,7 +19,7 @@
  *     revoked role comes back from the dead. `setUserRoles` therefore takes
  *     every role the officer KEEPS, and the screen is a set editor, not a pair
  *     of grant/revoke buttons. The server only ever touches the four codes in
- *     `ASSIGNABLE_ROLES`; `default-roles-pcsmcpl` and `offline_access` are not
+ *     `GET /admin/roles` roles; `default-roles-pcsmcpl` and `offline_access` are not
  *     ours to send and are refused with 422 `unknown_role`.
  *   - **creation is three round trips and cannot be a transaction.** Keycloak
  *     has no batch endpoint, so the account, its roles and its credential are
@@ -68,25 +68,8 @@ export type PasswordResetOut = Schemas["PasswordResetOut"];
 
 /* ---- vocabularies -------------------------------------------------------- */
 
-/**
- * `user_schemas.ASSIGNABLE_ROLES`, in that file's own order rather than sorted.
- *
- * The four the realm declares and the only four this API will assign.
- * `default-roles-pcsmcpl` and `offline_access` sit on every account, are not
- * reported by `UserDetail`, and are refused by name if sent.
- */
-export const ASSIGNABLE_ROLES = [
-  "super-admin",
-  "pcs-nodal-officer",
-  "field-surveyor",
-  "ada-project-lead",
-] as const;
-
-export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
-
-export function isAssignableRole(value: string): value is AssignableRole {
-  return (ASSIGNABLE_ROLES as readonly string[]).includes(value);
-}
+/** An active ICMS role, from `GET /admin/roles`; created roles included. */
+export type AssignableRole = components["schemas"]["AssignableRoleOut"];
 
 /**
  * How the new account gets a credential.
@@ -127,16 +110,18 @@ export const MAX_PAGE_SIZE = 200;
 /* ---- permissions and error codes ----------------------------------------- */
 
 /**
- * The two codes that gate this area, both seeded by migration 0003 and held by
- * `super-admin` alone today.
- *
- * `user.read` guards the list and the detail; `user.manage` guards create,
- * amend, the role replacement and the password reset. Read from
- * `/me/capabilities` to decide which controls are drawn; `require_permission`
- * decides every request again regardless.
+ * The codes that gate this area. `officers.access` opens the screen, `user.read`
+ * the list and the detail, and one code per write. Read from `/me/capabilities`
+ * to decide which controls are drawn; `require_permission` decides every
+ * request again regardless.
  */
+export const OFFICERS_ACCESS = "officers.access";
 export const USER_READ = "user.read";
-export const USER_MANAGE = "user.manage";
+export const USER_CREATE = "user.create";
+export const USER_UPDATE = "user.update";
+export const USER_ROLES = "user.roles";
+export const USER_PASSWORD = "user.password";
+export const USER_DISABLE = "user.disable";
 
 /* The refusals that mean something specific to a screen. Anything else is
    rendered from `error.message` as it arrives. */
@@ -305,4 +290,15 @@ export async function resetPassword(
       body,
     }),
   );
+}
+
+export async function listAssignableRoles(signal: AbortSignal): Promise<AssignableRole[]> {
+  const body = await icmsRequest("/api/icms/admin/roles", { signal });
+  if (!Array.isArray(body)) {
+    throw new IcmsApiError(200, {
+      code: "malformed_response",
+      message: "The roles response did not have the expected shape.",
+    });
+  }
+  return body as AssignableRole[];
 }

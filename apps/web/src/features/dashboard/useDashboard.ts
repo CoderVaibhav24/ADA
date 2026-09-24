@@ -1,35 +1,8 @@
-/**
- * The dashboard's data layer.
- *
- * Same shape as `features/users/useUsers.ts`: TanStack Query, an `AbortSignal`
- * through to `fetch`, and no retry on a 4xx because a 403 is a verdict rather
- * than a blip. Three things are specific to this screen.
- *
- * ## Four queries, not one
- *
- * The four panels are four endpoints, and they are kept four queries so that a
- * slow zone breakdown does not hold the counter cards off the screen, and one
- * panel failing does not blank the other three. Each panel therefore renders
- * its own loading, empty and error state from its own query.
- *
- * ## Nothing fetches until the gate has answered
- *
- * All four are `enabled` on `canRead`. Without that the screen fires four
- * requests it already knows will be refused and the officer sees four error
- * panels where the correct answer is one refusal. `/me/capabilities` is queried
- * through `features/policy/usePolicy`, not re-declared here, so every area
- * shares one cache entry and one request.
- *
- * ## `loadedAt` is the OLDEST of the four, not the newest
- *
- * The line under the heading claims the whole page was loaded at that moment.
- * Taking the newest would date the page by whichever panel happened to refetch
- * last and quietly overstate the other three, so the oldest is shown:
- * everything on screen is at least that fresh.
- */
+// The dashboard's data layer: one query per panel/tile so one slow or failing read
+// never blanks the others. Nothing fetches until the capability gate has answered.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   DASHBOARD_READ,
   fetchByType,
@@ -43,16 +16,15 @@ import {
   type ZoneCount,
 } from "@/api/icms/dashboard";
 import { IcmsApiError } from "@/api/icms/http";
+import { listCases, type CasePage } from "@/api/icms/cases";
+import { listInspections, type InspectionStatus } from "@/api/icms/inspections";
+import { listNotices, type NoticeStatus } from "@/api/icms/notices";
 import { useCapabilities } from "@/features/policy/usePolicy";
+import { toIstDateKey } from "@ada/shared/dates";
 
 const DASHBOARD_KEY = ["icms", "dashboard"] as const;
 
-/**
- * Aggregates over the whole register, so a minute stale is a minute stale for
- * every panel at once, and the screen carries its own refresh control. Longer
- * than the registers' 15 s deliberately: nobody opens a dashboard to watch one
- * case move, and four requests per window focus is four too many.
- */
+/** A minute stale for every panel at once; the screen has its own refresh control. */
 const STALE_MS = 60_000;
 
 /** A 4xx is a verdict. Retrying a 403 only asks the server to refuse again. */
@@ -67,6 +39,8 @@ export type DashboardGate = {
   canRead: boolean;
   /** The area is unreachable and we know why — a refusal, not a network blip. */
   refused: IcmsApiError | null;
+  /** Every permission the caller holds; gates the tiles that read other registers. */
+  permissions: string[];
 };
 
 /** What the render-level guard reads. Advisory: ada-api refuses regardless. */
@@ -75,6 +49,7 @@ export function useDashboardGate(): DashboardGate {
   const permissions = data?.permissions ?? [];
   return {
     loading: isPending,
+    permissions,
     canRead: permissions.includes(DASHBOARD_READ),
     refused:
       error instanceof IcmsApiError && (error.status === 401 || error.status === 403)
@@ -125,7 +100,74 @@ export function useByZone(enabled: boolean) {
   });
 }
 
-/** One control refreshes all four panels; a per-panel refresh would date them apart. */
+/** Inspection rounds not yet submitted: the "scheduled" tile. */
+export const PENDING_INSPECTION_STATUSES: readonly InspectionStatus[] = ["scheduled", "in_progress"];
+
+/** Notices that have left the office: drafts and withdrawn ones excluded. */
+export const ISSUED_NOTICE_STATUSES: readonly NoticeStatus[] = ["issued", "delivered", "failed"];
+
+const NEW_DETECTION_DAYS = 30;
+
+// A register's `total` for a filter, fetched as a one-row page.
+function useCountQuery(
+  name: string,
+  fetchPage: (signal: AbortSignal) => Promise<{ total: number }>,
+  enabled: boolean,
+  keyParts: readonly unknown[] = [],
+) {
+  return useQuery<number, Error>({
+    queryKey: [...DASHBOARD_KEY, "count", name, ...keyParts],
+    queryFn: async ({ signal }) => (await fetchPage(signal)).total,
+    enabled,
+    staleTime: STALE_MS,
+    retry: shouldRetry,
+  });
+}
+
+/** Detection-sourced cases filed in the last 30 IST days, today included. */
+export function useNewDetections(enabled: boolean) {
+  // Fixed at mount: a calendar date keeps the query key stable across renders.
+  const [filedFrom] = useState(() =>
+    toIstDateKey(Date.now() - (NEW_DETECTION_DAYS - 1) * 86_400_000),
+  );
+  return useCountQuery(
+    "new-detections",
+    (signal) => listCases({ source: ["detection"], filed_from: filedFrom, size: 1 }, signal),
+    enabled,
+    [filedFrom],
+  );
+}
+
+export function useInspectionsScheduled(enabled: boolean) {
+  return useCountQuery(
+    "inspections-scheduled",
+    (signal) => listInspections({ status: [...PENDING_INSPECTION_STATUSES], size: 1 }, signal),
+    enabled,
+  );
+}
+
+export function useNoticesIssued(enabled: boolean) {
+  return useCountQuery(
+    "notices-issued",
+    (signal) => listNotices({ status: [...ISSUED_NOTICE_STATUSES], size: 1 }, signal),
+    enabled,
+  );
+}
+
+export const RECENT_CASES = 5;
+
+/** The newest cases for the status feed. Needs `case.read`, not only `dashboard.read`. */
+export function useRecentCases(enabled: boolean) {
+  return useQuery<CasePage, Error>({
+    queryKey: [...DASHBOARD_KEY, "recent-cases", RECENT_CASES],
+    queryFn: ({ signal }) => listCases({ size: RECENT_CASES, sort: "-raised_at" }, signal),
+    enabled,
+    staleTime: STALE_MS,
+    retry: shouldRetry,
+  });
+}
+
+/** One control refreshes every panel; a per-panel refresh would date them apart. */
 export function useRefreshDashboard(): () => Promise<void> {
   const client = useQueryClient();
   return useCallback(async () => {
@@ -133,7 +175,7 @@ export function useRefreshDashboard(): () => Promise<void> {
   }, [client]);
 }
 
-/** The oldest non-zero timestamp — see the note at the top of this file. */
+/** The oldest non-zero timestamp, so the page is never dated fresher than its stalest panel. */
 export function oldestLoadedAt(stamps: readonly number[]): number | null {
   const real = stamps.filter((stamp) => stamp > 0);
   return real.length === 0 ? null : Math.min(...real);

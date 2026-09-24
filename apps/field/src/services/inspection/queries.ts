@@ -9,12 +9,22 @@ import { capabilitiesQueryKey, fetchCapabilities } from '@/services/config/capab
 import {
   capturesSnapshot,
   roundCapturesIn,
+  stuckReason,
   subscribeToCaptures,
   type CaptureRecord,
 } from '@/services/storage/captures';
 
 import { checkInFrom, checkInSnapshot, subscribeToCheckIns, type CheckInRecord } from './check-in';
 import { localRound, resolveRound, type ResolvedRound } from './rounds';
+import {
+  drainAllSubmits,
+  drainSubmit,
+  queuedSubmitFrom,
+  readQueuedSubmit,
+  submitQueueSnapshot,
+  subscribeToSubmitQueue,
+  type QueuedSubmit,
+} from './submit';
 import { syncRound } from './sync';
 
 /*
@@ -70,7 +80,16 @@ export function useRoundSync(caseRef: string, inspectionRef: string | null): voi
   useEffect(() => {
     let active = true;
     const run = () => {
-      void syncRound(caseRef).then((outcome) => {
+      void syncRound(caseRef).then(async (outcome) => {
+        // A submit held on the device follows its evidence out.
+        if (readQueuedSubmit(caseRef)?.state === 'queued') {
+          const sent = await drainSubmit(caseRef);
+          if (active && sent.kind === 'sent') {
+            queryClient.setQueryData(inspectionKeys.detail(sent.detail.inspection_ref), sent.detail);
+            void queryClient.invalidateQueries({ queryKey: roundQueryKey(caseRef) });
+            return;
+          }
+        }
         // Re-read only when something was actually sent; an idle tick costs no request.
         if (active && inspectionRef !== null && outcome === 'uploaded') {
           void queryClient.invalidateQueries({ queryKey: inspectionKeys.detail(inspectionRef) });
@@ -97,9 +116,55 @@ export function useRoundCaptures(caseRef: string, inspectionRef: string | null):
   return useMemo(() => roundCapturesIn(snapshot, caseRef, inspectionRef), [snapshot, caseRef, inspectionRef]);
 }
 
+export type StuckPhotos = {
+  /** Photos whose file is gone: removed and taken again. */
+  readonly retake: readonly CaptureRecord[];
+  /** Photos out of automatic tries: one tap sends them again. */
+  readonly retry: readonly CaptureRecord[];
+};
+
+// The round's photos that will not go without the surveyor; a held submit waits on them.
+export function useStuckPhotos(caseRef: string, inspectionRef: string | null): StuckPhotos {
+  const records = useRoundCaptures(caseRef, inspectionRef);
+  return useMemo(
+    () => ({
+      retake: records.filter((record) => stuckReason(record) === 'retake'),
+      retry: records.filter((record) => stuckReason(record) === 'retry'),
+    }),
+    [records],
+  );
+}
+
 // The round's check-in record on this device, re-rendered whenever it changes.
 export function useCheckInRecord(caseRef: string, inspectionRef: string | null): CheckInRecord | null {
   const read = useCallback(() => checkInSnapshot(caseRef), [caseRef]);
   const snapshot = useSyncExternalStore(subscribeToCheckIns, read);
   return useMemo(() => checkInFrom(snapshot, inspectionRef), [snapshot, inspectionRef]);
+}
+
+// The submit held on this device for a case, re-rendered whenever it changes.
+export function useQueuedSubmit(caseRef: string): QueuedSubmit | null {
+  const read = useCallback(() => submitQueueSnapshot(caseRef), [caseRef]);
+  const snapshot = useSyncExternalStore(subscribeToSubmitQueue, read);
+  return useMemo(() => queuedSubmitFrom(snapshot), [snapshot]);
+}
+
+/*
+ * Sends every submit held on the device whenever the network comes back, from
+ * anywhere in the app — mount once under the signed-in layout.
+ */
+export function useQueuedSubmitDrain(): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const run = () => {
+      void drainAllSubmits().then((sent) => {
+        if (sent > 0) void queryClient.invalidateQueries({ queryKey: ['icms'] });
+      });
+    };
+    run();
+    const network = Network.addNetworkStateListener((state) => {
+      if (state.isConnected === true) run();
+    });
+    return () => network.remove();
+  }, [queryClient]);
 }

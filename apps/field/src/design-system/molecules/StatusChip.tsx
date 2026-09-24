@@ -3,6 +3,8 @@
  * Changing a colour here without changing docs/Agents/ui-tokens.md breaks that contract.
  */
 
+import { useT, type MessageKey } from '@/services/i18n';
+
 import { Chip, type ChipProps } from '../atoms';
 import { type ColorToken } from '../tokens';
 
@@ -16,13 +18,13 @@ const tones: Record<CaseStatus, ColorToken> = {
   overdue: 'statusOverdue',
 };
 
-const labels: Record<CaseStatus, string> = {
-  new: 'New',
-  scheduled: 'Scheduled',
-  in_progress: 'In progress',
-  completed: 'Completed',
-  overdue: 'Overdue',
-};
+const labels = {
+  new: 'status.new',
+  scheduled: 'status.scheduled',
+  in_progress: 'status.inProgress',
+  completed: 'status.completed',
+  overdue: 'status.overdue',
+} as const satisfies Record<CaseStatus, MessageKey>;
 
 export type StatusChipProps = Omit<ChipProps, 'label' | 'tone'> & {
   status: CaseStatus;
@@ -32,5 +34,6 @@ export type StatusChipProps = Omit<ChipProps, 'label' | 'tone'> & {
 
 // The dot is on by default because a chip is scanned before it is read.
 export function StatusChip({ status, label, dot = true, ...rest }: StatusChipProps) {
-  return <Chip {...rest} dot={dot} label={label ?? labels[status]} tone={tones[status]} />;
+  const t = useT();
+  return <Chip {...rest} dot={dot} label={label ?? t(labels[status])} tone={tones[status]} />;
 }

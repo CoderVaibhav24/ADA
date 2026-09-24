@@ -1,25 +1,6 @@
-/**
- * `dashboard.*`, typed, for the dashboard screen only.
- *
- * It lives in the feature folder rather than in `src/i18n/labels.ts` for the
- * reason `features/users/labels.ts` gives: that module is the shared surface —
- * the hooks more than one screen renders — and what only this screen reads
- * belongs next to this screen. Two vocabularies are NOT re-derived here:
- * `useCaseStatusLabels` already names the eleven workflow statuses, and
- * `useFormats` already owns number and date formatting, so every count reaching
- * these functions is a string that has already been through the Indian grouping.
- *
- * ## The one string on this screen that has to be exactly right
- *
- * `trend.series.resolved`. The server's field is called `resolved`, and it is
- * NOT the number of cases closed on that date — it is, of the cases RAISED in
- * that bucket, how many have since reached `closed` or `rejected`. Three
- * separate surfaces say so, because one is not enough for a number a director
- * will read off a screen: the legend ("Of those, since closed or rejected"),
- * the always-visible note under the plot, and the tooltip, which spells the
- * whole sentence out per bucket. The bare word "resolved" appears in no
- * user-facing string in either language.
- */
+// `dashboard.*`, typed, for the dashboard screen only.
+// `trend.series.resolved` is a cohort (of the cases raised, how many since closed or rejected),
+// never "closed on that date"; the legend, footnote and tooltip all say so.
 
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,7 +21,8 @@ export type DashboardLabels = {
   title: string;
   heading: string;
   scopeNote: string;
-  loadedAt: (time: string) => string;
+  subtitle: (time: string) => string;
+  runChangeDetection: string;
   refresh: string;
   refreshing: string;
 
@@ -54,33 +36,36 @@ export type DashboardLabels = {
     requestId: (id: string | null) => string;
   };
 
-  summary: {
-    title: string;
-    description: string;
-    empty: string;
-    tiles: {
-      total: { label: string; note: string };
-      open: { label: string; note: string };
-      closed: { label: string; note: string };
-      rejected: { label: string; note: string };
-      highPriority: { label: string; note: string };
-    };
+  toolbar: { label: string };
+
+  tiles: {
+    total: string;
+    newDetections: string;
+    activeComplaints: string;
+    inspectionsScheduled: string;
+    noticesIssued: string;
+    casesClosed: string;
+    unavailable: string;
+    noPermission: string;
+    last30Days: string;
+    raisedInPeriod: (n: string, period: string) => string;
+    highPriority: (n: string) => string;
+    awaitingSubmission: string;
+    allNotices: string;
+    rejected: (n: string) => string;
   };
 
   trend: {
     title: string;
     periodLabel: string;
     period: (id: string) => string;
-    bucketNote: (bucket: string) => string;
+    periodShort: (id: string) => string;
     series: { raised: string; resolved: string };
     cohortNote: string;
-    window: (start: string, end: string) => string;
-    totals: (raised: string, resolved: string) => string;
     allZero: string;
     empty: string;
     /** The whole cohort sentence for one bucket. Rides in the tooltip heading. */
     point: (raised: string, resolved: string) => string;
-    axis: string;
     showTable: string;
     hideTable: string;
     tableCaption: string;
@@ -89,31 +74,30 @@ export type DashboardLabels = {
 
   byType: {
     title: string;
-    description: string;
     cap: (limit: string) => string;
     untyped: string;
     empty: string;
-    columns: { type: string; total: string; share: string; open: string; resolved: string };
+    count: (count: string) => string;
     share: (share: string) => string;
   };
 
   byZone: {
     title: string;
-    description: string;
+    badge: string;
     cap: (limit: string) => string;
     empty: string;
-    axis: string;
     scrollHint: string;
     columns: { zone: string; total: string; open: string; resolved: string };
   };
 
-  byStatus: {
+  feed: {
     title: string;
-    description: string;
+    noPermission: string;
     empty: string;
-    unknown: (code: string) => string;
-    totalRow: string;
-    columns: { status: string; count: string; share: string; high: string };
+    noAddress: string;
+    today: string;
+    daysAgo: (n: string) => string;
+    viewAll: string;
   };
 };
 
@@ -124,7 +108,8 @@ export function useDashboardLabels(): DashboardLabels {
       title: t("dashboard.title"),
       heading: t("dashboard.heading"),
       scopeNote: t("dashboard.scopeNote"),
-      loadedAt: (time: string) => t("dashboard.loadedAt", { time }),
+      subtitle: (time: string) => t("dashboard.subtitle", { time }),
+      runChangeDetection: t("dashboard.runChangeDetection"),
       refresh: t("dashboard.refresh"),
       refreshing: t("dashboard.refreshing"),
 
@@ -138,60 +123,47 @@ export function useDashboardLabels(): DashboardLabels {
         loading: t("dashboard.panel.loading"),
         errorTitle: t("dashboard.panel.errorTitle"),
         retry: t("dashboard.panel.retry"),
-        // A missing id is a different sentence, not an empty one: "Request ID"
-        // followed by nothing reads as a rendering bug over a phone line.
+        // A missing id is its own sentence, not "Request ID" followed by nothing.
         requestId: (id: string | null) =>
           id === null || id === ""
             ? t("dashboard.panel.noRequestId")
             : t("dashboard.panel.requestId", { id }),
       },
 
-      summary: {
-        title: t("dashboard.summary.title"),
-        description: t("dashboard.summary.description"),
-        empty: t("dashboard.summary.empty"),
-        tiles: {
-          total: {
-            label: t("dashboard.summary.total.label"),
-            note: t("dashboard.summary.total.note"),
-          },
-          open: {
-            label: t("dashboard.summary.open.label"),
-            note: t("dashboard.summary.open.note"),
-          },
-          closed: {
-            label: t("dashboard.summary.closed.label"),
-            note: t("dashboard.summary.closed.note"),
-          },
-          rejected: {
-            label: t("dashboard.summary.rejected.label"),
-            note: t("dashboard.summary.rejected.note"),
-          },
-          highPriority: {
-            label: t("dashboard.summary.highPriority.label"),
-            note: t("dashboard.summary.highPriority.note"),
-          },
-        },
+      toolbar: { label: t("dashboard.toolbar.label") },
+
+      tiles: {
+        total: t("dashboard.tiles.total"),
+        newDetections: t("dashboard.tiles.newDetections"),
+        activeComplaints: t("dashboard.tiles.activeComplaints"),
+        inspectionsScheduled: t("dashboard.tiles.inspectionsScheduled"),
+        noticesIssued: t("dashboard.tiles.noticesIssued"),
+        casesClosed: t("dashboard.tiles.casesClosed"),
+        unavailable: t("dashboard.tiles.unavailable"),
+        noPermission: t("dashboard.tiles.noPermission"),
+        last30Days: t("dashboard.tiles.last30Days"),
+        raisedInPeriod: (n: string, period: string) =>
+          t("dashboard.tiles.raisedInPeriod", { n, period }),
+        highPriority: (n: string) => t("dashboard.tiles.highPriority", { n }),
+        awaitingSubmission: t("dashboard.tiles.awaitingSubmission"),
+        allNotices: t("dashboard.tiles.allNotices"),
+        rejected: (n: string) => t("dashboard.tiles.rejected", { n }),
       },
 
       trend: {
         title: t("dashboard.trend.title"),
         periodLabel: t("dashboard.trend.periodLabel"),
         period: (id: string) => t(`dashboard.trend.period.${id}`),
-        bucketNote: (bucket: string) => t(`dashboard.trend.bucketNote.${bucket}`),
+        periodShort: (id: string) => t(`dashboard.trend.periodShort.${id}`),
         series: {
           raised: t("dashboard.trend.series.raised"),
           resolved: t("dashboard.trend.series.resolved"),
         },
         cohortNote: t("dashboard.trend.cohortNote"),
-        window: (start: string, end: string) => t("dashboard.trend.window", { start, end }),
-        totals: (raised: string, resolved: string) =>
-          t("dashboard.trend.totals", { raised, resolved }),
         allZero: t("dashboard.trend.allZero"),
         empty: t("dashboard.trend.empty"),
         point: (raised: string, resolved: string) =>
           t("dashboard.trend.point", { raised, resolved }),
-        axis: t("dashboard.trend.axis"),
         showTable: t("dashboard.trend.showTable"),
         hideTable: t("dashboard.trend.hideTable"),
         tableCaption: t("dashboard.trend.tableCaption"),
@@ -204,26 +176,18 @@ export function useDashboardLabels(): DashboardLabels {
 
       byType: {
         title: t("dashboard.byType.title"),
-        description: t("dashboard.byType.description"),
         cap: (limit: string) => t("dashboard.byType.cap", { limit }),
         untyped: t("dashboard.byType.untyped"),
         empty: t("dashboard.byType.empty"),
-        columns: {
-          type: t("dashboard.byType.columns.type"),
-          total: t("dashboard.byType.columns.total"),
-          share: t("dashboard.byType.columns.share"),
-          open: t("dashboard.byType.columns.open"),
-          resolved: t("dashboard.byType.columns.resolved"),
-        },
+        count: (count: string) => t("dashboard.byType.count", { count }),
         share: (share: string) => t("dashboard.byType.share", { share }),
       },
 
       byZone: {
         title: t("dashboard.byZone.title"),
-        description: t("dashboard.byZone.description"),
+        badge: t("dashboard.byZone.badge"),
         cap: (limit: string) => t("dashboard.byZone.cap", { limit }),
         empty: t("dashboard.byZone.empty"),
-        axis: t("dashboard.byZone.axis"),
         scrollHint: t("dashboard.byZone.scrollHint"),
         columns: {
           zone: t("dashboard.byZone.columns.zone"),
@@ -233,20 +197,14 @@ export function useDashboardLabels(): DashboardLabels {
         },
       },
 
-      byStatus: {
-        title: t("dashboard.byStatus.title"),
-        description: t("dashboard.byStatus.description"),
-        empty: t("dashboard.byStatus.empty"),
-        // Falls back to the raw code: a twelfth status arriving from a migration
-        // this build has not seen must read as itself, not as a missing key.
-        unknown: (code: string) => t("dashboard.byStatus.unknown", { code }),
-        totalRow: t("dashboard.byStatus.totalRow"),
-        columns: {
-          status: t("dashboard.byStatus.columns.status"),
-          count: t("dashboard.byStatus.columns.count"),
-          share: t("dashboard.byStatus.columns.share"),
-          high: t("dashboard.byStatus.columns.high"),
-        },
+      feed: {
+        title: t("dashboard.feed.title"),
+        noPermission: t("dashboard.feed.noPermission"),
+        empty: t("dashboard.feed.empty"),
+        noAddress: t("dashboard.feed.noAddress"),
+        today: t("dashboard.feed.today"),
+        daysAgo: (n: string) => t("dashboard.feed.daysAgo", { n }),
+        viewAll: t("dashboard.feed.viewAll"),
       },
     }),
     [t],

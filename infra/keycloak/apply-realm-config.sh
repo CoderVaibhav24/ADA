@@ -101,7 +101,7 @@ SA=\$(\$K get clients/\$CID/service-account-user -r \$R --fields id --format csv
 ROLES=/tmp/ada-api-roles.json
 printf '[' > \$ROLES
 FIRST=1
-for n in view-users query-users manage-users view-realm; do
+for n in view-users query-users manage-users view-realm manage-realm; do
   [ \$FIRST -eq 0 ] && printf ',' >> \$ROLES
   FIRST=0
   \$K get clients/\$RM/roles/\$n -r \$R --fields id,name >> \$ROLES
@@ -114,7 +114,7 @@ printf ']' >> \$ROLES
 \$K create users/\$SA/role-mappings/clients/\$RM -r \$R -f \$ROLES >/dev/null 2>&1 || true
 \$K create clients/\$CID/scope-mappings/clients/\$RM -r \$R -f \$ROLES >/dev/null 2>&1 || true
 rm -f \$ROLES
-echo "  ada-api service account + client scope -> view-users query-users manage-users view-realm"
+echo "  ada-api service account + client scope -> view-users query-users manage-users view-realm manage-realm"
 
 # ada-auth: the OTP service refuses to mint a token for any subject holding a
 # privileged realm-management client role, and that check reads the

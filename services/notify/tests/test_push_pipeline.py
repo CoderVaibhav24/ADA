@@ -569,3 +569,73 @@ async def test_inbox_rejects_a_forged_cursor(client) -> None:
         "/v1/me/notifications", headers=auth("alice"), params={"cursor": "not-a-cursor"}
     )
     assert response.status_code == 400
+
+
+# --- in-app -----------------------------------------------------------------------
+
+
+async def test_inapp_is_one_sent_inbox_delivery_and_the_inbox_carries_its_hint(
+    client, sessions, settings, project
+) -> None:
+    from app.channels.inapp import INBOX_ADDRESS, InAppChannel
+
+    async with sessions() as session:
+        session.add(
+            Template(
+                project_id=project["id"],
+                key="inspection_submitted",
+                channel=Channel.INAPP,
+                subject="Inspection submitted",
+                body="{{ inspection_ref }} for {{ case_ref }} needs verifying",
+            )
+        )
+        row = Notification(
+            project_id=project["id"],
+            idempotency_key=f"test-{secrets.token_hex(8)}",
+            recipient_type=RecipientType.KC_SUB,
+            recipient_id=ALICE,
+            template_key="inspection_submitted",
+            payload={"case_ref": "CMP-INAPP", "inspection_ref": "INS-INAPP"},
+            channels=["inapp"],
+        )
+        session.add(row)
+        await session.commit()
+    event = events.notification_created(
+        notification_id=row.id,
+        project_id=project["id"],
+        project_key=project["key"],
+        recipient_type="kc_sub",
+        recipient_id=ALICE,
+        template_key="inspection_submitted",
+        locale="en",
+        channels=["inapp"],
+        payload=row.payload,
+    )
+    broker = FakeBroker()
+    await _fanout(settings, broker, sessions).process(_message(event))
+    assert {topic for topic, _ in broker.published} == {"delivery.inapp"}
+
+    worker = DeliveryWorker(
+        settings, broker, sessions, InAppChannel(settings), FakeDirectory(), "test"  # type: ignore[arg-type]
+    )
+    for topic, payload in list(broker.published):
+        await worker.process(
+            Message(handle="1-0", event_id=uuid.uuid4(), topic=topic,
+                    partition_key=str(ALICE), payload=payload)
+        )
+    async with sessions() as session:
+        delivery = await session.scalar(select(Delivery).where(Delivery.notification_id == row.id))
+    assert delivery.address == INBOX_ADDRESS
+    assert delivery.status == DeliveryStatus.SENT
+
+    page = (
+        await client.get("/v1/me/notifications", headers=auth("alice"), params={"limit": 100})
+    ).json()
+    item = next(i for i in page["items"] if i["id"] == str(row.id))
+    assert item["title"] == "Inspection submitted"
+    assert item["body"] == "INS-INAPP for CMP-INAPP needs verifying"
+    assert item["data"] == {
+        "type": "inspection_submitted",
+        "case_ref": "CMP-INAPP",
+        "inspection_ref": "INS-INAPP",
+    }

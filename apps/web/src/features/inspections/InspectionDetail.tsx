@@ -50,7 +50,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/icms/states";
 import { StatusChip } from "@/components/icms/StatusChip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useFormats } from "@/i18n";
+import { useFormats, useLanguage } from "@/i18n";
 import {
   useCaptureSourceLabels,
   useCaseStatusLabels,
@@ -60,6 +60,7 @@ import {
 } from "@/i18n/labels";
 import { Icon } from "@/lib/icons";
 import { ROUTES } from "@/routes/paths";
+import { ActorName } from "@/components/icms/ActorName";
 import { EvidenceGallery } from "./EvidenceGallery";
 import { InspectionActions } from "./InspectionActions";
 import { ResurveyPanel } from "./ResurveyPanel";
@@ -77,18 +78,13 @@ import {
   useResurveyRequests,
 } from "./useInspectionDetail";
 import { useInspectionGate } from "./useInspections";
-
-/**
- * A surveyor's display name, or the id that is always there instead.
- *
- * Contract amendment 6: `surveyor_name` is always null — Keycloak is the user
- * store and there is no local users table to join — so the field is in the
- * shape and never populated. The id is what an officer has to work with, and a
- * blank cell where a name belongs reads as a failed load.
- */
-function personOf(name: string | null | undefined, userId: string): string {
-  return name ?? userId;
-}
+import {
+  ACT_DOMAIN,
+  AREA_TYPE_DOMAIN,
+  CONSTRUCTION_STAGE_DOMAIN,
+  SECTION_DOMAIN,
+  useVocabulary,
+} from "./useFindings";
 
 /** Six decimal places is about a tenth of a metre; more is false precision. */
 function coordinate(value: number | null | undefined): string {
@@ -157,7 +153,9 @@ function CheckInRow({
         </div>
         <div className="flex flex-wrap gap-1">
           <dt className="sr-only">{labels.summary.surveyor}</dt>
-          <dd>{checkIn.user_id}</dd>
+          <dd>
+            <ActorName name={checkIn.user_name} id={checkIn.user_id} />
+          </dd>
         </div>
       </dl>
     </li>
@@ -208,7 +206,7 @@ function SummaryStrip({
         </Field>
 
         <Field label={labels.summary.surveyor}>
-          {personOf(detail.surveyor_name, detail.surveyor_user_id)}
+          <ActorName name={detail.surveyor_name} id={detail.surveyor_user_id} />
         </Field>
 
         <Field label={labels.summary.zone}>
@@ -238,6 +236,7 @@ export default function InspectionDetail() {
   const gateLabels = useInspectionGateLabels();
   const statusLabels = useInspectionStatusLabels();
   const { date, dateTime, number } = useFormats();
+  const { language } = useLanguage();
 
   const gate = useInspectionGate();
   const evidenceGate = useEvidenceGate();
@@ -250,6 +249,10 @@ export default function InspectionDetail() {
   const evidence = useInspectionEvidence(inspectionId, gate.canRead && evidenceGate.canRead);
   const resurveys = useResurveyRequests(caseRef, gate.canRead);
   const decide = useDecideResurvey(inspectionId, caseRef);
+  const acts = useVocabulary(ACT_DOMAIN, gate.canRead, language);
+  const sectionCodes = useVocabulary(SECTION_DOMAIN, gate.canRead, language);
+  const areaTypes = useVocabulary(AREA_TYPE_DOMAIN, gate.canRead, language);
+  const stages = useVocabulary(CONSTRUCTION_STAGE_DOMAIN, gate.canRead, language);
 
   if (gate.loading) {
     return (
@@ -276,26 +279,25 @@ export default function InspectionDetail() {
         <h1 className="font-display text-xl font-bold text-balance text-fg-strong">
           {gateLabels.deniedTitle}
         </h1>
-        <p className="text-sm text-fg-muted text-pretty">{gateLabels.deniedBody}</p>
+        <p className="text-sm text-fg-canvas-muted text-pretty">{gateLabels.deniedBody}</p>
       </section>
     );
   }
 
-  const back = (
-    <div className="flex justify-end">
-      <Button
-        variant="outline"
-        size="sm"
-        className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
-        onClick={() => {
-          void navigate(ROUTES.inspections);
-        }}
-      >
-        <Icon name="action.back" className="size-4" />
-        {labels.back}
-      </Button>
-    </div>
+  const backButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      className="rounded-full border-accent-soft-border bg-accent-soft text-fg-link"
+      onClick={() => {
+        void navigate(ROUTES.inspections);
+      }}
+    >
+      <Icon name="action.back" className="size-4" />
+      {labels.back}
+    </Button>
   );
+  const back = <div className="flex justify-end">{backButton}</div>;
 
   if (inspection.isPending) {
     return (
@@ -339,10 +341,8 @@ export default function InspectionDetail() {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
-      {back}
-
       {/* ---- title, state, and what may be done to it -------------------- */}
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="font-display text-2xl font-bold tracking-tight text-fg-strong sm:text-3xl">
@@ -362,7 +362,10 @@ export default function InspectionDetail() {
           </p>
         </div>
 
-        <InspectionActions detail={detail} labels={labels} />
+        <div className="flex flex-wrap items-center gap-2">
+          <InspectionActions detail={detail} labels={labels} />
+          {backButton}
+        </div>
       </header>
 
       <SummaryStrip detail={detail} labels={labels} formatDate={date} />
@@ -454,7 +457,10 @@ export default function InspectionDetail() {
                   {(detail.sections ?? []).map((section) => (
                     <li key={`${section.act_cd}/${section.section_cd}`}>
                       <Badge variant="secondary">
-                        {labels.sections.item(section.act_cd, section.section_cd)}
+                        {labels.sections.item(
+                          acts.label(section.act_cd),
+                          sectionCodes.label(section.section_cd),
+                        )}
                       </Badge>
                     </li>
                   ))}
@@ -573,15 +579,60 @@ export default function InspectionDetail() {
             )}
           </DetailPanel>
 
+          <DetailPanel title={labels.owner.title}>
+            {detail.owner_name == null && detail.owner_phone == null ? (
+              <p className="text-sm text-fg-faint">{labels.owner.none}</p>
+            ) : (
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                <Field label={labels.occupant.name}>
+                  {detail.owner_name ?? <Absent>{register.notRecorded}</Absent>}
+                </Field>
+                <Field label={labels.occupant.phone}>
+                  {detail.owner_phone == null ? (
+                    <Absent>{register.notRecorded}</Absent>
+                  ) : (
+                    <Mono>{detail.owner_phone}</Mono>
+                  )}
+                </Field>
+              </dl>
+            )}
+          </DetailPanel>
+
           <DetailPanel title={labels.measurement.title}>
             {detail.measured_area_sqm == null &&
             detail.area_type_cd == null &&
+            detail.construction_stage_cd == null &&
+            detail.length_m == null &&
+            detail.width_m == null &&
             detail.notice_required == null ? (
               <p className="text-sm text-fg-faint">{labels.measurement.none}</p>
             ) : (
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
                 <Field label={labels.measurement.areaType}>
-                  {detail.area_type_cd ?? <Absent>{register.notRecorded}</Absent>}
+                  {detail.area_type_cd == null ? (
+                    <Absent>{register.notRecorded}</Absent>
+                  ) : (
+                    areaTypes.label(detail.area_type_cd)
+                  )}
+                </Field>
+                <Field label={labels.measurement.stage}>
+                  {detail.construction_stage_cd == null ? (
+                    <Absent>{register.notRecorded}</Absent>
+                  ) : (
+                    stages.label(detail.construction_stage_cd)
+                  )}
+                </Field>
+                <Field label={labels.measurement.dimensions}>
+                  {detail.length_m == null && detail.width_m == null ? (
+                    <Absent>{register.notRecorded}</Absent>
+                  ) : (
+                    <span className="tabular">
+                      {labels.measurement.dimensionsValue(
+                        detail.length_m == null ? "—" : number(detail.length_m),
+                        detail.width_m == null ? "—" : number(detail.width_m),
+                      )}
+                    </span>
+                  )}
                 </Field>
                 <Field label={labels.measurement.area}>
                   {detail.measured_area_sqm == null ? (
@@ -589,8 +640,19 @@ export default function InspectionDetail() {
                   ) : (
                     // Lakh/crore grouping on `hi-IN`, thousands on `en-IN`:
                     // an area is a quantity and is read like one.
-                    <span className="tabular">
-                      {labels.measurement.areaValue(number(detail.measured_area_sqm))}
+                    <span className="flex flex-col gap-1">
+                      <span className="tabular">
+                        {labels.measurement.areaValue(number(detail.measured_area_sqm))}
+                      </span>
+                      {detail.area_mismatch && (
+                        <span
+                          role="note"
+                          className="flex items-center gap-1.5 text-2xs text-status-warning-fg"
+                        >
+                          <Icon name="feedback.warning" className="size-3.5 shrink-0" />
+                          {labels.measurement.mismatch}
+                        </span>
+                      )}
                     </span>
                   )}
                 </Field>
@@ -604,7 +666,14 @@ export default function InspectionDetail() {
                   )}
                 </Field>
                 {detail.notice_act_cd != null && (
-                  <Field label={labels.measurement.noticeAct}>{detail.notice_act_cd}</Field>
+                  <Field label={labels.measurement.noticeAct}>
+                    {acts.label(detail.notice_act_cd)}
+                  </Field>
+                )}
+                {detail.findings_source != null && (
+                  <Field label={labels.measurement.source}>
+                    {labels.measurement.sourceValue(detail.findings_source)}
+                  </Field>
                 )}
               </dl>
             )}

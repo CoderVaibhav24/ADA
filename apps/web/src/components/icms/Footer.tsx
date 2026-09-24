@@ -51,7 +51,7 @@ export function Footer({
     <footer
       data-slot="app-footer"
       className={cn(
-        "w-full border-t border-line-subtle bg-surface-canvas",
+        "w-full border-t border-line-subtle bg-surface-2",
         // Wraps at every breakpoint instead of assuming the strings fit on one
         // line: Hindi runs materially longer than English and this is the first
         // place a fixed-height footer would clip.

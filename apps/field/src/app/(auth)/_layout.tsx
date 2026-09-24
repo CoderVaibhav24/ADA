@@ -1,5 +1,7 @@
 import { Stack } from 'expo-router';
 
+import { sceneBackground } from '@/design-system';
+
 /*
  * The unauthenticated stack. Mirrors `(app)/_layout.tsx`: a headerless `Stack`
  * whose only job is to make the group name `(auth)` resolve to a route. Without
@@ -9,7 +11,8 @@ import { Stack } from 'expo-router';
  */
 export default function AuthLayout() {
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: sceneBackground }}>
+      <Stack.Screen name="language" />
       <Stack.Screen name="login" />
     </Stack>
   );

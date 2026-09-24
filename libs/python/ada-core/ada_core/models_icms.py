@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -43,6 +44,20 @@ CASE_STATUSES = (
 CASE_PRIORITIES = ("high", "medium", "low")
 
 EVIDENCE_KINDS = ("photo", "video", "document", "signature")
+
+# Filed with the complaint, before any round exists; not a kind an inspection may upload.
+CASE_EVIDENCE_KIND = "complaint_photo"
+STORED_EVIDENCE_KINDS = (*EVIDENCE_KINDS, CASE_EVIDENCE_KIND)
+
+# The surveyor's three structured answers on a round (web Figma 63:1054, 63:1087, 63:983).
+ENCROACHMENT_CONFIRMED = ("yes", "partial", "no_false_positive")
+EXTERNAL_SUPPORT = ("none", "police", "survey_dept", "legal")
+RECOMMENDATIONS = (
+    "issue_notice", "file_legal_case", "demolition_order",
+    "further_investigation", "no_action_required", "impose_fine",
+)
+# Which client last saved a round's findings: the field app, or the web portal.
+FINDINGS_SOURCES = ("field", "web")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -198,8 +213,14 @@ class Case(Base):
 
     raised_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_ist, server_default=func.now())
+    # The complainant's date, which may precede the filing; the API writes today when absent.
+    complaint_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
+    # Written by reject (case_reject_reason) or close (case_close_outcome); 0022.
+    outcome_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    outcome_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_ist, server_default=func.now())
@@ -258,6 +279,24 @@ class Inspection(Base):
             _in("status", ("scheduled", "in_progress", "submitted",
                            "accepted", "rejected")),
             name="icms_inspection_status_ck"),
+        CheckConstraint(
+            _in("encroachment_confirmed_cd", ENCROACHMENT_CONFIRMED),
+            name="icms_inspection_encroachment_ck"),
+        CheckConstraint(
+            _in("external_support_cd", EXTERNAL_SUPPORT),
+            name="icms_inspection_external_support_ck"),
+        CheckConstraint(
+            _in("recommendation_cd", RECOMMENDATIONS),
+            name="icms_inspection_recommendation_ck"),
+        CheckConstraint(
+            "floor_count BETWEEN 0 AND 200", name="icms_inspection_floor_count_ck"),
+        CheckConstraint(
+            "length_m > 0 AND length_m <= 10000", name="icms_inspection_length_ck"),
+        CheckConstraint(
+            "width_m > 0 AND width_m <= 10000", name="icms_inspection_width_ck"),
+        CheckConstraint(
+            _in("findings_source", FINDINGS_SOURCES),
+            name="icms_inspection_findings_source_ck"),
         Index("ix_icms_inspection_case", "case_id"),
         Index("ix_icms_inspection_surveyor", "surveyor_user_id"),
         Index("ix_icms_inspection_status", "status"),
@@ -283,9 +322,24 @@ class Inspection(Base):
 
     occupant_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     occupant_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Legacy inspection.owner_name / owner_mobile: who holds the property, not who was on site.
+    owner_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    property_type_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    floor_count: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    police_station: Mapped[str | None] = mapped_column(Text, nullable=True)
     area_type_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
     measured_area_sqm: Mapped[float | None] = mapped_column(
         Numeric(12, 2), nullable=True)
+    construction_stage_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    length_m: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    width_m: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    # Which client last saved the findings (token azp); web rounds skip the act, sections, owner.
+    findings_source: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    encroachment_confirmed_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    external_support_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    recommendation_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     notice_required: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     notice_act_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -374,7 +428,7 @@ class Evidence(Base):
     __tablename__ = "icms_evidence"
     __table_args__ = (
         CheckConstraint(
-            _in("kind", EVIDENCE_KINDS),
+            _in("kind", STORED_EVIDENCE_KINDS),
             name="icms_evidence_kind_ck"),
         CheckConstraint(
             _in("capture_source", ("camera", "gallery", "upload", "system"))
@@ -412,6 +466,15 @@ class Evidence(Base):
     capture_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     captured_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # The server-stamped derivative; the original file and sha256 stay as uploaded.
+    stamped_storage_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    geotag_flagged: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"))
+    distance_to_site_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exif_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exif_lon: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     uploaded_by: Mapped[str] = mapped_column(String(64))
     uploaded_at: Mapped[datetime] = mapped_column(
@@ -623,6 +686,8 @@ class Permission(Base):
     label_hi: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    # The screen the Roles tab files this under (0013); NULL when several screens share it.
+    screen_cd: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class PolicyRole(Base):
@@ -726,6 +791,11 @@ class WorkflowTransition(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_ist, server_default=func.now())
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Seeded by 0010 for phase 2; the role table below still governs.
+    permission_cd: Mapped[str | None] = mapped_column(
+        ForeignKey("icms_permission.permission_cd", ondelete="RESTRICT",
+                   name="icms_wf_transition_permission_fk"),
+        nullable=True)
 
     roles: Mapped[list[TransitionRole]] = relationship(
         back_populates="transition", cascade="all, delete-orphan")
@@ -776,7 +846,8 @@ class UploadPolicy(Base):
 
     __tablename__ = "icms_upload_policy"
     __table_args__ = (
-        CheckConstraint(_in("kind", EVIDENCE_KINDS), name="icms_upload_policy_kind_ck"),
+        CheckConstraint(
+            _in("kind", STORED_EVIDENCE_KINDS), name="icms_upload_policy_kind_ck"),
         CheckConstraint("max_bytes > 0", name="icms_upload_policy_max_bytes_ck"),
         CheckConstraint(
             "max_pixels IS NULL OR max_pixels > 0", name="icms_upload_policy_max_pixels_ck"),
@@ -799,3 +870,116 @@ class UploadPolicy(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_ist, server_default=func.now())
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+# Runtime switches a Super Admin flips without a release (revision 0018).
+class RuntimeSetting(Base):
+    __tablename__ = "icms_runtime_setting"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[object] = mapped_column(Json)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+
+
+# One row per deadline reminder delivered, so a restart never repeats one (revision 0021).
+class ReminderSent(Base):
+    __tablename__ = "icms_reminder_sent"
+    __table_args__ = (
+        UniqueConstraint("rule", "subject", "stage", name="icms_reminder_sent_uq"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    rule: Mapped[str] = mapped_column(String(40))
+    subject: Mapped[str] = mapped_column(String(64))
+    stage: Mapped[str] = mapped_column(String(20))
+    recipients: Mapped[int] = mapped_column(SmallInteger, default=0, server_default=text("0"))
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+
+
+# Boundary layers loaded from the authority's KML (revision 0015; docs/icms/kml-import-spec.md).
+class Village(Base):
+    __tablename__ = "icms_village"
+    __table_args__ = (Index("ix_icms_village_geom", "geom", postgresql_using="gist"),)
+
+    village_lgd: Mapped[str] = mapped_column(String(12), primary_key=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name_hi: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tehsil: Mapped[str | None] = mapped_column(Text, nullable=True)
+    district_lgd: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    geom: Mapped[object] = mapped_column(Geom("MultiPolygon"))
+    # Every ExtendedData field of the placemark, including ones ADA does not read yet.
+    attributes: Mapped[dict | None] = mapped_column(Json, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+
+
+PARCEL_REVENUE_KEY = "village_lgd IS NOT NULL AND khasra_no IS NOT NULL"
+PARCEL_SCHEME_KEY = "sector IS NOT NULL AND plot_no IS NOT NULL"
+
+
+class Parcel(Base):
+    __tablename__ = "icms_parcel"
+    __table_args__ = (
+        # A revenue parcel is keyed by village + khasra, a scheme plot by sector + plot number.
+        Index("uq_icms_parcel_village_khasra", "village_lgd", "khasra_no", unique=True,
+              postgresql_where=text(PARCEL_REVENUE_KEY), sqlite_where=text(PARCEL_REVENUE_KEY)),
+        Index("uq_icms_parcel_sector_plot", "sector", "plot_no", unique=True,
+              postgresql_where=text(PARCEL_SCHEME_KEY), sqlite_where=text(PARCEL_SCHEME_KEY)),
+        CheckConstraint(f"({PARCEL_REVENUE_KEY}) OR ({PARCEL_SCHEME_KEY})",
+                        name="icms_parcel_key_ck"),
+        CheckConstraint("ulpin IS NULL OR length(ulpin) = 14", name="icms_parcel_ulpin_ck"),
+        CheckConstraint("area_sqm IS NULL OR area_sqm >= 0", name="icms_parcel_area_ck"),
+        CheckConstraint("sanctioned_area_sqm IS NULL OR sanctioned_area_sqm >= 0",
+                        name="icms_parcel_sanctioned_area_ck"),
+        Index("ix_icms_parcel_geom", "geom", postgresql_using="gist"),
+        Index("ix_icms_parcel_ulpin", "ulpin",
+              postgresql_where=text("ulpin IS NOT NULL"),
+              sqlite_where=text("ulpin IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    village_lgd: Mapped[str | None] = mapped_column(
+        ForeignKey("icms_village.village_lgd"), nullable=True)
+    khasra_no: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # Key form, e.g. SECTOR-4; `sector_name` keeps the land record's own spelling.
+    sector: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    sector_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plot_no: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    plot_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tenure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    registration_no: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sanctioned_area_sqm: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    ulpin: Mapped[str | None] = mapped_column(String(14), nullable=True)
+    land_use: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Personal data: never returned by the parcel lookup, see the KML import spec.
+    owner_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    area_sqm: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    geom: Mapped[object] = mapped_column(Geom("MultiPolygon"))
+    attributes: Mapped[dict | None] = mapped_column(Json, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+
+
+class BoundaryImport(Base):
+    __tablename__ = "icms_boundary_import"
+    __table_args__ = (Index("ix_icms_boundary_import_at", "imported_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    filename: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    imported_by: Mapped[str] = mapped_column(String(64))
+    # The importer's name from their token at the time, so the log reads without Keycloak.
+    imported_by_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+    counts: Mapped[dict] = mapped_column(Json)

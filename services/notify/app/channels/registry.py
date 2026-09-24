@@ -13,6 +13,7 @@ import structlog
 
 from app.channels.base import Channel
 from app.channels.email import EmailChannel, FailingEmailChannel, StubEmailChannel
+from app.channels.inapp import InAppChannel
 from app.channels.push import FailingPushChannel, PushChannel, StubPushChannel
 from app.config import Settings
 
@@ -39,6 +40,8 @@ def create_channels(settings: Settings) -> dict[str, Channel]:
         # Always registered, even with no credentials: a push delivery then fails
         # with a stated reason instead of sitting on a topic nobody consumes.
         "push": _PUSH_PROVIDERS[settings.push_provider](settings),
+        # No provider: the notification row is the inbox entry the user reads.
+        "inapp": InAppChannel(settings),
     }
 
     logger.info(

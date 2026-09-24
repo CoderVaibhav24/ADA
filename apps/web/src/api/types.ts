@@ -1,5 +1,7 @@
 import type { FeatureCollection, Polygon } from "geojson";
 
+import type { RasterLifecycleFields, RasterLifecycleStatus } from "../upload/types.ts";
+
 /** Backend ids may be numbers or UUID strings; always compare via String(). */
 export type Id = string | number;
 
@@ -10,9 +12,9 @@ export interface Project {
   created_at: string;
 }
 
-export type RasterStatus = "processing" | "ready" | "failed";
+export type RasterStatus = RasterLifecycleStatus;
 
-export interface Raster {
+export interface Raster extends RasterLifecycleFields {
   id: Id;
   project_id: Id;
   name: string;
@@ -89,7 +91,11 @@ export interface ChangeFeatureProps {
   review_status: ReviewStatus;
   review_note: string | null;
   reviewed_by: string | null;
+  reviewed_by_name?: string | null;
   reviewed_at: string | null;
+  /** Newest complaint raised from this detection, and its workflow status. */
+  case_ref?: string | null;
+  case_status?: string | null;
 }
 
 export type ChangeFeatureCollection = FeatureCollection<

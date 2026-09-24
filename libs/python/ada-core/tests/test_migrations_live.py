@@ -59,10 +59,10 @@ def test_a_fresh_database_reaches_head(clean_database):
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         tables = [t for t in inspect(conn).get_table_names() if t.startswith("icms_")]
     # 17 domain tables from the baseline, 6 policy tables from 0003, the upload
-    # policy from 0004. Both numbers move with the chain; test_icms_schema.py
-    # holds the same split against the models.
-    assert version == "0008"
-    assert len(tables) == 24
+    # policy from 0004, three boundary tables from 0015. Both numbers move with
+    # the chain; test_icms_schema.py holds the same split against the models.
+    assert version == "0017"
+    assert len(tables) == 27
 
 
 def test_running_it_twice_changes_nothing(clean_database):
@@ -123,7 +123,7 @@ def test_a_pre_alembic_database_is_adopted():
         triggers = conn.execute(text(
             "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_icms%'")).scalar()
         screens = conn.execute(text("SELECT screen_id FROM app_screen")).scalars().all()
-    assert version == "0008"
+    assert version == "0017"
     # Stamping alone would leave the triggers and the baseline's 17 rows at zero;
     # the rest of the 42 and the Home screen come from upgrading past the stamp.
     assert seed == 42
@@ -185,8 +185,8 @@ def test_a_pre_icms_database_is_adopted_without_touching_its_data():
         projects = conn.execute(text("SELECT count(*) FROM projects")).scalar()
         name = conn.execute(text("SELECT name FROM projects LIMIT 1")).scalar()
 
-    assert version == "0008"
-    assert len(icms) == 24
+    assert version == "0017"
+    assert len(icms) == 27
     assert seed == 42
     assert triggers == 5
     # The row that was there before is still there, unchanged.
@@ -228,7 +228,7 @@ def test_adoption_repairs_a_column_the_old_alter_left_nullable():
     assert default is None
     # Backfilled by status, not blindly to zero: this raster was already ready.
     assert progress == 1.0
-    assert version == "0008"
+    assert version == "0017"
 
 
 def test_a_half_built_icms_schema_is_refused():

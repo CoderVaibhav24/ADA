@@ -28,11 +28,14 @@ from typing import Annotated
 from ada_core.database import get_db
 from ada_core.validation import CaseRef, NoticeRef
 from ada_platform import Principal
-from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
+from ..clients.keycloak import KeycloakAdmin
 from ..errors import ApiError
 from ..icms import notices as repo
+from ..icms import notifier
+from ..icms.actors import actor_directory, fill_actor_names
 from ..icms.collection import Page
 from ..icms.notice_schemas import NoticeCreate, NoticeDetail, NoticeQuery, NoticeRow
 from ..icms.security import ZoneScope, require_icms_user, require_permission, zone_scope
@@ -46,15 +49,20 @@ NoticeRefPath = Annotated[
     NoticeRef, Path(description="The notice reference, e.g. `NTC-2026-0001`.")
 ]
 
+ISSUER_NAME = {"issued_by": "issued_by_name"}
+
 
 def _detail_or_404(
-    db: Session, notice_ref: str, scope: ZoneScope, user: Principal
+    db: Session, notice_ref: str, scope: ZoneScope, user: Principal,
+    directory: KeycloakAdmin | None,
 ) -> NoticeDetail:
     data = repo.notice_detail(
         db, notice_ref, scope, roles=user.roles, user_id=user.subject)
     if data is None:
         raise ApiError(404, "notice_not_found", f"no notice {notice_ref}")
-    return NoticeDetail(**data)
+    detail = NoticeDetail(**data)
+    fill_actor_names(directory, [detail], ISSUER_NAME)
+    return detail
 
 
 @router.post(
@@ -66,8 +74,10 @@ def _detail_or_404(
 def issue_notice(
     case_ref: CaseRefPath,
     body: NoticeCreate,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> NoticeDetail:
     """The `issue_notice` transition: `confirmed` -> `notice_issued`, ADA Project
@@ -81,7 +91,11 @@ def issue_notice(
     data = repo.issue(db, case_ref, body, scope, actor=user.subject, roles=user.roles)
     if data is None:
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return NoticeDetail(**data)
+    detail = NoticeDetail(**data)
+    notifier.notice_issued(background, db, directory, case_ref=case_ref,
+                           notice_ref=detail.notice_ref, actor=user.subject)
+    fill_actor_names(directory, [detail], ISSUER_NAME)
+    return detail
 
 
 @router.get(
@@ -94,6 +108,7 @@ def list_notices(
     response: Response,
     user: Principal = Depends(require_permission("notice.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> Page[NoticeRow]:
     """`status` here is computed, not read: a notice whose compliance date has
@@ -106,9 +121,9 @@ def list_notices(
     """
     result = repo.register(db, params, scope, caller=user.subject, roles=user.roles)
     response.headers["X-Total-Count"] = str(result.total)
-    return Page[NoticeRow].of(
-        [NoticeRow(**row) for row in repo.rows_to_dicts(result)], result
-    )
+    items = [NoticeRow(**row) for row in repo.rows_to_dicts(result)]
+    fill_actor_names(directory, items, ISSUER_NAME)
+    return Page[NoticeRow].of(items, result)
 
 
 @router.get(
@@ -120,6 +135,7 @@ def get_notice(
     notice_ref: NoticeRefPath,
     user: Principal = Depends(require_permission("notice.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> NoticeDetail:
     """`body` is the whole document as JSON, written once at generation.
@@ -128,7 +144,7 @@ def get_notice(
     view screen renders from it, and because it is the only record of what the
     notice actually said: the case moves on and a legal instrument does not.
     """
-    return _detail_or_404(db, notice_ref, scope, user)
+    return _detail_or_404(db, notice_ref, scope, user, directory)
 
 
 @router.get(

@@ -31,24 +31,36 @@ and so may not act on a case. It may still READ every one: `case.read` and
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
 from ada_core.database import get_db
 from ada_core.validation import CaseRef
 from ada_platform import Principal
-from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Header, Path, Query, Response
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..clients.keycloak import KeycloakAdmin, get_admin_client
 from ..errors import ApiError
+from ..icms import case_evidence as evidence_repo
 from ..icms import cases as repo
+from ..icms import notifier
+from ..icms.actors import actor_directory, fill_actor_names
 from ..icms.case_schemas import (
+    AssigneeOptions,
     CaseAmend,
     CaseAssign,
+    CaseClose,
     CaseConfirm,
     CaseCreate,
     CaseDetail,
+    CaseEvidenceCreate,
+    CaseEvidenceList,
+    CaseEvidenceOut,
+    CaseEvidenceWritten,
     CaseHandover,
     CaseQuery,
+    CaseReject,
     CaseRow,
 )
 from ..icms.collection import Page
@@ -70,14 +82,20 @@ def officer_directory() -> KeycloakAdmin | None:
 
 
 def _detail_or_404(
-    db: Session, case_ref: str, scope: ZoneScope, user: Principal, *,
-    own_only: bool = True,
+    db: Session, case_ref: str, scope: ZoneScope, user: Principal,
+    directory: KeycloakAdmin | None, *, own_only: bool = True,
 ) -> CaseDetail:
     data = repo.case_detail(
         db, case_ref, scope, roles=user.roles, user_id=user.subject, own_only=own_only)
     if data is None:
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return CaseDetail(**data)
+    detail = CaseDetail(**data)
+    fill_actor_names(directory, [detail], {"created_by": "created_by_name",
+                                           "closed_by": "closed_by_name"})
+    fill_actor_names(directory, [detail.assignment], {
+        "assignee_user_id": "assignee_name", "assigned_by": "assigned_by_name"})
+    fill_actor_names(directory, detail.rounds, {"surveyor_user_id": "surveyor_name"})
+    return detail
 
 @router.post(
     "/cases",
@@ -88,8 +106,10 @@ def _detail_or_404(
 def create_case(
     body: CaseCreate,
     response: Response,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> CaseDetail:
     """Stage 1.
@@ -111,7 +131,10 @@ def create_case(
     created = repo.raise_case(db, body, scope, actor=user.subject, roles=user.roles)
     if created["replayed"]:
         response.status_code = 200
-    return _detail_or_404(db, created["case_ref"], scope, user, own_only=False)
+    else:
+        notifier.case_raised(background, db, directory,
+                             case_ref=created["case_ref"], actor=user.subject)
+    return _detail_or_404(db, created["case_ref"], scope, user, directory, own_only=False)
 
 @router.get(
     "/cases",
@@ -145,9 +168,10 @@ def get_case(
     case_ref: CaseRefPath,
     user: Principal = Depends(require_permission("case.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> CaseDetail:
-    return _detail_or_404(db, case_ref, scope, user)
+    return _detail_or_404(db, case_ref, scope, user, directory)
 
 @router.patch(
     "/cases/{case_ref}",
@@ -159,6 +183,7 @@ def amend_case(
     body: CaseAmend,
     user: Principal = Depends(require_permission("case.read")),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> CaseDetail:
     """Descriptive fields only; the status does not move and no stage changes.
@@ -173,7 +198,28 @@ def amend_case(
     """
     if not repo.amend_case(db, case_ref, body, scope, actor=user.subject, roles=user.roles):
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return _detail_or_404(db, case_ref, scope, user)
+    return _detail_or_404(db, case_ref, scope, user, directory)
+
+@router.get(
+    "/cases/{case_ref}/assignees",
+    response_model=AssigneeOptions,
+    summary="Who this case may be assigned to — the roles, then the officers",
+)
+def list_case_assignees(
+    case_ref: CaseRefPath,
+    user: Principal = Depends(require_permission("case.assign", "case.reassign")),
+    scope: ZoneScope = Depends(zone_scope),
+    admin: KeycloakAdmin | None = Depends(actor_directory),
+    db: Session = Depends(get_db),
+) -> AssigneeOptions:
+    """The roles whose grants admit the assignee's first step, and the enabled
+    officers holding one of them with an active assignment to the case's zone —
+    the same two checks `POST /assign` makes, so every name offered is accepted."""
+    options = repo.assignee_options(db, case_ref, scope, admin)
+    if options is None:
+        raise ApiError(404, "case_not_found", f"no case {case_ref}")
+    return options
+
 
 @router.post(
     "/cases/{case_ref}/assign",
@@ -184,9 +230,11 @@ def assign_case(
     case_ref: CaseRefPath,
     body: CaseAssign,
     response: Response,
+    background: BackgroundTasks,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
     admin: KeycloakAdmin | None = Depends(officer_directory),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> CaseDetail:
     """Stage 2.
@@ -202,10 +250,14 @@ def assign_case(
     every transition this assignment opens is an assignee-only one that the
     transition table admits to that role alone.
     """
-    if not repo.assign_case(db, case_ref, body, scope, actor=user.subject,
-                            roles=user.roles, admin=admin):
+    assignment_id = repo.assign_case(db, case_ref, body, scope, actor=user.subject,
+                                     roles=user.roles, admin=admin)
+    if assignment_id is None:
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return _detail_or_404(db, case_ref, scope, user)
+    # After the commit and after the response: a notify outage never fails an assignment.
+    notifier.case_assigned(background, db, directory, case_ref=case_ref,
+                           assignment_id=assignment_id, actor=user.subject)
+    return _detail_or_404(db, case_ref, scope, user, directory)
 
 @router.post(
     "/cases/{case_ref}/handover",
@@ -214,9 +266,11 @@ def assign_case(
 )
 def hand_over_case(
     case_ref: CaseRefPath,
+    background: BackgroundTasks,
     body: CaseHandover | None = None,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> CaseDetail:
     """Stage 6 — internal, from the nodal officer to the project lead.
@@ -233,7 +287,8 @@ def hand_over_case(
     if not repo.hand_over_case(db, case_ref, body or CaseHandover(), scope,
                                actor=user.subject, roles=user.roles):
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return _detail_or_404(db, case_ref, scope, user)
+    notifier.case_handed_over(background, db, directory, case_ref=case_ref, actor=user.subject)
+    return _detail_or_404(db, case_ref, scope, user, directory)
 
 @router.post(
     "/cases/{case_ref}/confirm",
@@ -242,9 +297,11 @@ def hand_over_case(
 )
 def confirm_case(
     case_ref: CaseRefPath,
+    background: BackgroundTasks,
     body: CaseConfirm | None = None,
     user: Principal = Depends(require_icms_user),
     scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
     db: Session = Depends(get_db),
 ) -> CaseDetail:
     """Stage 7 — the move that unlocks the notice, and the last one before it.
@@ -256,4 +313,135 @@ def confirm_case(
     if not repo.confirm_case(db, case_ref, body or CaseConfirm(), scope,
                              actor=user.subject, roles=user.roles):
         raise ApiError(404, "case_not_found", f"no case {case_ref}")
-    return _detail_or_404(db, case_ref, scope, user)
+    notifier.case_confirmed(background, db, directory, case_ref=case_ref, actor=user.subject)
+    return _detail_or_404(db, case_ref, scope, user, directory)
+
+
+@router.post(
+    "/cases/{case_ref}/reject",
+    response_model=CaseDetail,
+    summary="Reject a raised or assigned case — PCS Nodal Officer",
+)
+def reject_case(
+    case_ref: CaseRefPath,
+    body: CaseReject,
+    response: Response,
+    background: BackgroundTasks,
+    user: Principal = Depends(require_icms_user),
+    scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
+    db: Session = Depends(get_db),
+) -> CaseDetail:
+    """Terminal. Legal from `raised` and `assigned` only (409 otherwise); releases
+    the survey assignment, so the case leaves the surveyor's worklist."""
+    result = repo.reject_case(db, case_ref, body, scope, actor=user.subject, roles=user.roles)
+    if result is None:
+        raise ApiError(404, "case_not_found", f"no case {case_ref}")
+    if result["replayed"]:
+        response.status_code = 200
+    else:
+        notifier.case_rejected(background, db, directory, case_ref=case_ref,
+                               released_assignee=result["released_assignee"],
+                               actor=user.subject)
+    return _detail_or_404(db, case_ref, scope, user, directory, own_only=False)
+
+
+@router.post(
+    "/cases/{case_ref}/close",
+    response_model=CaseDetail,
+    summary="Close a case after its notice — ADA Project Lead",
+)
+def close_case(
+    case_ref: CaseRefPath,
+    body: CaseClose,
+    response: Response,
+    background: BackgroundTasks,
+    user: Principal = Depends(require_icms_user),
+    scope: ZoneScope = Depends(zone_scope),
+    directory: KeycloakAdmin | None = Depends(actor_directory),
+    db: Session = Depends(get_db),
+) -> CaseDetail:
+    """Terminal. Legal from `notice_issued` only (409 otherwise)."""
+    result = repo.close_case(db, case_ref, body, scope, actor=user.subject, roles=user.roles)
+    if result is None:
+        raise ApiError(404, "case_not_found", f"no case {case_ref}")
+    if result["replayed"]:
+        response.status_code = 200
+    else:
+        notifier.case_closed(background, db, directory, case_ref=case_ref, actor=user.subject)
+    return _detail_or_404(db, case_ref, scope, user, directory, own_only=False)
+
+
+@router.post(
+    "/cases/{case_ref}/evidence",
+    response_model=CaseEvidenceWritten,
+    status_code=201,
+    summary="Attach a photograph to a complaint while it is raised — append-only",
+)
+def add_case_evidence(
+    case_ref: CaseRefPath,
+    response: Response,
+    meta: Annotated[CaseEvidenceCreate, Form(media_type="multipart/form-data")],
+    idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
+    user: Principal = Depends(require_icms_user),
+    scope: ZoneScope = Depends(zone_scope),
+    db: Session = Depends(get_db),
+) -> CaseEvidenceWritten:
+    """JPEG, PNG or WebP, judged by its bytes against the `complaint_photo` upload
+    policy. Admitted to the roles that may raise a case, while it is `raised`.
+    A replayed `Idempotency-Key` returns the first row with 200."""
+    result = evidence_repo.add_case_evidence(
+        db, case_ref, meta, meta.file, scope, actor=user.subject, roles=user.roles,
+        idempotency_key=idempotency_key)
+    if result is None:
+        raise ApiError(404, "case_not_found", f"no case {case_ref}")
+    if result["replayed"]:
+        response.status_code = 200
+    return CaseEvidenceWritten(
+        evidence=CaseEvidenceOut(**result["evidence"]), replayed=result["replayed"])
+
+
+@router.get(
+    "/cases/{case_ref}/evidence",
+    response_model=CaseEvidenceList,
+    summary="The photographs attached to a complaint at filing time",
+)
+def list_case_evidence(
+    case_ref: CaseRefPath,
+    user: Principal = Depends(require_permission("case.read")),
+    scope: ZoneScope = Depends(zone_scope),
+    db: Session = Depends(get_db),
+) -> CaseEvidenceList:
+    rows = evidence_repo.case_evidence(
+        db, case_ref, scope, roles=user.roles, user_id=user.subject)
+    if rows is None:
+        raise ApiError(404, "case_not_found", f"no case {case_ref}")
+    return CaseEvidenceList(items=[CaseEvidenceOut(**row) for row in rows])
+
+
+@router.get(
+    "/cases/{case_ref}/evidence/{evidence_id}/content",
+    response_class=FileResponse,
+    summary="One complaint photograph, inline",
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}, "image/webp": {}},
+                     "description": "The stored bytes."}},
+)
+def get_case_evidence_content(
+    case_ref: CaseRefPath,
+    evidence_id: Annotated[int, Path(ge=1, description="The evidence row's id.")],
+    user: Principal = Depends(require_permission("case.read")),
+    scope: ZoneScope = Depends(zone_scope),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Inline because the upload policy admits sniffed raster images only."""
+    stored = evidence_repo.case_evidence_content(
+        db, case_ref, evidence_id, scope, roles=user.roles, user_id=user.subject)
+    if stored is None:
+        raise ApiError(404, "evidence_not_found", f"no evidence {evidence_id}")
+    return FileResponse(
+        stored.path,
+        media_type=stored.content_type or "application/octet-stream",
+        filename=stored.filename,
+        content_disposition_type="inline",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )

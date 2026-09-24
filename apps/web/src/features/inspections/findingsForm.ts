@@ -15,8 +15,8 @@
  *     the reason said out loud, rather than sent and bounced. `max_length=50`
  *     is the other end of the same constraint.
  *   - **`sections` is `null` for "leave them alone" and `[]` for "clear
- *     them".** This form owns the whole section list on screen, so it always
- *     sends an array: what is on screen is what is stored. The server sorts and
+ *     them".** The form omits it until the officer touches the picker, then
+ *     sends only the pairs under the notice's act. The server sorts and
  *     de-duplicates the pairs it stores, so the form keeps them sorted and
  *     unique too — otherwise a save would silently reorder the screen.
  *   - **every other column is applied only when the body carries it**
@@ -38,6 +38,8 @@ export const MAX_LONG_TEXT = 5000;
 export const MAX_NAME = 200;
 /** `measured_area_sqm: ge=0, le=10_000_000`. */
 export const MAX_AREA_SQM = 10_000_000;
+/** `length_m` / `width_m`: `gt=0, le=MAX_SIDE_M`. */
+export const MAX_SIDE_M = 10_000;
 
 export type FindingDraft = {
   /** Stable across a reorder. An array index as a React key loses focus. */
@@ -50,11 +52,18 @@ export type SectionDraft = { actCd: string; sectionCd: string };
 export type FindingsFormState = {
   findings: readonly FindingDraft[];
   sections: readonly SectionDraft[];
+  /** False until the picker is used; an untouched list is omitted from the body. */
+  sectionsTouched: boolean;
   occupantName: string;
   occupantPhone: string;
+  ownerName: string;
+  ownerPhone: string;
   areaTypeCd: string;
+  constructionStageCd: string;
   /** Text as typed, not a number: "12." and "" are states a number cannot hold. */
   measuredArea: string;
+  lengthM: string;
+  widthM: string;
   noticeRequired: boolean;
   noticeActCd: string;
   officerNote: string;
@@ -72,8 +81,13 @@ export type FindingsSource = {
   sections?: readonly { act_cd: string; section_cd: string }[];
   occupant_name?: string | null;
   occupant_phone?: string | null;
+  owner_name?: string | null;
+  owner_phone?: string | null;
   area_type_cd?: string | null;
+  construction_stage_cd?: string | null;
   measured_area_sqm?: number | null;
+  length_m?: number | null;
+  width_m?: number | null;
   notice_required?: boolean | null;
   notice_act_cd?: string | null;
   officer_note?: string | null;
@@ -82,11 +96,16 @@ export type FindingsSource = {
 /** The request body, as `FindingsPut` spells it on the wire. */
 export type FindingsBody = {
   findings: string[];
-  sections: { act_cd: string; section_cd: string }[];
+  sections?: { act_cd: string; section_cd: string }[];
   occupant_name: string | null;
   occupant_phone: string | null;
+  owner_name: string | null;
+  owner_phone: string | null;
   area_type_cd: string | null;
+  construction_stage_cd: string | null;
   measured_area_sqm: number | null;
+  length_m: number | null;
+  width_m: number | null;
   notice_required: boolean;
   notice_act_cd: string | null;
   officer_note: string | null;
@@ -95,8 +114,10 @@ export type FindingsBody = {
 export type FindingsFormErrors = {
   findings?: "required" | "tooMany";
   phone?: "invalid";
+  ownerPhone?: "invalid";
   area?: "invalid";
-  noticeAct?: "required";
+  length?: "invalid";
+  width?: "invalid";
 };
 
 let sequence = 0;
@@ -134,11 +155,17 @@ export function findingsFormFrom(source: FindingsSource): FindingsFormState {
     sections: sortSections(
       (source.sections ?? []).map((item) => ({ actCd: item.act_cd, sectionCd: item.section_cd })),
     ),
+    sectionsTouched: false,
     occupantName: source.occupant_name ?? "",
     occupantPhone: source.occupant_phone ?? "",
+    ownerName: source.owner_name ?? "",
+    ownerPhone: source.owner_phone ?? "",
     areaTypeCd: source.area_type_cd ?? "",
+    constructionStageCd: source.construction_stage_cd ?? "",
     measuredArea:
       source.measured_area_sqm == null ? "" : String(source.measured_area_sqm),
+    lengthM: source.length_m == null ? "" : String(source.length_m),
+    widthM: source.width_m == null ? "" : String(source.width_m),
     noticeRequired: source.notice_required ?? false,
     noticeActCd: source.notice_act_cd ?? "",
     officerNote: source.officer_note ?? "",
@@ -203,7 +230,11 @@ export function addSection(
 ): FindingsFormState {
   if (hasSection(state, actCd, sectionCd)) return state;
   if (state.sections.length >= MAX_SECTIONS) return state;
-  return { ...state, sections: sortSections([...state.sections, { actCd, sectionCd }]) };
+  return {
+    ...state,
+    sections: sortSections([...state.sections, { actCd, sectionCd }]),
+    sectionsTouched: true,
+  };
 }
 
 export function removeSection(
@@ -216,6 +247,33 @@ export function removeSection(
     sections: state.sections.filter(
       (item) => !(item.actCd === actCd && item.sectionCd === sectionCd),
     ),
+    sectionsTouched: true,
+  };
+}
+
+/** Sections outside the new act are dropped: citations belong to the notice's act. */
+export function setNoticeAct(state: FindingsFormState, actCd: string): FindingsFormState {
+  const kept = state.sections.filter((item) => item.actCd === actCd);
+  return {
+    ...state,
+    noticeActCd: actCd,
+    sections: kept,
+    sectionsTouched: state.sectionsTouched || kept.length !== state.sections.length,
+  };
+}
+
+/** No notice means no act and no sections; the server refuses an act without one. */
+export function setNoticeRequired(
+  state: FindingsFormState,
+  required: boolean,
+): FindingsFormState {
+  if (required) return { ...state, noticeRequired: true };
+  return {
+    ...state,
+    noticeRequired: false,
+    noticeActCd: "",
+    sections: [],
+    sectionsTouched: state.sectionsTouched || state.sections.length > 0,
   };
 }
 
@@ -251,6 +309,27 @@ export function isAreaValid(raw: string): boolean {
   return raw.trim() === "" || parseArea(raw) !== null;
 }
 
+/** Metres as a number, or `null` for an empty field and for nonsense. */
+export function parseSide(raw: string): number | null {
+  const text = raw.trim();
+  if (text === "") return null;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_SIDE_M) return null;
+  return value;
+}
+
+export function isSideValid(raw: string): boolean {
+  return raw.trim() === "" || parseSide(raw) !== null;
+}
+
+/** length × width in m², rounded as the server rounds it, or `null` unless both are valid. */
+export function sideArea(state: FindingsFormState): number | null {
+  const length = parseSide(state.lengthM);
+  const width = parseSide(state.widthM);
+  if (length === null || width === null) return null;
+  return Math.round(length * width * 100) / 100;
+}
+
 /** The findings actually written down. A blank row is not an observation. */
 export function writtenFindings(state: FindingsFormState): string[] {
   return state.findings.map((item) => item.text.trim()).filter((text) => text !== "");
@@ -270,8 +349,10 @@ export function validateFindingsForm(state: FindingsFormState): FindingsFormErro
   else if (written.length > MAX_FINDINGS) errors.findings = "tooMany";
 
   if (!isPhoneValid(state.occupantPhone)) errors.phone = "invalid";
+  if (!isPhoneValid(state.ownerPhone)) errors.ownerPhone = "invalid";
   if (!isAreaValid(state.measuredArea)) errors.area = "invalid";
-  if (state.noticeRequired && state.noticeActCd === "") errors.noticeAct = "required";
+  if (!isSideValid(state.lengthM)) errors.length = "invalid";
+  if (!isSideValid(state.widthM)) errors.width = "invalid";
 
   return errors;
 }
@@ -292,21 +373,32 @@ function blankToNull(value: string): string | null {
  * omitting an emptied field would leave yesterday's occupant name in the row.
  */
 export function toFindingsBody(state: FindingsFormState): FindingsBody {
-  return {
+  const body: FindingsBody = {
     findings: writtenFindings(state),
-    sections: state.sections.map((item) => ({
-      act_cd: item.actCd,
-      section_cd: item.sectionCd,
-    })),
     occupant_name: blankToNull(state.occupantName.trim()),
     occupant_phone: blankToNull(normalisePhone(state.occupantPhone)),
+    owner_name: blankToNull(state.ownerName.trim()),
+    owner_phone: blankToNull(normalisePhone(state.ownerPhone)),
     area_type_cd: blankToNull(state.areaTypeCd),
+    construction_stage_cd: blankToNull(state.constructionStageCd),
     measured_area_sqm: parseArea(state.measuredArea),
+    length_m: parseSide(state.lengthM),
+    width_m: parseSide(state.widthM),
     notice_required: state.noticeRequired,
     // A notice that is not required cites no act, whatever the select last held.
     notice_act_cd: state.noticeRequired ? blankToNull(state.noticeActCd) : null,
     officer_note: blankToNull(state.officerNote.trim()),
   };
+  if (state.sectionsTouched) body.sections = citedSections(state);
+  return body;
+}
+
+// Only the pairs under the notice's act; none at all without a notice.
+function citedSections(state: FindingsFormState): { act_cd: string; section_cd: string }[] {
+  if (!state.noticeRequired || state.noticeActCd === "") return [];
+  return state.sections
+    .filter((item) => item.actCd === state.noticeActCd)
+    .map((item) => ({ act_cd: item.actCd, section_cd: item.sectionCd }));
 }
 
 // Draft ids are per-session and must not count as a change; the text and its
@@ -317,8 +409,13 @@ function signature(state: FindingsFormState): string {
     state.sections.map((item) => [item.actCd, item.sectionCd]),
     state.occupantName.trim(),
     normalisePhone(state.occupantPhone),
+    state.ownerName.trim(),
+    normalisePhone(state.ownerPhone),
     state.areaTypeCd,
+    state.constructionStageCd,
     parseArea(state.measuredArea),
+    parseSide(state.lengthM),
+    parseSide(state.widthM),
     state.noticeRequired,
     state.noticeRequired ? state.noticeActCd : "",
     state.officerNote.trim(),

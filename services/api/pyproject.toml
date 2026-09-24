@@ -31,6 +31,9 @@ dependencies = [
   "pyproj>=3.7",
   "numpy>=1.26",
   "pillow>=10.4",
+  "lxml>=5.3",                   # KML boundary import (app/icms/boundary_import.py)
+  "boto3>=1.34",                 # cold-tier archive store (app/coldstore.py), any S3 endpoint
+  "pillow-heif>=1.0",            # an iPhone HEIC photo is converted to JPEG on upload (app/icms/evidence_store.py)
 ]
 
 [tool.uv.sources]

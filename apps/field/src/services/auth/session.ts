@@ -3,8 +3,8 @@ import * as Network from 'expo-network';
 import { fetchWithTimeout, TIMEOUT_MS } from '@/services/net/fetch-with-timeout';
 import { cacheStore } from '@/services/storage/kv';
 
-import { profileFromIdToken, type Profile } from './claims';
-import { cachedTokenEndpoint, clientId, resolveTokenEndpoint } from './discovery';
+import { isKnownNonSurveyor, isSurveyor, profileFromIdToken, readIdTokenClaims, type Profile } from './claims';
+import { cachedTokenEndpoint, clientId, logoutEndpointFor, resolveIssuer, resolveTokenEndpoint, tokenEndpointFor } from './discovery';
 import { clearTokens, readProfile, readTokens, writeProfile, writeTokens } from './tokens';
 
 /*
@@ -24,7 +24,7 @@ import { clearTokens, readProfile, readTokens, writeProfile, writeTokens } from 
  */
 export type SessionStatus = 'restoring' | 'signedOut' | 'signedIn' | 'stale';
 
-export type SignOutReason = 'user' | 'refresh_rejected' | 'none';
+export type SignOutReason = 'user' | 'refresh_rejected' | 'not_surveyor' | 'none';
 
 export type SessionSnapshot = {
   readonly status: SessionStatus;
@@ -158,6 +158,11 @@ export async function restoreSession(): Promise<SessionSnapshot> {
     return publish({ status: 'signedOut', profile: null, reason: 'none' });
   }
 
+  // Tokens kept by an older build, before sign-in turned non-surveyors away.
+  if (isKnownNonSurveyor(readIdTokenClaims(tokens.accessToken))) {
+    return endSession('not_surveyor');
+  }
+
   if (Date.now() < tokens.expiresAt - REFRESH_SKEW_MS) {
     return publish({ status: 'signedIn', profile, reason: 'none' });
   }
@@ -219,6 +224,11 @@ async function runRefresh(): Promise<RefreshOutcome> {
 
   const body: unknown = response.ok ? await response.json().catch(() => null) : null;
   if (response.ok && isTokenResponse(body)) {
+    // The role can be taken away between refreshes; the new token says so.
+    if (isKnownNonSurveyor(readIdTokenClaims(body.access_token))) {
+      await endSession('not_surveyor');
+      return 'rejected';
+    }
     const next = toTokenSet(body);
     await writeTokens({
       ...next,
@@ -259,10 +269,17 @@ export async function getAccessToken(): Promise<string | null> {
  * (`apps/web/src/auth/passwordLogin.ts`). The screen owns the wording; this owns
  * the meaning. A username is never confirmed or denied: Keycloak does not say,
  * and neither does this.
+ *
+ * Keycloak answers a wrong password and a right password still owing an
+ * authenticator code with the same `invalid_grant`, so `bad-credentials` on a
+ * first attempt may mean "ask for the code" — the screen decides, as the web does.
  */
 export type SignInFailure =
   | 'bad-credentials'
-  | 'second-factor-required'
+  /** Keycloak asked for the 6-digit authenticator code before it will issue tokens. */
+  | 'otp-required'
+  /** A code was sent and refused: mistyped, already used, or the phone clock has drifted. */
+  | 'bad-otp'
   | 'account-incomplete'
   | 'account-disabled'
   | 'locked-out'
@@ -270,6 +287,8 @@ export type SignInFailure =
   | 'client-misconfigured'
   | 'rate-limited'
   | 'network'
+  /** Signed in, but the account does not hold the field-surveyor role. Nothing was stored. */
+  | 'not-surveyor'
   | 'unknown';
 
 export class SignInError extends Error {
@@ -287,7 +306,8 @@ export class SignInError extends Error {
 
 // Keycloak's wording, matched loosely because it varies across versions. Same patterns as the portal.
 const DESCRIPTION_PATTERNS: readonly (readonly [RegExp, SignInFailure])[] = [
-  [/missing\s*(totp|otp)|invalid\s*(totp|otp)/i, 'second-factor-required'],
+  [/missing\s*(totp|otp)/i, 'otp-required'],
+  [/invalid\s*(totp|otp)/i, 'bad-otp'],
   [/not\s+fully\s+set\s+up/i, 'account-incomplete'],
   [/temporarily\s+disabled|temporarily\s+locked/i, 'locked-out'],
   [/account\s+disabled|account\s+is\s+disabled/i, 'account-disabled'],
@@ -315,24 +335,57 @@ function classifyRefusal(status: number, body: TokenFailure): SignInFailure {
   return 'unknown';
 }
 
-// Exchanges typed credentials for realm tokens; throws SignInError with the reason when refused.
-export async function signInWithPassword(username: string, password: string): Promise<SessionSnapshot> {
-  let tokenEndpoint: string;
+// Ends the just-issued Keycloak session for an account the app turned away. Best effort.
+async function revokeIssuedSession(issuer: string, refreshToken: string | undefined): Promise<void> {
+  if (refreshToken === undefined) return;
   try {
-    tokenEndpoint = await resolveTokenEndpoint();
+    await fetchWithTimeout(
+      logoutEndpointFor(issuer),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: clientId, refresh_token: refreshToken }).toString(),
+      },
+      TIMEOUT_MS.auth,
+    );
+  } catch {
+    // The session lapses on its own; nothing was stored on the handset.
+  }
+}
+
+export type SignInInput = {
+  readonly username: string;
+  readonly password: string;
+  /** Six digits, only once Keycloak has asked. Omitted, never sent empty: a blank `otp` is a failed code. */
+  readonly otp?: string;
+};
+
+/*
+ * Exchanges typed credentials (and, on step two, the authenticator code) for
+ * realm tokens; throws SignInError with the reason when refused. The request
+ * shape is the portal's: `otp` is Keycloak's direct-grant OTP parameter.
+ */
+export async function signInWithPassword({ username, password, otp }: SignInInput): Promise<SessionSnapshot> {
+  let issuer: string;
+  try {
+    issuer = await resolveIssuer();
   } catch {
     throw new SignInError('network');
   }
+  const tokenEndpoint = tokenEndpointFor(issuer);
+
+  const form: Record<string, string> = {
+    grant_type: 'password',
+    client_id: clientId,
+    username,
+    password,
+    scope: SCOPE,
+  };
+  if (otp !== undefined && otp !== '') form.otp = otp;
 
   let response: Response;
   try {
-    response = await postToken(tokenEndpoint, {
-      grant_type: 'password',
-      client_id: clientId,
-      username,
-      password,
-      scope: SCOPE,
-    });
+    response = await postToken(tokenEndpoint, form);
   } catch {
     throw new SignInError('network');
   }
@@ -347,6 +400,12 @@ export async function signInWithPassword(username: string, password: string): Pr
 
   const body: unknown = await response.json().catch(() => null);
   if (!isTokenResponse(body)) throw new SignInError('unknown');
+
+  // Checked before anything is stored, so a turned-away account never reaches the signed-in tree.
+  if (!isSurveyor(readIdTokenClaims(body.access_token))) {
+    await revokeIssuedSession(issuer, body.refresh_token);
+    throw new SignInError('not-surveyor');
+  }
 
   await writeTokens(toTokenSet(body));
 

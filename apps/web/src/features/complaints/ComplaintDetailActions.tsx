@@ -16,31 +16,45 @@
  * permission and gets reported as one. `open_round`, `verify_accept` and the
  * rest belong to the Inspection detail screen and stay there.
  *
- * ## Amend is the one exception, and that is the server's doing
+ * ## Amend is the one exception
  *
- * `AMEND` is not a member of `TRANSITIONS` — it is gated by
- * `workflow.check_amendable`, which no endpoint publishes — so it can never
- * appear in `allowed_actions`. There is therefore no server signal to draw it
- * from. It is offered to everyone who can read the case and refused by the
- * server where it must be: 403 when the role may not amend, 409 once the case
- * is closed. Both refusals are rendered verbatim. Publishing `amend` in
- * `allowed_actions`, or an `amendable` boolean on `CaseDetail`, would close
- * this and is the only thing missing.
+ * `AMEND` is not a transition, so it never appears in `allowed_actions`. It is
+ * drawn when the caller holds `case.amend` (`gate.canAmend`) and refused by the
+ * server where it must be: 403 without the code, 409 once the case is closed.
+ * Both refusals are rendered verbatim.
  */
 
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { CaseAmend, CaseAssign, CaseDetail } from "@/api/icms/cases";
+import type {
+  CaseAmend,
+  CaseAssign,
+  CaseClose,
+  CaseDetail,
+  CaseReject,
+} from "@/api/icms/cases";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconKey } from "@/lib/icons";
-import { useAmendCase, useAssignCase, type CaseGate } from "./ComplaintDetailData";
+import {
+  useAmendCase,
+  useAssignCase,
+  useCloseCase,
+  useRejectCase,
+  type CaseGate,
+} from "./ComplaintDetailData";
 import { ComplaintDetailAmendDialog } from "./ComplaintDetailAmendDialog";
 import { ComplaintDetailAssignDialog } from "./ComplaintDetailAssignDialog";
+import { ComplaintDetailEndDialog, type EndingBody } from "./ComplaintDetailEndDialog";
 import type { ComplaintDetailLabels } from "./ComplaintDetailLabels";
-import { assignActionOf, orderedCaseActions, reasonRequired } from "./ComplaintDetailModel";
+import {
+  assignActionOf,
+  orderedCaseActions,
+  reasonRequired,
+  type EndingAction,
+} from "./ComplaintDetailModel";
 import { WriteOutcome } from "./ComplaintDetailParts";
 
-type Panel = "assign" | "amend" | null;
+type Panel = "assign" | "amend" | EndingAction | null;
 
 /** The register links here with `?action=assign` on its per-row assign control. */
 const ASSIGN_PARAM = "assign";
@@ -75,7 +89,7 @@ export function ComplaintDetailActions({
   const [searchParams, setSearchParams] = useSearchParams();
 
   const allowed = detail.allowed_actions ?? [];
-  const { built, offered } = orderedCaseActions(allowed);
+  const { built, endings, offered } = orderedCaseActions(allowed);
   const assignAction = assignActionOf(allowed);
 
   // The deep link is honoured only when the server actually offers the action,
@@ -83,11 +97,19 @@ export function ComplaintDetailActions({
   const [panel, setPanel] = useState<Panel>(() =>
     searchParams.get("action") === ASSIGN_PARAM && assignAction !== null ? "assign" : null,
   );
-  const [saved, setSaved] = useState<"assign" | "amend" | null>(null);
+  const [saved, setSaved] = useState<"assign" | "amend" | EndingAction | null>(null);
   const [assignedTo, setAssignedTo] = useState<string | null>(null);
 
   const assign = useAssignCase(detail.case_ref);
   const amend = useAmendCase(detail.case_ref);
+  const reject = useRejectCase(detail.case_ref);
+  const close = useCloseCase(detail.case_ref);
+
+  // The assignee's name from the refetched case; never the raw user ID.
+  const assignedName =
+    assignedTo !== null && detail.assignment?.assignee_user_id === assignedTo
+      ? (detail.assignment.assignee_name ?? null)
+      : null;
 
   const needsReason =
     assignAction === null ? false : reasonRequired(gate.actions, assignAction, detail.status);
@@ -96,6 +118,8 @@ export function ComplaintDetailActions({
   const openPanel = (next: Exclude<Panel, null>) => {
     assign.reset();
     amend.reset();
+    reject.reset();
+    close.reset();
     setSaved(null);
     setPanel(next);
   };
@@ -112,7 +136,7 @@ export function ComplaintDetailActions({
     <div className="flex min-w-0 flex-col gap-2">
       <h2 className="sr-only">{labels.actionsTitle}</h2>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {built.map((action) => (
           <Button
             key={action}
@@ -126,6 +150,20 @@ export function ComplaintDetailActions({
           </Button>
         ))}
 
+        {endings.map((action) => (
+          <Button
+            key={action}
+            size="sm"
+            variant={action === "reject" ? "destructive" : "default"}
+            onClick={() => {
+              openPanel(action);
+            }}
+          >
+            <Icon name={ACTION_ICON[action] ?? "action.close"} className="size-4" />
+            {labels.action.label(action)}
+          </Button>
+        ))}
+
         {/* Offered by the server, owned by another screen. Drawn under its own
             code so it can be reported rather than mistaken for a lost grant. */}
         {offered.map((code) => (
@@ -135,36 +173,32 @@ export function ComplaintDetailActions({
           </Button>
         ))}
 
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            openPanel("amend");
-          }}
-        >
-          <Icon name="action.edit" className="size-4" />
-          {labels.amend.open}
-        </Button>
+        {gate.canAmend && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              openPanel("amend");
+            }}
+          >
+            <Icon name="action.edit" className="size-4" />
+            {labels.amend.open}
+          </Button>
+        )}
       </div>
-
-      {built.length === 0 && offered.length === 0 && (
-        <p className="text-sm text-fg-muted text-pretty">{labels.action.none}</p>
-      )}
-
-      {offered.length > 0 && (
-        <p className="max-w-prose text-2xs text-fg-faint text-pretty">
-          {labels.action.elsewhere}
-        </p>
-      )}
-
-      <p className="max-w-prose text-2xs text-fg-faint text-pretty">{labels.action.advisory}</p>
 
       <WriteOutcome
         error={null}
         saved={saved !== null}
-        savedTitle={saved === "assign" ? labels.assign.doneTitle : labels.saved}
+        savedTitle={
+          saved === "assign"
+            ? labels.assign.doneTitle
+            : saved === "reject" || saved === "close"
+              ? labels.end.doneTitle(saved)
+              : labels.saved
+        }
         savedBody={
-          saved === "assign" && assignedTo !== null ? labels.assign.done(assignedTo) : undefined
+          saved === "assign" && assignedName !== null ? labels.assign.done(assignedName) : undefined
         }
         labels={labels}
       />
@@ -181,6 +215,7 @@ export function ComplaintDetailActions({
           action={assignAction}
           needsReason={needsReason}
           currentAssignee={detail.assignment?.assignee_user_id ?? null}
+          currentAssigneeName={detail.assignment?.assignee_name ?? null}
           labels={labels}
           pending={assign.isPending}
           error={assign.error}
@@ -196,7 +231,34 @@ export function ComplaintDetailActions({
         />
       )}
 
-      {panel === "amend" && (
+      {(panel === "reject" || panel === "close") && endings.includes(panel) && (
+        <ComplaintDetailEndDialog
+          onOpenChange={(next) => {
+            if (!next) closePanel();
+          }}
+          caseRef={detail.case_ref}
+          action={panel}
+          labels={labels}
+          pending={panel === "reject" ? reject.isPending : close.isPending}
+          error={panel === "reject" ? reject.error : close.error}
+          onSubmit={(body: EndingBody) => {
+            const done = {
+              onSuccess: () => {
+                setSaved(panel);
+                closePanel();
+              },
+            };
+            const common = { remarks: body.remarks, idempotency_key: body.idempotencyKey };
+            if (panel === "reject") {
+              reject.mutate({ ...common, reason_cd: body.code as CaseReject["reason_cd"] }, done);
+            } else {
+              close.mutate({ ...common, outcome_cd: body.code as CaseClose["outcome_cd"] }, done);
+            }
+          }}
+        />
+      )}
+
+      {panel === "amend" && gate.canAmend && (
         <ComplaintDetailAmendDialog
           open
           onOpenChange={(next) => {
@@ -216,6 +278,29 @@ export function ComplaintDetailActions({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** The notes explaining the action bar; drawn under the headline, apart from the buttons. */
+export function ComplaintDetailActionNotes({
+  detail,
+  labels,
+}: {
+  detail: CaseDetail;
+  labels: ComplaintDetailLabels;
+}) {
+  const { built, endings, offered } = orderedCaseActions(detail.allowed_actions ?? []);
+
+  return (
+    <div className="mt-2 flex max-w-prose flex-col gap-1">
+      {built.length === 0 && endings.length === 0 && offered.length === 0 && (
+        <p className="text-sm text-fg-muted text-pretty">{labels.action.none}</p>
+      )}
+      {offered.length > 0 && (
+        <p className="text-2xs text-fg-faint text-pretty">{labels.action.elsewhere}</p>
+      )}
+      <p className="text-2xs text-fg-faint text-pretty">{labels.action.advisory}</p>
     </div>
   );
 }

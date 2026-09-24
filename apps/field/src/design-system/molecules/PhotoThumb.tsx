@@ -6,6 +6,8 @@
 
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 
+import { useT } from '@/services/i18n';
+
 import { Icon, Text } from '../atoms';
 import {
   colors,
@@ -47,10 +49,15 @@ export function PhotoThumb({
   testID,
   style,
 }: PhotoThumbProps) {
-  const provenance = source === 'gallery' ? 'From gallery' : geotagged ? 'Geotagged' : 'No location';
+  const t = useT();
+  const provenance = t(
+    source === 'gallery' ? 'photo.source.gallery' : geotagged ? 'photo.source.geotagged' : 'photo.source.noLocation',
+  );
   const label =
     accessibilityLabel ??
-    `Photograph, ${provenance}${accuracyMeters !== undefined ? `, accuracy ${Math.round(accuracyMeters)} metres` : ''}`;
+    (accuracyMeters !== undefined
+      ? t('photo.a11yAccuracy', { provenance, meters: Math.round(accuracyMeters) })
+      : t('photo.a11y', { provenance }));
   return (
     <View style={[{ width: size, height: size }, styles.frame, style]}>
       <Pressable
@@ -79,8 +86,8 @@ export function PhotoThumb({
         <Pressable
           onPress={onRemove}
           accessibilityRole="button"
-          accessibilityLabel="Remove photograph"
-          accessibilityHint="Removes this photograph from the inspection. Only possible before submission."
+          accessibilityLabel={t('photo.remove')}
+          accessibilityHint={t('photo.removeHint')}
           style={styles.remove}
         >
           <Icon name="close" size="md" color="ink0" />

@@ -1,9 +1,11 @@
 /**
  * Text — every string in the app renders through this. No screen sets fontSize.
- * ui-registry.md §3, ui-tokens.md §2.
+ * Picks Noto Sans Devanagari for Hindi text on its own. ui-registry.md §3, ui-tokens.md §2.
  */
 
 import { Text as RNText, type TextProps as RNTextProps } from 'react-native';
+
+import { useScriptOf } from '@/services/i18n';
 
 import { textStyle, type ColorToken, type LayoutTextStyle, type TypographyVariant } from '../tokens';
 
@@ -16,7 +18,7 @@ export type TextProps = Omit<RNTextProps, 'style'> & {
   children?: React.ReactNode;
 };
 
-// Applies one type-scale variant and one ink token; nothing else may reach the text style.
+// Applies one type-scale variant, one ink token and the script's face; nothing else reaches the text style.
 export function Text({
   variant = 'body',
   color,
@@ -25,8 +27,9 @@ export function Text({
   children,
   ...rest
 }: TextProps) {
+  const script = useScriptOf(children);
   return (
-    <RNText {...rest} style={[textStyle(variant, color), style, align ? { textAlign: align } : null]}>
+    <RNText {...rest} style={[textStyle(variant, color, script), style, align ? { textAlign: align } : null]}>
       {children}
     </RNText>
   );

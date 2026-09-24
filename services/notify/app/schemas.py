@@ -19,7 +19,9 @@ from app.models import Channel, DeliveryStatus, NotificationStatus
 # Every channel the enum knows about is a valid database value. Only these are
 # accepted at the API boundary in v0.1. Adding SMS is deleting one line here and
 # writing one Channel implementation — no migration, no contract change.
-ENABLED_CHANNELS: frozenset[str] = frozenset({Channel.EMAIL.value, Channel.PUSH.value})
+ENABLED_CHANNELS: frozenset[str] = frozenset(
+    {Channel.EMAIL.value, Channel.PUSH.value, Channel.INAPP.value}
+)
 
 
 class Recipient(BaseModel):
@@ -360,6 +362,8 @@ class InboxItem(BaseModel):
     read: bool
     read_at: datetime | None
     created_at: datetime
+    # Deep-link hint: type plus case_ref / inspection_ref / notice_ref / route when known.
+    data: dict[str, str] = Field(default_factory=dict)
 
 
 class InboxPage(BaseModel):

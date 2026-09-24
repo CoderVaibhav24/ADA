@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..errors import ApiError
 from ..icms import repository as repo
+from ..icms import runtime_settings
 from ..icms.collection import Page
 from ..icms.schemas import (
     AppConfigOut,
@@ -76,8 +77,11 @@ ZoneCdPath = Annotated[
 )
 def get_app_config(
     user: Principal = Depends(require_icms_user),
+    db: Session = Depends(get_db),
 ) -> AppConfigOut:
-    """Readable by every ICMS role, with no extra permission and no database.
+    """Readable by every ICMS role, with no extra permission.
+
+    The geofence pair is read from `icms_runtime_setting`; the rest is settings.
 
     The field app had a copy of the accuracy rule in its own source, and the copy
     went stale the moment one threshold became a gate and a flag. A client that
@@ -96,6 +100,8 @@ def get_app_config(
         device_timestamp_max_age_hours=MAX_CLOCK_SKEW.total_seconds() / 3600,
         minimum_photo_count=settings.icms_min_photos_per_round,
         maximum_photo_count=settings.icms_max_photos_per_round,
+        geofence_enforced=runtime_settings.geofence_enforced(db),
+        geofence_radius_m=runtime_settings.geofence_radius_m(db),
     )
 
 

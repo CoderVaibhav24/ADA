@@ -56,6 +56,8 @@ def is_ist(value: Any) -> bool:
 
 
 IST = Kind("an IST timestamp ending +05:30", is_ist)
+DATE = Kind("an ISO date", lambda v: isinstance(v, str)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) is not None)
 NUM = Kind("a number", lambda v: isinstance(v, (int, float)) and not isinstance(v, bool))
 
 
@@ -203,19 +205,25 @@ CASE_ROW = {
     "ulpin": (str, None), "khasra_no": (str, None), "village_lgd_code": (str, None),
     "status": str, "stage_no": int, "current_round": int, "source": str,
     "assignee_user_id": (str, None), "raised_at": IST,
+    "complaint_date": (DATE, None),
     # Derived from ulpin/khasra_no rather than stored. It is in the payload and in
     # the schema, so it is part of the contract like any other field.
     "parcel_id": (str, None),
 }
 
 CASE_ASSIGNMENT = {
-    "assignee_user_id": str, "assigned_by": str, "assignment_type": str,
+    "assignee_user_id": str, "assignee_name": (str, None), "assigned_by": str,
+    "assigned_by_name": (str, None), "assignment_type": str,
     "note": (str, None), "assigned_at": IST, "active": bool, "released_at": (IST, None),
 }
 
 INSPECTION_ROUND = {
-    "inspection_ref": str, "round_no": int, "surveyor_user_id": str, "status": str,
+    "inspection_ref": str, "round_no": int, "surveyor_user_id": str,
+    "surveyor_name": (str, None), "status": str,
     "submitted_at": (IST, None), "measured_area_sqm": (NUM, None),
+    "occupant_name": (str, None), "occupant_phone": (str, None),
+    "property_type_cd": (str, None), "floor_count": (int, None),
+    "police_station": (str, None),
 }
 
 CASE_DETAIL = {
@@ -228,6 +236,10 @@ CASE_DETAIL = {
     "floor_count": (int, None), "detection_id": (int, None),
     "district_lgd_code": (str, None), "idempotency_key": (str, None),
     "location": (dict, None), "closed_at": (IST, None), "created_by": (str, None),
+    "closed_by": (str, None), "closed_by_name": (str, None), "outcome_cd": (str, None),
+    "outcome_label": (str, None), "outcome_label_hi": (str, None),
+    "outcome_reason": (str, None),
+    "created_by_name": (str, None),
     "updated_at": IST, "assignment": (dict, None), "rounds": list,
     "evidence_count": int, "allowed_actions": list,
 }
@@ -249,14 +261,14 @@ FINDING = {"seq": int, "finding": str, "created_at": IST}
 SECTION = {"act_cd": str, "section_cd": str}
 
 CHECK_IN = {
-    "id": int, "inspection_ref": str, "user_id": str,
+    "id": int, "inspection_ref": str, "user_id": str, "user_name": (str, None),
     "lat": (NUM, None), "lon": (NUM, None), "accuracy_m": NUM,
     "device_timestamp": IST, "server_timestamp": IST, "capture_source": str,
     "inside_zone": (bool, None),
 }
 
-# `geotag_flagged` is computed at write time and stored nowhere: the accuracy
-# threshold is server configuration a browser cannot read, so the flag travels.
+# `geotag_flagged` travels: the accuracy threshold is server configuration a
+# browser cannot read; the EXIF part is stored at upload.
 EVIDENCE = {
     "id": int, "case_ref": str, "inspection_ref": (str, None),
     "round_no": (int, None), "kind": str, "doc_type_cd": (str, None),
@@ -264,25 +276,47 @@ EVIDENCE = {
     "byte_size": (int, None), "sha256": (str, None),
     "lat": (NUM, None), "lon": (NUM, None), "accuracy_m": (NUM, None),
     "device_timestamp": (IST, None), "capture_source": (str, None),
-    "captured_at": (IST, None), "uploaded_by": str, "uploaded_at": IST,
+    "captured_at": (IST, None), "uploaded_by": str,
+    "uploaded_by_name": (str, None), "uploaded_at": IST,
     "content_url": str, "geotag_flagged": bool,
+    "stamped_url": (str, None), "distance_to_site_m": (NUM, None),
+    "exif_lat": (NUM, None), "exif_lon": (NUM, None),
 }
+
+# Complaint photographs, filed with the case before any round exists.
+CASE_EVIDENCE = {
+    "id": int, "filename": (str, None), "content_type": (str, None),
+    "size_bytes": (int, None), "caption": (str, None),
+    "latitude": (NUM, None), "longitude": (NUM, None),
+    "created_at": IST, "content_url": str,
+}
+
+CASE_EVIDENCE_WRITTEN = {"evidence": dict, "replayed": bool}
+
+ASSIGNEE_OPTIONS = {"roles": list, "candidates": list}
 
 INSPECTION_DETAIL = {
     **INSPECTION_ROW,
     "case_status": str, "occupant_name": (str, None), "occupant_phone": (str, None),
-    "area_type_cd": (str, None), "measured_area_sqm": (NUM, None),
-    "notice_required": (bool, None), "notice_act_cd": (str, None),
+    "owner_name": (str, None), "owner_phone": (str, None),
+    "property_type_cd": (str, None), "floor_count": (int, None),
+    "police_station": (str, None),
+    "encroachment_confirmed_cd": (str, None), "area_type_cd": (str, None),
+    "measured_area_sqm": (NUM, None), "external_support_cd": (str, None),
+    "recommendation_cd": (str, None), "notice_required": (bool, None), "notice_act_cd": (str, None),
     "officer_note": (str, None), "location": (dict, None),
     "location_accuracy_m": (NUM, None),
+    "construction_stage_cd": (str, None), "length_m": (NUM, None), "width_m": (NUM, None),
+    "area_mismatch": bool, "findings_source": (str, None),
     "findings": list, "sections": list, "check_ins": list, "evidence": list,
     "available_actions": list,
 }
 
 RESURVEY_REQUEST = {
     "id": int, "case_ref": str, "from_round": int, "reason": str,
-    "requested_by": str, "requested_at": IST, "decision": str,
-    "decided_by": (str, None), "decided_at": (IST, None),
+    "requested_by": str, "requested_by_name": (str, None), "requested_at": IST,
+    "decision": str, "decided_by": (str, None), "decided_by_name": (str, None),
+    "decided_at": (IST, None),
     "decision_note": (str, None), "resulting_round": (int, None),
 }
 
@@ -294,7 +328,8 @@ RESURVEY_REQUEST = {
 # counted in days and a notice served at 23:45 IST does not expire at 23:45.
 NOTICE_ROW = {
     "notice_ref": str, "case_ref": str, "act_cd": str, "section_cds": list,
-    "status": str, "issued_by": (str, None), "issued_at": (IST, None),
+    "status": str, "issued_by": (str, None), "issued_by_name": (str, None),
+    "issued_at": (IST, None),
     "compliance_due": (str, None), "zone_cd": (str, None),
     "property_address": (str, None), "has_artefact": bool,
 }
@@ -310,7 +345,7 @@ NOTICE_DETAIL = {
 }
 
 CAPABILITY_ACTION = {
-    "action": str, "source_status": (str, None), "target_status": str,
+    "action": str, "permission": str, "source_status": (str, None), "target_status": str,
     "stage_no": int, "assignee_only": bool, "opens_round": bool, "requires": list,
 }
 
@@ -328,19 +363,66 @@ APP_CONFIG = {
     # Published since 2026-09-23 because they are enforced: `submit` refuses a
     # round below the minimum and `add_evidence` a photograph past the maximum.
     "minimum_photo_count": int, "maximum_photo_count": int,
+    # Held in icms_runtime_setting (0018) and enforced by check-in.
+    "geofence_enforced": bool, "geofence_radius_m": NUM,
 }
+
+RUNTIME_SETTING = {
+    "key": str, "value": (bool, NUM), "type": str, "description": str,
+    "is_default": bool, "updated_by": (str, None), "updated_at": (IST, None),
+}
+
+# A suggestion for the Create Complaint form; the suite runs the null locator.
+LOCATE = {
+    "state": (str, None), "district": (str, None), "district_lgd": (str, None),
+    "pincode": (str, None), "source": str,
+}
+
+# What the loaded KML layers say about a point; the suite loads none, so all-null.
+PARCEL_AT = {
+    "zone_cd": (str, None), "zone_name": (str, None), "village_lgd": (str, None),
+    "village_name": (str, None), "khasra_no": (str, None), "ulpin": (str, None),
+    "sector": (str, None), "plot_no": (str, None), "ward": (str, None), "source": str,
+}
+
+BOUNDARY_IMPORT = {
+    "import_id": (int, None), "filename": str, "sha256": str, "dry_run": bool,
+    "counts": dict, "rejected": list, "warnings": list,
+}
+
+BOUNDARY_IMPORT_ROW = {
+    "id": int, "filename": str, "sha256": str, "imported_by": str,
+    "imported_by_name": (str, None), "imported_at": IST, "counts": dict,
+}
+
+# One village, the smallest file the importer loads.
+BOUNDARY_KML = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Folder><name>villages</name>'
+    b'<Placemark><name>Contract Village</name><ExtendedData>'
+    b'<Data name="village_lgd"><value>900999</value></Data></ExtendedData>'
+    b"<Polygon><outerBoundaryIs><LinearRing><coordinates>"
+    b"78.00,27.00 78.01,27.00 78.01,27.01 78.00,27.01 78.00,27.00"
+    b"</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>"
+    b"</Folder></Document></kml>"
+)
 
 PERMISSION = {
     "permission_cd": str, "resource": str, "action": str, "label": str, "is_system": bool,
+    "screen_cd": (str, None),
 }
 
 ROLE_GRANTS = {"role_cd": str, "label": str, "active": bool, "permission_cds": list}
 
+ASSIGNABLE_ROLE = {
+    "role_cd": str, "label": str, "label_hi": (str, None), "description": (str, None),
+}
+
 TRANSITION = {
     "id": int, "action_cd": str, "source_status": (str, None), "target_status": str,
     "stage_no": int, "assignee_only": bool, "opens_round": bool,
-    "requires": list, "roles": list, "active": bool, "sort_order": int,
-    "note": (str, None),
+    "requires": list, "permission_cd": str, "roles": list, "active": bool,
+    "sort_order": int, "note": (str, None),
 }
 
 # Keycloak is the user store, so `id` is the subject ICMS rows already hold and
@@ -355,6 +437,12 @@ USER_ROW = {
 # The register omits roles: Keycloak returns no role mappings with a user list,
 # so carrying them would be one extra round trip per row.
 USER_DETAIL = {**USER_ROW, "realm_roles": list, "required_actions": list}
+
+# One rung of the ladder. `members` nest id, username, names, enabled and zones.
+REPORTING_ROLE = {
+    "role_cd": str, "label": str, "label_hi": (str, None), "level": int,
+    "reports_to": (str, None), "members": list,
+}
 
 # No password, no token — only that a credential was set, and when.
 PASSWORD_RESET = {
@@ -449,6 +537,8 @@ class Op:
     form: dict | None = None
     # Answers bytes rather than JSON, so the schema comparisons skip it.
     binary: bool = False
+    # The multipart `file` part, when it is not the complaint photograph.
+    upload: tuple[str, bytes, str] | None = None
 
     @property
     def id(self) -> str:
@@ -459,7 +549,7 @@ class Op:
         if self.form is not None:
             return signed.request(
                 self.method, self.path, data=self.form,
-                files={"file": ("front.jpg", JPEG_BYTES, "image/jpeg")})
+                files={"file": self.upload or ("front.jpg", JPEG_BYTES, "image/jpeg")})
         return signed.request(self.method, self.path, json=self.body)
 
     def send_as_permitted(self, client):
@@ -491,8 +581,17 @@ OPERATIONS: tuple[Op, ...] = (
     Op("GET", "/api/icms/cases/CMP-2026-0006", ALL_ROLES, shape=CASE_DETAIL),
     Op("PATCH", "/api/icms/cases/CMP-2026-0001", NODAL_ONLY, shape=CASE_DETAIL,
        body={"priority": "low"}),
+    Op("GET", "/api/icms/cases/CMP-2026-0001/assignees", NODAL_ONLY,
+       shape=ASSIGNEE_OPTIONS),
     Op("POST", "/api/icms/cases/CMP-2026-0001/assign", NODAL_ONLY, shape=CASE_DETAIL,
        body={"assignee_user_id": SURVEYOR_B_ID}),
+    # Complaint photographs. CMP-2026-0001 is `raised`, the only status that takes
+    # one; the reads are on CMP-2026-0006, which every role can read, and
+    # `contract_world` seeds its complaint photograph as evidence 2.
+    Op("POST", "/api/icms/cases/CMP-2026-0001/evidence", ENFORCEMENT, ok=201,
+       shape=CASE_EVIDENCE_WRITTEN, form={"caption": "Front elevation"}),
+    Op("GET", "/api/icms/cases/CMP-2026-0006/evidence", ALL_ROLES, shape=CASE_EVIDENCE),
+    Op("GET", "/api/icms/cases/CMP-2026-0006/evidence/2/content", ALL_ROLES, binary=True),
     # Batch 3 — the inspection loop. `contract_world` seeds CMP-2026-0006 as
     # under_inspection (round INS-2026-0001), CMP-2026-0007 as
     # inspection_submitted (INS-2026-0002) and CMP-2026-0008 as
@@ -532,6 +631,7 @@ OPERATIONS: tuple[Op, ...] = (
     Op("GET", "/api/icms/inspections/INS-2026-0001/evidence", ALL_ROLES,
        shape=EVIDENCE),
     Op("GET", "/api/icms/evidence/1/content", ALL_ROLES, binary=True),
+    Op("GET", "/api/icms/evidence/1/stamped", ALL_ROLES, binary=True),
     # CMP-2026-0008 is the seeded `resurvey_requested` case, so the list has the
     # pending request 1 in it rather than being an empty array to pin nothing on.
     Op("GET", "/api/icms/cases/CMP-2026-0008/resurvey-requests", ALL_ROLES,
@@ -544,6 +644,11 @@ OPERATIONS: tuple[Op, ...] = (
        body={"note": "Verified on site; passing to the authority."}),
     Op("POST", "/api/icms/cases/CMP-2026-0010/confirm", LEAD_ONLY, shape=CASE_DETAIL,
        body={"note": "Confirmed for notice."}),
+    # The two endings: CMP-2026-0001 is `raised`, CMP-2026-0012 `notice_issued`.
+    Op("POST", "/api/icms/cases/CMP-2026-0001/reject", NODAL_ONLY, shape=CASE_DETAIL,
+       body={"reason_cd": "duplicate", "remarks": "Same site as CMP-2026-0002."}),
+    Op("POST", "/api/icms/cases/CMP-2026-0012/close", LEAD_ONLY, shape=CASE_DETAIL,
+       body={"outcome_cd": "demolished_by_owner"}),
     # Batch 6 — the notice. `contract_world` seeds CMP-2026-0011 as `confirmed`,
     # the only status `issue_notice` moves from, and NTC-2026-0001 on the closed
     # CMP-2026-0005 so the three reads have a row. There is no
@@ -556,19 +661,34 @@ OPERATIONS: tuple[Op, ...] = (
     # Answers the stored PDF, so there is no JSON row to pin.
     Op("GET", "/api/icms/notices/NTC-2026-0001/pdf", NOTICE_READERS, binary=True),
     Op("GET", "/api/icms/me/capabilities", ALL_ROLES, shape=CAPABILITIES),
+    # `case.raise`: whoever may file a complaint may have its location suggested.
+    Op("GET", "/api/icms/geo/locate?lat=27.1751&lon=78.0421", ENFORCEMENT, shape=LOCATE),
+    Op("GET", "/api/icms/geo/parcel?lat=27.1751&lon=78.0421", ENFORCEMENT, shape=PARCEL_AT),
+    # `zone.manage`: loading boundaries is zone administration, Super Admin's alone.
+    Op("POST", "/api/icms/admin/geo/import", ADMIN_ONLY, shape=BOUNDARY_IMPORT, form={},
+       upload=("boundaries.kml", BOUNDARY_KML, "application/vnd.google-earth.kml+xml")),
+    Op("GET", "/api/icms/admin/geo/imports", ADMIN_ONLY, shape=BOUNDARY_IMPORT_ROW),
     Op("GET", "/api/icms/admin/policy/permissions", ADMIN_ONLY, shape=PERMISSION),
     Op("GET", "/api/icms/admin/policy/roles", ADMIN_ONLY, shape=ROLE_GRANTS),
+    Op("GET", "/api/icms/admin/roles", ADMIN_ONLY, shape=ASSIGNABLE_ROLE),
+    Op("POST", "/api/icms/admin/policy/roles", ADMIN_ONLY, ok=201, shape=ROLE_GRANTS,
+       body={"role_cd": "zone-inspector", "label": "Zone Inspector",
+             "permission_cds": ["dashboard.access"]}),
     Op("PUT", "/api/icms/admin/policy/roles/field-surveyor/permissions", ADMIN_ONLY,
        shape=ROLE_GRANTS, body={"permission_cds": ["case.read"]}),
     # Every seeded permission is a system one, so the admitted answer is the 409
     # that refuses to delete a guard an endpoint still names.
     Op("DELETE", "/api/icms/admin/policy/permissions/case.read", ADMIN_ONLY, ok=409),
     Op("GET", "/api/icms/admin/policy/transitions", ADMIN_ONLY, shape=TRANSITION),
+    Op("GET", "/api/icms/admin/runtime-settings", ADMIN_ONLY, shape=RUNTIME_SETTING),
+    Op("PUT", "/api/icms/admin/runtime-settings/checkin.geofence_radius_m", ADMIN_ONLY,
+       shape=RUNTIME_SETTING, body={"value": 40}),
     Op("PATCH", f"/api/icms/admin/policy/transitions/{FIRST_TRANSITION}", ADMIN_ONLY,
        shape=TRANSITION, body={"note": "contract"}),
-    # Officer administration. Super Admin alone, because `user.read` and
-    # `user.manage` are granted to super-admin and to nothing else in 0003 — and
-    # an officer who can mint officers has given themselves every role there is.
+    # Officer administration. Super Admin alone, because `user.read` and the
+    # user.create/update/roles/password/disable codes each guarding one op below
+    # are granted to super-admin and to nothing else — and an officer who can
+    # mint officers has given themselves every role there is.
     Op("GET", "/api/icms/admin/users", ADMIN_ONLY, shape=PAGE),
     Op("POST", "/api/icms/admin/users", ADMIN_ONLY, ok=201, shape=USER_DETAIL,
        body={"username": "contract.officer",
@@ -576,6 +696,7 @@ OPERATIONS: tuple[Op, ...] = (
              "first_name": "Contract", "last_name": "Officer",
              "realm_roles": ["field-surveyor"]}),
     Op("GET", f"/api/icms/admin/users/{NODAL_ID}", ADMIN_ONLY, shape=USER_DETAIL),
+    Op("GET", "/api/icms/admin/reporting", ADMIN_ONLY, shape=REPORTING_ROLE),
     Op("PATCH", f"/api/icms/admin/users/{NODAL_ID}", ADMIN_ONLY, shape=USER_DETAIL,
        body={"enabled": True}),
     Op("PUT", f"/api/icms/admin/users/{NODAL_ID}/roles", ADMIN_ONLY,

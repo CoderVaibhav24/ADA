@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Any
 
 __all__ = [
+    "AMEND_PERMISSION",
     "Action",
     "MissingPayload",
     "NotTheAssignee",
@@ -18,6 +19,7 @@ __all__ = [
     "allowed_actions",
     "check",
     "check_amendable",
+    "require_permission",
     "stage_of",
     "transitions_for",
 ]
@@ -81,14 +83,19 @@ class UnknownTransition(WorkflowError):
         self.action = action
 
 
+# Carries the code that was missing and, materialised, the roles that hold it.
 class RoleNotPermitted(WorkflowError):
     status_code = 403
 
-    def __init__(self, action: Action, held: Iterable[str], required: Iterable[str]) -> None:
-        super().__init__(f"{action} requires one of: {', '.join(sorted(required))}")
+    def __init__(
+        self, action: Action, permission: str, held: Iterable[str], allowed: Iterable[str]
+    ) -> None:
+        allowed = tuple(sorted(frozenset(str(r) for r in allowed)))
+        super().__init__(f"{action} requires one of: {', '.join(allowed)}")
         self.action = action
-        self.held = frozenset(held)
-        self.required = frozenset(required)
+        self.permission = permission
+        self.held = frozenset(str(r) for r in held)
+        self.allowed = allowed
 
 
 class NotTheAssignee(WorkflowError):
@@ -115,95 +122,89 @@ class Transition:
     source: Status | None
     target: Status
     stage_no: int
-    roles: frozenset[Role]
+    permission: str
     assignee_only: bool = False
     requires: tuple[str, ...] = ()
     opens_round: bool = False
     note: str = field(default="", compare=False)
 
 
-_NODAL = frozenset({Role.PCS_NODAL_OFFICER})
-_SURVEYOR = frozenset({Role.FIELD_SURVEYOR})
-_LEAD = frozenset({Role.ADA_PROJECT_LEAD})
-_ANYONE = frozenset({
-    Role.PUBLIC, Role.FIELD_SURVEYOR, Role.PCS_NODAL_OFFICER, Role.ADA_PROJECT_LEAD,
-})
-
 TRANSITIONS: tuple[Transition, ...] = (
     Transition(
-        Action.RAISE, None, Status.RAISED, 1, _ANYONE,
+        Action.RAISE, None, Status.RAISED, 1, "case.raise",
         requires=("zone_id", "source"),
     ),
     Transition(
-        Action.REJECT, Status.RAISED, Status.REJECTED, 1, _NODAL,
+        Action.REJECT, Status.RAISED, Status.REJECTED, 1, "case.reject",
         requires=("reason",),
     ),
     Transition(
-        Action.ASSIGN, Status.RAISED, Status.ASSIGNED, 2, _NODAL,
+        Action.ASSIGN, Status.RAISED, Status.ASSIGNED, 2, "case.assign",
         requires=("assignee_user_id",),
     ),
     Transition(
-        Action.REASSIGN, Status.ASSIGNED, Status.ASSIGNED, 2, _NODAL,
+        Action.REASSIGN, Status.ASSIGNED, Status.ASSIGNED, 2, "case.reassign",
         requires=("assignee_user_id", "reason"),
     ),
     Transition(
-        Action.REJECT, Status.ASSIGNED, Status.REJECTED, 2, _NODAL,
+        Action.REJECT, Status.ASSIGNED, Status.REJECTED, 2, "case.reject",
         requires=("reason",),
     ),
     Transition(
         Action.OPEN_ROUND, Status.ASSIGNED, Status.UNDER_INSPECTION, 3,
-        _NODAL | _SURVEYOR, opens_round=True,
+        "inspection.open_round", opens_round=True,
         requires=("surveyor_user_id",),
     ),
     Transition(
         Action.CHECK_IN, Status.UNDER_INSPECTION, Status.UNDER_INSPECTION, 3,
-        _SURVEYOR, assignee_only=True,
+        "inspection.check_in", assignee_only=True,
         requires=("latitude", "longitude", "accuracy_m", "device_timestamp",
                   "idempotency_key"),
     ),
     Transition(
         Action.ADD_EVIDENCE, Status.UNDER_INSPECTION, Status.UNDER_INSPECTION, 3,
-        _SURVEYOR, assignee_only=True,
+        "evidence.write", assignee_only=True,
         requires=("kind", "idempotency_key"),
     ),
     Transition(
         Action.RECORD_FINDINGS, Status.UNDER_INSPECTION, Status.UNDER_INSPECTION, 4,
-        _SURVEYOR, assignee_only=True,
+        "inspection.record_findings", assignee_only=True,
         requires=("findings",),
     ),
     Transition(
         Action.SUBMIT, Status.UNDER_INSPECTION, Status.INSPECTION_SUBMITTED, 4,
-        _SURVEYOR, assignee_only=True,
+        "inspection.submit", assignee_only=True,
         requires=("idempotency_key",),
     ),
     Transition(
         Action.REQUEST_RESURVEY, Status.INSPECTION_SUBMITTED, Status.RESURVEY_REQUESTED, 4,
-        _NODAL, requires=("reason",),
+        "inspection.request_resurvey", requires=("reason",),
     ),
     Transition(
         Action.OPEN_ROUND, Status.RESURVEY_REQUESTED, Status.UNDER_INSPECTION, 3,
-        _NODAL | _SURVEYOR, opens_round=True,
+        "inspection.open_round", opens_round=True,
         requires=("surveyor_user_id",),
     ),
     Transition(
-        Action.VERIFY_ACCEPT, Status.INSPECTION_SUBMITTED, Status.VERIFIED, 5, _NODAL,
+        Action.VERIFY_ACCEPT, Status.INSPECTION_SUBMITTED, Status.VERIFIED, 5,
+        "inspection.verify",
     ),
     Transition(
         Action.VERIFY_REJECT, Status.INSPECTION_SUBMITTED, Status.RESURVEY_REQUESTED, 5,
-        _NODAL, requires=("reason",),
+        "inspection.verify", requires=("reason",),
     ),
     Transition(
-        Action.HAND_OVER, Status.VERIFIED, Status.HANDED_OVER, 6, _NODAL,
+        Action.HAND_OVER, Status.VERIFIED, Status.HANDED_OVER, 6, "case.hand_over",
     ),
     Transition(
-        Action.CONFIRM, Status.HANDED_OVER, Status.CONFIRMED, 7, _LEAD,
+        Action.CONFIRM, Status.HANDED_OVER, Status.CONFIRMED, 7, "case.confirm",
     ),
     Transition(
-        Action.ISSUE_NOTICE, Status.CONFIRMED, Status.NOTICE_ISSUED, 7, _LEAD,
+        Action.ISSUE_NOTICE, Status.CONFIRMED, Status.NOTICE_ISSUED, 7, "notice.issue",
         requires=("act_cd", "section_cds"),
     ),
     Transition(
-        Action.CLOSE, Status.NOTICE_ISSUED, Status.CLOSED, 7, _LEAD,
+        Action.CLOSE, Status.NOTICE_ISSUED, Status.CLOSED, 7, "case.close",
     ),
 )
 
@@ -251,10 +252,10 @@ def allowed_actions(
     *,
     is_assignee: bool = False,
 ) -> tuple[Action, ...]:
-    held = _held_roles(roles)
+    held = _policy().permitted(roles)
     return tuple(
         t.action for t in transitions_for(source)
-        if (t.roles & held) and (is_assignee or not t.assignee_only)
+        if t.permission in held and (is_assignee or not t.assignee_only)
     )
 
 
@@ -273,9 +274,7 @@ def check(
     if transition is None:
         raise UnknownTransition(source, action)
 
-    held = _held_roles(roles)
-    if not (transition.roles & held):
-        raise RoleNotPermitted(action, (str(r) for r in held), (str(r) for r in transition.roles))
+    require_permission(action, transition.permission, roles)
 
     if transition.assignee_only and not is_assignee:
         raise NotTheAssignee(action)
@@ -289,30 +288,21 @@ def check(
     return transition
 
 
-# The code default, and the fallback the snapshot uses until a migration seeds
-# the `case.amend` permission the grant table would otherwise resolve this from.
-AMENDABLE_ROLES: frozenset[Role] = frozenset({Role.PCS_NODAL_OFFICER})
+AMEND_PERMISSION = "case.amend"
 
 
 def check_amendable(source: Status | str, roles: Iterable[str]) -> None:
     source = Status(source)
-    policy = _policy()
-    if policy.is_terminal(source):
+    if _policy().is_terminal(source):
         raise UnknownTransition(source, Action.AMEND)
+    require_permission(Action.AMEND, AMEND_PERMISSION, roles)
 
-    required = policy.amendable_roles
-    held = _held_roles(roles)
-    if not (required & held):
+
+# Raises RoleNotPermitted naming the roles that would have held `permission`.
+def require_permission(action: Action, permission: str, roles: Iterable[str]) -> None:
+    roles = tuple(str(r) for r in roles)
+    policy = _policy()
+    if permission not in policy.permitted(roles):
         raise RoleNotPermitted(
-            Action.AMEND, (str(r) for r in held), (str(r) for r in required)
+            action, permission, roles, policy.roles_holding({permission}),
         )
-
-
-def _held_roles(roles: Iterable[str]) -> frozenset[Role]:
-    known = set()
-    for role in roles:
-        try:
-            known.add(Role(role))
-        except ValueError:
-            continue
-    return frozenset(known)

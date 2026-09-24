@@ -16,6 +16,7 @@ import { errorText, isNotFound } from '@/services/api/error-text';
 import { useInspectionEvidence, type Evidence } from '@/services/api/inspection-reads';
 import { humanizeCode } from '@/services/config/labels';
 import { formatDateTime } from '@/services/format/datetime';
+import { useT, type TFunction } from '@/services/i18n';
 
 import { Button, Icon, Skeleton, Text } from '../atoms';
 import { colors, media, radius, space, type LayoutStyle } from '../tokens';
@@ -30,14 +31,16 @@ function isImage(evidence: Evidence): boolean {
   return evidence.content_type?.startsWith('image/') === true;
 }
 
-// One line of provenance, from the payload only.
-function provenanceOf(evidence: Evidence): { text: string; flagged: boolean } {
+// One line of provenance, from the payload only, in words.
+function provenanceOf(evidence: Evidence, t: TFunction): { text: string; flagged: boolean } {
   const parts: string[] = [];
-  if (evidence.capture_source) parts.push(humanizeCode(evidence.capture_source));
+  if (evidence.capture_source === 'camera') parts.push(t('evidence.camera'));
+  else if (evidence.capture_source === 'gallery') parts.push(t('evidence.gallery'));
+  else if (evidence.capture_source) parts.push(humanizeCode(evidence.capture_source));
   if (evidence.geotag_flagged) {
-    parts.push('location flagged');
+    parts.push(t('evidence.flagged'));
   } else if (evidence.accuracy_m !== null && evidence.accuracy_m !== undefined) {
-    parts.push(`±${Math.round(evidence.accuracy_m)} m`);
+    parts.push(t('evidence.accuracy', { meters: Math.round(evidence.accuracy_m) }));
   }
   return { text: parts.join(' · '), flagged: evidence.geotag_flagged };
 }
@@ -52,7 +55,7 @@ function UnavailableMedia() {
 }
 
 // The image, fetched with the bearer; a document shows its kind and name instead.
-function EvidenceMedia({ evidence }: { evidence: Evidence }) {
+function EvidenceMedia({ evidence, label }: { evidence: Evidence; label: string }) {
   const source = useEvidenceImageSource(evidence.id, evidence.content_url);
   // `content_url` 404s for a round the server has since narrowed away from this caller.
   const [contentUnavailable, setContentUnavailable] = useState(false);
@@ -83,7 +86,7 @@ function EvidenceMedia({ evidence }: { evidence: Evidence }) {
       cachePolicy="memory"
       contentFit="cover"
       style={styles.media}
-      accessibilityLabel={`Evidence ${evidence.id}`}
+      accessibilityLabel={label}
       onError={() => setContentUnavailable(true)}
     />
   );
@@ -91,13 +94,14 @@ function EvidenceMedia({ evidence }: { evidence: Evidence }) {
 
 // One tile: media, provenance, capture time. No remove control, by rule.
 function EvidenceTile({ evidence }: { evidence: Evidence }) {
-  const provenance = provenanceOf(evidence);
+  const t = useT();
+  const provenance = provenanceOf(evidence, t);
   const when = formatDateTime(
     evidence.captured_at ?? evidence.device_timestamp ?? evidence.uploaded_at,
   );
   return (
     <View style={styles.tile}>
-      <EvidenceMedia evidence={evidence} />
+      <EvidenceMedia evidence={evidence} label={t('evidence.a11y', { provenance: provenance.text })} />
       {provenance.text !== '' ? (
         <View style={styles.provenance}>
           <Icon
@@ -120,6 +124,7 @@ function EvidenceTile({ evidence }: { evidence: Evidence }) {
 }
 
 export function EvidenceStrip({ inspectionRef, style }: EvidenceStripProps) {
+  const t = useT();
   const query = useInspectionEvidence(inspectionRef);
 
   if (query.isPending) {
@@ -138,7 +143,7 @@ export function EvidenceStrip({ inspectionRef, style }: EvidenceStripProps) {
       return (
         <View style={style}>
           <Text variant="body" color="ink3">
-            Not available to you.
+            {t('evidence.notAvailable')}
           </Text>
         </View>
       );
@@ -148,10 +153,10 @@ export function EvidenceStrip({ inspectionRef, style }: EvidenceStripProps) {
       <View style={[styles.errorRow, style]} accessibilityRole="alert">
         <Icon name="alert" size="md" color="statusOverdue" />
         <Text variant="body" color="ink1" style={styles.flex}>
-          {failure.message}
+          {failure.offline ? t('wizard.err.server.offline') : t('evidence.loadFailed')}
         </Text>
         <Button
-          label="Retry"
+          label={t('common.retry')}
           onPress={() => void query.refetch()}
           variant="ghost"
           size="sm"
@@ -166,7 +171,7 @@ export function EvidenceStrip({ inspectionRef, style }: EvidenceStripProps) {
     return (
       <View style={style}>
         <Text variant="body" color="ink3">
-          No evidence has been uploaded on this round.
+          {t('evidence.none')}
         </Text>
       </View>
     );

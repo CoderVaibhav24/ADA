@@ -1,6 +1,10 @@
 /**
  * The bar between the page title and the map — Figma 130:2030.
  *
+ * 2026-09-24: the compare toggle and zoom cluster are parked (commented out
+ * below) and the search box moved to the side panel header, so only the
+ * project and comparison pickers remain.
+ *
  * The frame draws three things: a one-segment "Overlay" control, a zoom cluster
  * (out / readout / in / a move glyph), and a "Search parcel / Khasra No." box.
  * All three are here with their meaning matched to the data that exists, and
@@ -25,8 +29,8 @@
  * case the frame draws.
  */
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+// Parked 2026-09-24 with the compare toggle and zoom cluster below.
+// import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -35,19 +39,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Icon } from "@/lib/icons";
+// import { Separator } from "@/components/ui/separator";
+// import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+// import { Icon } from "@/lib/icons";
 
 import type { ChangeDetectionLabels } from "./labels";
-import { COMPARE_MODES, isCompareMode, type CompareMode } from "./model";
+// import { COMPARE_MODES, isCompareMode, type CompareMode } from "./model";
 import type { RunOption } from "./useChangeDetection";
 
-const MODE_ICON = {
-  reference: "form.chevronLeft",
-  overlay: "map.overlay",
-  current: "form.chevronRight",
-} as const;
+// const MODE_ICON = {
+//   reference: "form.chevronLeft",
+//   overlay: "map.overlay",
+//   current: "form.chevronRight",
+// } as const;
 
 export function ControlToolbar({
   labels,
@@ -58,15 +62,7 @@ export function ControlToolbar({
   runId,
   onSelectRun,
   formatCycleDate,
-  mode,
-  onModeChange,
-  zoom,
-  onZoomIn,
-  onZoomOut,
-  onFit,
-  canFit,
-  query,
-  onQueryChange,
+  // Parked 2026-09-24: mode, onModeChange, zoom, onZoomIn, onZoomOut, onFit, canFit.
 }: {
   labels: ChangeDetectionLabels;
   projects: { id: string; name: string }[];
@@ -76,17 +72,18 @@ export function ControlToolbar({
   runId: string | null;
   onSelectRun: (id: string) => void;
   formatCycleDate: (value: string | null) => string;
-  mode: CompareMode;
-  onModeChange: (mode: CompareMode) => void;
-  zoom: number;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onFit: () => void;
-  canFit: boolean;
-  query: string;
-  onQueryChange: (value: string) => void;
+  // mode: CompareMode;
+  // onModeChange: (mode: CompareMode) => void;
+  // zoom: number;
+  // onZoomIn: () => void;
+  // onZoomOut: () => void;
+  // onFit: () => void;
+  // canFit: boolean;
 }) {
-  const zoomText = String(Math.round(zoom));
+  // const zoomText = String(Math.round(zoom));
+
+  // With the compare and zoom controls parked and search in the side panel, a bar with no picker is empty.
+  if (projects.length <= 1 && runs.length <= 1) return null;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-card px-4 py-2 shadow-xs">
@@ -136,6 +133,7 @@ export function ControlToolbar({
           </>
         )}
 
+        {/* Parked at the user's request on 2026-09-24: compare toggle and zoom cluster.
         <ToggleGroup
           type="single"
           variant="outline"
@@ -189,36 +187,7 @@ export function ControlToolbar({
             <Icon name="map.target" />
           </Button>
         </div>
-      </div>
-
-      <div className="relative w-full min-w-56 sm:w-72">
-        <Label htmlFor="cd-search" className="sr-only">
-          {labels.search.label}
-        </Label>
-        <Icon
-          name="nav.search"
-          aria-hidden
-          className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-fg-faint"
-        />
-        <Input
-          id="cd-search"
-          type="search"
-          value={query}
-          placeholder={labels.search.placeholder}
-          className="ps-9 pe-9"
-          onChange={(event) => onQueryChange(event.target.value)}
-        />
-        {query !== "" && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={labels.search.clear}
-            className="absolute end-2 top-1/2 -translate-y-1/2"
-            onClick={() => onQueryChange("")}
-          >
-            <Icon name="action.clear" />
-          </Button>
-        )}
+        */}
       </div>
     </div>
   );

@@ -405,44 +405,44 @@ class TestFindings:
 
         assert response.status_code == 422
 
-    def test_sections_are_stored_and_deduplicated(self, icms_client, inspection_ready):
+    def test_sections_are_stored_and_deduplicated(self, icms_client, inspection_ready, act_sections):
         ref = open_round(icms_client)
 
         body = icms_client.sign_in(SURVEYOR).put(
             f"{INSPECTIONS}/{ref}/findings",
             json={"findings": ["Deviation from the sanctioned plan."],
-                  "sections": [{"act_cd": "up_urban_planning_act", "section_cd": "s_27"},
-                               {"act_cd": "up_urban_planning_act", "section_cd": "s_27"},
-                               {"act_cd": "up_urban_planning_act",
-                                "section_cd": "s_28"}]}).json()
+                  "sections": [{"act_cd": "up_upda_1973", "section_cd": "sec_27"},
+                               {"act_cd": "up_upda_1973", "section_cd": "sec_27"},
+                               {"act_cd": "up_upda_1973",
+                                "section_cd": "sec_28"}]}).json()
 
         assert body["sections"] == [
-            {"act_cd": "up_urban_planning_act", "section_cd": "s_27"},
-            {"act_cd": "up_urban_planning_act", "section_cd": "s_28"},
+            {"act_cd": "up_upda_1973", "section_cd": "sec_27"},
+            {"act_cd": "up_upda_1973", "section_cd": "sec_28"},
         ]
 
-    def test_omitting_sections_leaves_them_alone(self, icms_client, inspection_ready):
+    def test_omitting_sections_leaves_them_alone(self, icms_client, inspection_ready, act_sections):
         """A save from a screen without the sections field must not silently drop
         citations entered on another one."""
         ref = open_round(icms_client)
         client = icms_client.sign_in(SURVEYOR)
         client.put(f"{INSPECTIONS}/{ref}/findings",
                    json={"findings": ["One"],
-                         "sections": [{"act_cd": "up_urban_planning_act",
-                                       "section_cd": "s_27"}]})
+                         "sections": [{"act_cd": "up_upda_1973",
+                                       "section_cd": "sec_27"}]})
         body = client.put(
             f"{INSPECTIONS}/{ref}/findings", json={"findings": ["Two"]}).json()
 
         assert body["sections"] == [
-            {"act_cd": "up_urban_planning_act", "section_cd": "s_27"}]
+            {"act_cd": "up_upda_1973", "section_cd": "sec_27"}]
 
-    def test_sending_an_empty_section_list_clears_them(self, icms_client, inspection_ready):
+    def test_sending_an_empty_section_list_clears_them(self, icms_client, inspection_ready, act_sections):
         ref = open_round(icms_client)
         client = icms_client.sign_in(SURVEYOR)
         client.put(f"{INSPECTIONS}/{ref}/findings",
                    json={"findings": ["One"],
-                         "sections": [{"act_cd": "up_urban_planning_act",
-                                       "section_cd": "s_27"}]})
+                         "sections": [{"act_cd": "up_upda_1973",
+                                       "section_cd": "sec_27"}]})
         body = client.put(f"{INSPECTIONS}/{ref}/findings",
                           json={"findings": ["One"], "sections": []}).json()
 
@@ -470,7 +470,7 @@ class TestFindings:
         trail = events(inspection_ready[CASE].id)
         assert [row["action"] for row in trail] == ["open_round", "record_findings"]
         payload = trail[-1]["payload"]
-        assert payload == {"findings": 1, "fields": ["occupant_name"]}
+        assert payload == {"findings": 1, "fields": ["occupant_name"], "source": "field"}
 
     def test_a_finding_longer_than_the_column_is_refused(
         self, icms_client, inspection_ready
@@ -784,15 +784,15 @@ class TestRegister:
 
 class TestDetail:
     def test_the_detail_carries_every_part_of_the_round(
-        self, icms_client, inspection_ready
+        self, icms_client, inspection_ready, act_sections
     ):
         ref = open_round(icms_client)
         client = icms_client.sign_in(SURVEYOR)
         client.post(f"{INSPECTIONS}/{ref}/check-in", json=check_in_body())
         client.put(f"{INSPECTIONS}/{ref}/findings",
                    json={"findings": ["One"],
-                         "sections": [{"act_cd": "up_urban_planning_act",
-                                       "section_cd": "s_27"}]})
+                         "sections": [{"act_cd": "up_upda_1973",
+                                       "section_cd": "sec_27"}]})
         fields, files = photo("6f1d6dd9-8443-4b90-9a86-0f65c42b3011")
         client.post(f"{INSPECTIONS}/{ref}/evidence", data=fields, files=files)
 

@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import events
 from app.broker import Broker, BrokerError, Message
+from app.channels.inapp import INBOX_ADDRESS
 from app.config import Settings
 from app.models import (
     Channel,
@@ -331,6 +332,8 @@ class FanoutWorker:
         self, session: AsyncSession, *, recipient_id: uuid.UUID, channel: str
     ) -> list[tuple[str, uuid.UUID | None]]:
         """(address, device_id) pairs for one channel; device_id is set for push only."""
+        if channel == Channel.INAPP.value:
+            return [(INBOX_ADDRESS, None)]
         if channel == Channel.PUSH.value:
             devices = (
                 await session.execute(

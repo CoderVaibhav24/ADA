@@ -156,6 +156,7 @@ class KeycloakAdmin:
         *,
         json: Any = None,
         params: dict | None = None,
+        forbidden: str | None = None,
     ) -> httpx.Response:
         url = f"{self.base_url}/admin/realms/{self.realm}{path}"
         response = self._send(method, url, json=json, params=params, bearer=self._bearer())
@@ -171,6 +172,8 @@ class KeycloakAdmin:
             raise KeycloakConflict(_message_of(response))
         if status == 400:
             raise KeycloakRejected(_message_of(response))
+        if status == 403 and forbidden:
+            raise ApiError(503, "identity_admin_forbidden", forbidden)
 
         log.error("Keycloak answered %s to %s %s: %s", status, method, path,
                   response.text[:300])
@@ -247,6 +250,18 @@ class KeycloakAdmin:
     def realm_roles(self) -> list[dict]:
         """Every realm role. Needs view-realm, which is why that role is granted."""
         return self._call("GET", "/roles", params={"briefRepresentation": "true"}).json()
+
+    def realm_role(self, name: str) -> dict | None:
+        response = self._call("GET", f"/roles/{quote(name, safe='')}")
+        return None if response.status_code == 404 else response.json()
+
+    def create_realm_role(self, name: str, description: str | None) -> None:
+        """POST /roles. Needs manage-realm; a 409 means it already exists."""
+        self._call(
+            "POST", "/roles", json={"name": name, "description": description or ""},
+            forbidden="ada-api may not create realm roles: its service account needs "
+                      "realm-management manage-realm (infra/keycloak/apply-realm-config.sh).",
+        )
 
     def user_realm_roles(self, user_id: str) -> list[dict]:
         response = self._call(

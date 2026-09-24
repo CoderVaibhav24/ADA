@@ -27,8 +27,10 @@ import {
   type Capabilities,
   type PolicyPermission,
   type PolicyTransition,
+  type RoleCreateInput,
   type RoleGrants,
   type TransitionPatch,
+  createRole,
   deletePermission,
   fetchCapabilities,
   listPermissions,
@@ -187,6 +189,18 @@ export function useSaveRoleGrants() {
     // Runs on success AND on a partial failure: the roles that landed before
     // the refusal are already committed server-side.
     onSettled: () => invalidate(),
+  });
+}
+
+export function useCreateRole() {
+  const invalidate = useInvalidatePolicy();
+  const client = useQueryClient();
+  return useMutation<RoleGrants, Error, RoleCreateInput>({
+    mutationFn: (input) => createRole(input),
+    onSettled: async () => {
+      await invalidate();
+      await client.invalidateQueries({ queryKey: ["icms", "roles"] });
+    },
   });
 }
 

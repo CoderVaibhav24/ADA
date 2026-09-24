@@ -4,6 +4,7 @@ import type { User } from "oidc-client-ts";
 
 import { AppShell, AppShellNavItem } from "@/components/icms/AppShell";
 import { Footer } from "@/components/icms/Footer";
+import { NotificationBell } from "@/components/icms/NotificationBell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,16 +30,9 @@ import {
   isNavLink,
   navForPermissions,
 } from "./nav";
-import { HOME_PATH, LOGIN_PATH } from "./paths";
+import { LOGIN_PATH, ROOT_PATH } from "./paths";
 
 const COLLAPSED_KEY = "icms.nav.collapsed";
-
-/**
- * No notifications endpoint exists yet. The bell and its badge are built; the
- * badge stays hidden until a real count can be read, rather than shipping the
- * invented `3` the Figma frame draws.
- */
-const UNREAD_NOTIFICATIONS = 0;
 
 // localStorage throws outright in a private window, so the preference is optional.
 function readCollapsed(): boolean {
@@ -94,7 +88,7 @@ export default function ProtectedLayout() {
   // Permissions, not realm roles: the roles holding `policy.read` are editable
   // from the Administration screen, so a rail keyed to `super-admin` would be
   // wrong the first time somebody used it.
-  const { permissions } = useCapabilityGate();
+  const { loading: capabilitiesLoading, permissions } = useCapabilityGate();
   const shellLabels = useShellLabels();
   const navLabels = useNavLabels();
 
@@ -139,7 +133,7 @@ export default function ProtectedLayout() {
   const brand = (
     <button
       type="button"
-      onClick={() => go(HOME_PATH)}
+      onClick={() => go(ROOT_PATH)}
       aria-label={shellLabels.brandHome}
       className={`flex min-w-0 flex-col items-center gap-1 rounded-md px-1 py-1 transition-colors duration-fast ease-standard hover:bg-sidebar-accent ${
         collapsed ? "" : "lg:w-full lg:flex-row lg:gap-2 lg:text-start"
@@ -169,7 +163,19 @@ export default function ProtectedLayout() {
     </button>
   );
 
-  const nav = (
+  // Every rail entry is gated, so while capabilities load the rail would be empty.
+  const nav = capabilitiesLoading ? (
+    <p
+      role="status"
+      aria-label={shellLabels.navLoading}
+      className="flex items-center justify-center gap-2 px-2 py-3 text-2xs text-sidebar-foreground/70"
+    >
+      <Icon name="feedback.loading" spin className="size-4 shrink-0" />
+      <span className={`hidden truncate ${collapsed ? "" : "lg:inline"}`}>
+        {shellLabels.navLoading}
+      </span>
+    </p>
+  ) : (
     <ul className="flex flex-col gap-1">
       {navForPermissions(PRIMARY_NAV, permissions).map((item) => (
         <li
@@ -195,22 +201,7 @@ export default function ProtectedLayout() {
 
   const header = (
     <div className="ms-auto flex shrink-0 items-center gap-1 sm:gap-2">
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="relative"
-        aria-label={shellLabels.notificationsLabel(UNREAD_NOTIFICATIONS)}
-      >
-        <Icon name="nav.notifications" className="size-5" />
-        {UNREAD_NOTIFICATIONS > 0 && (
-          <span
-            aria-hidden
-            className="absolute top-0.5 right-0.5 flex min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-2xs text-destructive-foreground tabular"
-          >
-            {UNREAD_NOTIFICATIONS}
-          </span>
-        )}
-      </Button>
+      <NotificationBell ariaLabel={shellLabels.notificationsLabel} />
 
       <LanguageSwitcher />
 
@@ -266,7 +257,7 @@ export default function ProtectedLayout() {
     >
       <ErrorBoundary resetKey={location.key}>
         {bleed ? (
-          <div className="h-[calc(100dvh-var(--spacing-header))] min-h-0">
+          <div className="flex min-h-0 flex-1 flex-col">
             <Outlet />
           </div>
         ) : (

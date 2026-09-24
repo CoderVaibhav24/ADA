@@ -9,7 +9,18 @@ import type {
   ReviewStatus,
   TileInfo,
 } from "./types";
-import { accessToken, notifySessionEnded } from "../auth/oidc";
+import { accessToken, notifySessionEnded, renewAccessToken } from "../auth/oidc";
+import { fingerprintFile } from "../upload/fingerprint";
+import { pruneSessions, removeSession } from "../upload/session-store";
+import {
+  UploadHttpError,
+  type MlRuntime,
+  type OpenUpload,
+  type RestoreResponse,
+  type UploadId,
+  type UploadProgress,
+} from "../upload/types";
+import { ChunkedUpload } from "../upload/worker";
 
 import type { Polygon } from "geojson";
 
@@ -25,12 +36,20 @@ export class ApiError extends Error {
    * support call somebody can answer from the log.
    */
   readonly requestId: string | null;
+  /** The parsed error body, for callers that need a field beyond the message (409 existing_raster_id). */
+  readonly body: unknown;
 
-  constructor(status: number, message: string, requestId: string | null = null) {
+  constructor(
+    status: number,
+    message: string,
+    requestId: string | null = null,
+    body: unknown = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.requestId = requestId;
+    this.body = body;
   }
 }
 
@@ -63,14 +82,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     let detail = res.statusText;
+    let body: unknown = null;
     try {
-      const body: unknown = await res.json();
+      body = await res.json();
       if (body && typeof body === "object" && "detail" in body) {
         detail = JSON.stringify((body as { detail: unknown }).detail);
       }
     } catch {
     }
-    throw new ApiError(res.status, `${res.status}: ${detail}`, requestIdOf(res));
+    throw new ApiError(res.status, `${res.status}: ${detail}`, requestIdOf(res), body);
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -208,99 +228,111 @@ export interface RasterUploadFields {
   prj?: File | null;
 }
 
+export interface UploadHooks {
+  /** Called once the session object exists, so the caller can abort it or guard the tab. */
+  onStart?: (upload: ChunkedUpload) => void;
+}
+
 /** Refresh the access token, reporting whether a session survives. */
 async function refreshSession(): Promise<boolean> {
   return (await accessToken()) !== null;
 }
 
-/**
- * Multipart upload via XHR so we can report real upload progress
- * (fetch has no upload progress events).
- *
- * Wrapped by `uploadRaster`, which handles the access token, because this is
- * the one request where an expired token is expensive rather than merely
- * annoying: ADA's grid tiles run to 18 GB, and the old code answered a 401 by
- * bouncing the user to /auth — throwing away the entire transfer AND signing
- * them out, while their refresh token was still perfectly valid.
- */
-async function sendUpload(
+// A chunk's 401 means the cached token was refused, so renewal must go to the issuer, not the cache.
+async function forceRenewal(): Promise<boolean> {
+  return (await renewAccessToken()) !== null;
+}
+
+// The worker's own errors become ApiError so every screen keeps one error type.
+function toApiError(cause: unknown): unknown {
+  if (!(cause instanceof UploadHttpError)) return cause;
+  if (cause.status === 401) sessionExpired();
+  return new ApiError(cause.status, cause.message, cause.requestId, cause.body);
+}
+
+function createUpload(
   pid: Id,
   fields: RasterUploadFields,
-  onProgress: (fraction: number) => void,
-): Promise<Raster> {
-  const headers = await authHeader();
-  // No token means no Authorization header, and FastAPI answers a headerless
-  // request with {"detail":"Not authenticated"} — a 401 that looks exactly
-  // like an expired session but is really this client sending the file
-  // unauthenticated. Refuse before the bytes go out; uploadRaster turns this
-  // into one refresh and one retry.
-  if (!("Authorization" in headers)) {
-    return Promise.reject(new ApiError(401, "Session expired"));
-  }
-  return new Promise((resolve, reject) => {
-    const fd = new FormData();
-    fd.append("name", fields.name);
-    if (fields.capturedAt) fd.append("captured_at", fields.capturedAt);
-    if (fields.crsEpsg) fd.append("crs_epsg", fields.crsEpsg);
-    fd.append("file", fields.file);
-    if (fields.tfw) fd.append("tfw", fields.tfw);
-    if (fields.prj) fd.append("prj", fields.prj);
-
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/projects/${pid}/rasters`);
-    for (const [name, value] of Object.entries(headers)) {
-      xhr.setRequestHeader(name, value);
-    }
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded / e.total);
-    };
-    xhr.onload = () => {
-      if (xhr.status === 401) {
-        // Reported, not acted on — uploadRaster decides whether this is a
-        // recoverable expiry or a real sign-out.
-        reject(new ApiError(401, "Session expired"));
-      } else if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(JSON.parse(xhr.responseText) as Raster);
-        } catch {
-          reject(new ApiError(xhr.status, "Malformed server response"));
-        }
-      } else {
-        reject(new ApiError(xhr.status, xhr.responseText || xhr.statusText));
-      }
-    };
-    xhr.onerror = () => reject(new ApiError(0, "Upload failed — network error"));
-    xhr.send(fd);
+  fingerprint: string,
+  onProgress: (fraction: number, progress: UploadProgress) => void,
+): ChunkedUpload {
+  const epsg = fields.crsEpsg ? Number(fields.crsEpsg) : null;
+  return new ChunkedUpload({
+    projectId: pid,
+    file: fields.file,
+    fingerprint,
+    name: fields.name,
+    capturedAt: fields.capturedAt ?? null,
+    crsEpsg: epsg !== null && Number.isFinite(epsg) ? epsg : null,
+    tfw: fields.tfw ?? null,
+    prj: fields.prj ?? null,
+    onProgress: (p) => onProgress(p.totalBytes > 0 ? p.bytesSent / p.totalBytes : 1, p),
+    deps: { authHeader, refreshAuth: forceRenewal },
   });
 }
 
-export async function uploadRaster(
-  pid: Id,
-  fields: RasterUploadFields,
-  onProgress: (fraction: number) => void,
-): Promise<Raster> {
-  // Refresh BEFORE the body goes out. A multi-gigabyte upload can easily run
-  // past the access token's lifetime, and one cheap round trip up front beats
-  // discovering it after sending every byte.
-  //
-  // The result is checked, not discarded: a false here means there is no token
-  // to send, and uploading gigabytes that are certain to be refused is the
-  // worst possible way to find that out.
+// Refuses before any byte goes out when no token survives; gigabytes certain to be refused are the worst way to learn that.
+async function requireSession(): Promise<void> {
   if (!(await refreshSession())) {
     sessionExpired();
     throw new ApiError(401, "Session expired");
   }
+}
+
+async function finish(upload: ChunkedUpload, send: () => Promise<unknown>): Promise<Raster> {
   try {
-    return await sendUpload(pid, fields, onProgress);
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 401) throw err;
-    // Raced the expiry anyway. Refresh once and re-send; only a refresh token
-    // that is genuinely dead means the user has to sign in again.
-    if (!(await refreshSession())) {
-      sessionExpired();
-      throw err;
-    }
-    onProgress(0);
-    return await sendUpload(pid, fields, onProgress);
+    await send();
+    return await upload.complete();
+  } catch (cause) {
+    throw toApiError(cause);
   }
+}
+
+// Chunked, resumable upload; onProgress gets bytes received by the server as 0..1.
+export async function uploadRaster(
+  pid: Id,
+  fields: RasterUploadFields,
+  onProgress: (fraction: number, progress: UploadProgress) => void,
+  hooks: UploadHooks = {},
+): Promise<Raster> {
+  await requireSession();
+  const upload = createUpload(pid, fields, await fingerprintFile(fields.file), onProgress);
+  hooks.onStart?.(upload);
+  return finish(upload, () => upload.start());
+}
+
+// Continues an open session with the re-picked file; the caller has already matched its fingerprint.
+export async function resumeUpload(
+  pid: Id,
+  open: OpenUpload,
+  fields: RasterUploadFields,
+  onProgress: (fraction: number, progress: UploadProgress) => void,
+  hooks: UploadHooks = {},
+): Promise<Raster> {
+  await requireSession();
+  const fingerprint = open.fingerprint ?? (await fingerprintFile(fields.file));
+  const upload = createUpload(pid, { ...fields, name: open.name }, fingerprint, onProgress);
+  hooks.onStart?.(upload);
+  return finish(upload, () => upload.resume(open.upload_id, fields.file));
+}
+
+// The server's open sessions; local resume records the server no longer has are pruned on the way.
+export async function listOpenUploads(projectId: Id): Promise<OpenUpload[]> {
+  const list = await request<OpenUpload[]>(`/api/projects/${projectId}/uploads`);
+  pruneSessions(projectId, list.map((u) => u.upload_id));
+  return list;
+}
+
+// Deletes the server session and, when the project is known, the browser's resume record.
+export async function abortUpload(uploadId: UploadId, projectId?: Id): Promise<void> {
+  await request<void>(`/api/uploads/${uploadId}`, { method: "DELETE" });
+  if (projectId !== undefined) removeSession(projectId, uploadId);
+}
+
+export function restoreRaster(rasterId: Id): Promise<RestoreResponse> {
+  return request<RestoreResponse>(`/api/rasters/${rasterId}/restore`, { method: "POST" });
+}
+
+export function getRuntime(): Promise<MlRuntime> {
+  return request<MlRuntime>("/api/ml/runtime");
 }

@@ -41,7 +41,13 @@ class ChangeFeatureProps(BaseModel):
     review_status: str = "pending"
     review_note: str | None = None
     reviewed_by: str | None = None
+    reviewed_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     reviewed_at: str | None = None
+    case_ref: str | None = Field(
+        default=None, description="Newest complaint raised from this polygon, if any.")
+    case_status: str | None = Field(
+        default=None, description="That complaint's workflow status (icms_case.status).")
 
 
 class ChangeFeature(BaseModel):

@@ -12,6 +12,8 @@ import {
   type TextInputProps as RNTextInputProps,
 } from 'react-native';
 
+import { useScriptOf } from '@/services/i18n';
+
 import {
   colors,
   control,
@@ -36,6 +38,7 @@ export const TextArea = forwardRef<TextInput, TextAreaProps>(function TextArea(
   ref,
 ) {
   const [focused, setFocused] = useState(false);
+  const script = useScriptOf(value || rest.placeholder);
   const border = invalid ? 'statusOverdue' : focused ? 'focus' : 'line1';
   return (
     <View style={style}>
@@ -68,7 +71,7 @@ export const TextArea = forwardRef<TextInput, TextAreaProps>(function TextArea(
             setFocused(false);
             onBlur?.(event);
           }}
-          style={[textStyle('body', 'ink0'), styles.field]}
+          style={[textStyle('body', 'ink0', script), styles.field]}
           {...rest}
         />
       </View>

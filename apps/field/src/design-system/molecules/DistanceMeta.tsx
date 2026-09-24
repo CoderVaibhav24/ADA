@@ -5,6 +5,8 @@
 
 import { StyleSheet, View } from 'react-native';
 
+import { useT, type TFunction } from '@/services/i18n';
+
 import { Icon, Text } from '../atoms';
 import { space, type LayoutStyle } from '../tokens';
 
@@ -18,24 +20,25 @@ export type DistanceMetaProps = {
 };
 
 // Below a kilometre reads in metres; a surveyor standing 300 m away should not see "0.3 km".
-function formatDistance(meters: number): string {
+function formatDistance(meters: number, t: TFunction): string {
   if (meters < 1000) {
-    return `${Math.round(meters / 10) * 10} m`;
+    return t('distance.meters', { value: Math.round(meters / 10) * 10 });
   }
-  return `${(meters / 1000).toFixed(1)} km`;
+  return t('distance.km', { value: (meters / 1000).toFixed(1) });
 }
 
 // Renders the pair with a leading navigation glyph and an approximation marker.
 export function DistanceMeta({ distanceMeters, etaMinutes, stale = false, style }: DistanceMetaProps) {
-  const parts = [formatDistance(distanceMeters)];
+  const t = useT();
+  const parts = [formatDistance(distanceMeters, t)];
   if (etaMinutes !== undefined) {
-    parts.push(`${Math.round(etaMinutes)} min`);
+    parts.push(t('distance.minutes', { count: Math.round(etaMinutes) }));
   }
-  const text = `approx. ${parts.join(' · ')}`;
+  const text = t('distance.approx', { value: parts.join(' · ') });
   return (
     <View
       accessible
-      accessibilityLabel={stale ? `${text}, from your last known position` : text}
+      accessibilityLabel={stale ? t('distance.lastKnownA11y', { text }) : text}
       style={[styles.row, style]}
     >
       <Icon name="navigate" size="sm" color={stale ? 'ink3' : 'ink2'} />
@@ -44,7 +47,7 @@ export function DistanceMeta({ distanceMeters, etaMinutes, stale = false, style 
       </Text>
       {stale ? (
         <Text variant="caption" color="ink3" numberOfLines={1}>
-          {'· last known'}
+          {t('distance.lastKnown')}
         </Text>
       ) : null}
     </View>

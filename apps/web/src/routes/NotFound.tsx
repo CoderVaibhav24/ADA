@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 
 import { useNotFoundLabels } from "@/i18n/labels";
-import { HOME_PATH } from "./paths";
+import { ROOT_PATH } from "./paths";
 
 export default function NotFound() {
   const location = useLocation();
@@ -15,7 +15,7 @@ export default function NotFound() {
         <p>
           {labels.bodyBefore} <code>{location.pathname}</code>. {labels.bodyAfter}
         </p>
-        <Link className="btn btn-primary" to={HOME_PATH}>
+        <Link className="btn btn-primary" to={ROOT_PATH}>
           {labels.back}
         </Link>
       </div>

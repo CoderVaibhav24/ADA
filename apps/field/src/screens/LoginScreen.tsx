@@ -1,237 +1,310 @@
+import { Image } from 'expo-image';
 import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
   View,
+  useWindowDimensions,
   type TextInput,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  Button,
-  FormField,
   Icon,
-  InProgressBlock,
-  Input,
+  LanguageToggle,
   Text,
   colors,
-  space,
+  control,
+  elevation,
+  fontScaleMax,
+  loginMetrics as m,
 } from '@/design-system';
-import { SignInError, signInWithPassword, type SignInFailure } from '@/services/auth/session';
-import { appIdentity } from '@/services/config/app-identity';
+import { appContact, appIdentity, dialable } from '@/services/config/app-identity';
+import { useT } from '@/services/i18n';
 import { useSessionStore } from '@/store/session-store';
 
+import { ForgotPasswordSheet } from './login/ForgotPasswordSheet';
+import {
+  EyeButton,
+  LoginField,
+  LoginFooter,
+  LoginInput,
+  LoginLink,
+  LoginNotice,
+  RememberBox,
+  SubmitButton,
+  SupportLine,
+  SupportNoNumber,
+} from './login/LoginParts';
+import { useLoginForm } from './login/useLoginForm';
+
+import aerialPlaceholder from '../../assets/images/login-aerial-placeholder.jpg';
+
 /*
- * Sign-in, `163:27`. The brand, a username and password form posted straight to
- * the portal's Keycloak realm (direct access grant, `services/auth/session.ts`),
- * and the support and footer area. No role select: roles come from the token. No
- * remember-me: the session persists on the device regardless. The support contact
- * has no source yet and shows as in progress rather than a number typed into the app.
+ * Sign-in, mirroring the portal's login (apps/web/src/routes/Login.tsx, Figma
+ * 147:900) at phone width: aerial background, the ICMS- wordmark, and one card
+ * that holds step one (username and password) and then, in place, step two (the
+ * 6-digit authenticator code). No role selector, as on the web; the surveyor-only
+ * check happens after sign-in in services/auth/session.ts. The footer is Figma 163:27's.
+ *
+ * PLACEHOLDER IMAGERY: the aerial is the web's placeholder. Replace the one import.
  */
-
-// The portal's wording (apps/web/src/routes/login-labels.en.ts), with the OTP and browser-only cases dropped.
-const FAILURE_MESSAGES: Record<SignInFailure, string> = {
-  'bad-credentials': 'The username or password was not accepted. Check both and try again.',
-  'second-factor-required':
-    'This account needs a second sign-in step, which the field app does not support. Call support.',
-  'account-incomplete':
-    'This account still has something to finish — setting up an authenticator, verifying an ' +
-    'e-mail address, or changing a password. Sign in to the ADA web portal once to finish it, ' +
-    'then try again here.',
-  'account-disabled': 'This account is not active. Call support to have it re-enabled.',
-  'locked-out':
-    'Too many failed attempts, so this account is locked for a short while. Wait a minute, then ' +
-    'try again — or call support if it stays locked.',
-  'direct-grant-disabled':
-    'This app is not yet allowed to sign people in directly. An ADA administrator must switch ' +
-    'on Direct Access Grants for the ada-field client in Keycloak.',
-  'client-misconfigured':
-    'The sign-in service does not recognise this app. Call support — this is a configuration ' +
-    'fault, not a problem with your account.',
-  'rate-limited': 'Too many attempts from this network. Wait a minute and try again.',
-  network: 'Could not reach the sign-in service. Check your connection and try again.',
-  unknown: 'Sign-in failed. Try again shortly, and call support if it keeps happening.',
-};
-
-type ScreenError = { readonly message: string; readonly detail?: string };
-
-// Turns whatever the session service threw into words for the officer.
-function describe(cause: unknown): ScreenError {
-  if (cause instanceof SignInError) {
-    return { message: FAILURE_MESSAGES[cause.reason], detail: cause.detail };
-  }
-  return { message: FAILURE_MESSAGES.unknown };
-}
-
-type Missing = { readonly username?: string; readonly password?: string };
-
 export function LoginScreen() {
-  const reason = useSessionStore((state) => state.reason);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [revealed, setRevealed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [missing, setMissing] = useState<Missing>({});
-  const [error, setError] = useState<ScreenError | null>(null);
+  const t = useT();
   const passwordRef = useRef<TextInput>(null);
+  const otpRef = useRef<TextInput>(null);
+  const form = useLoginForm({ passwordRef, otpRef });
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const sessionReason = useSessionStore((state) => state.reason);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const contact = appContact();
   const identity = appIdentity();
 
-  // Validates locally, then hands the credentials to the session service; the password is not kept.
-  const onSubmit = async () => {
-    if (busy) return;
-    const name = username.trim();
-    const nextMissing: Missing = {
-      username: name === '' ? 'Enter your username.' : undefined,
-      password: password === '' ? 'Enter your password.' : undefined,
-    };
-    setMissing(nextMissing);
-    setError(null);
-    if (nextMissing.username !== undefined || nextMissing.password !== undefined) return;
-
-    setBusy(true);
-    try {
-      await signInWithPassword(name, password);
-    } catch (cause) {
-      setError(describe(cause));
-      setPassword('');
-    } finally {
-      setBusy(false);
-    }
+  const otpStep = form.step === 'otp';
+  const call = () => {
+    if (contact.supportPhone !== null) void Linking.openURL(`tel:${dialable(contact.supportPhone)}`);
   };
+  // The web's pt max(2rem, min(111px, 14vh)), less the language toggle that sits above the wordmark.
+  const topPad = Math.max(m.topMin, Math.min(m.topMax, height * m.topRatio));
+  const wordmarkTop = Math.max(0, topPad - m.toggleInset - control.heightMd);
+  const notice =
+    sessionReason === 'refresh_rejected'
+      ? t('login.notice.expired')
+      : sessionReason === 'not_surveyor'
+        ? t('login.error.notSurveyor')
+      : sessionReason === 'user'
+        ? t('login.notice.signedOut')
+        : null;
+  const usernameError = form.fieldError('username');
+  const passwordError = form.fieldError('password');
+  const otpError = form.fieldError('otp');
 
   return (
-    <SafeAreaView style={styles.screen}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}
-      >
+    <View style={styles.screen}>
+      <Image source={aerialPlaceholder} contentFit="cover" style={StyleSheet.absoluteFill} accessible={false} />
+      <View style={[StyleSheet.absoluteFill, styles.wash]} pointerEvents="none" />
+
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <ScrollView
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[
+            styles.content,
+            { paddingTop: insets.top + m.toggleInset, paddingBottom: insets.bottom + m.footerPadY },
+          ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
-          <View style={styles.brand}>
-            {identity.name ? (
-              <Text variant="title" align="center">
-                {identity.name}
-              </Text>
-            ) : null}
+          <View style={styles.toggleRow}>
+            <LanguageToggle tone="overlay" testID="login-language" />
           </View>
 
-          <View style={styles.form}>
-            {reason === 'refresh_rejected' ? (
-              <Text variant="body" color="ink1" align="center" accessibilityRole="alert">
-                Your session ended. Sign in again to continue.
-              </Text>
-            ) : null}
+          <Text
+            variant="wordmark"
+            align="center"
+            accessibilityRole="header"
+            maxFontSizeMultiplier={fontScaleMax}
+            style={{ ...styles.wordmark, marginTop: wordmarkTop }}
+          >
+            <Text variant="wordmark" color="brand" maxFontSizeMultiplier={fontScaleMax}>
+              {t('login.brandShort')}
+            </Text>
+            {t('login.brandRest')}
+          </Text>
 
-            <FormField label="Username" error={missing.username}>
-              <Input
-                value={username}
-                onChangeText={setUsername}
-                invalid={missing.username !== undefined}
-                disabled={busy}
-                accessibilityLabel="Username"
-                placeholder="Username"
-                autoCapitalize="none"
-                autoCorrect={false}
-                spellCheck={false}
-                autoComplete="username"
-                textContentType="username"
-                importantForAutofill="yes"
-                returnKeyType="next"
-                submitBehavior="submit"
-                onSubmitEditing={() => passwordRef.current?.focus()}
-                leadingIcon={<Icon name="user" size="md" color="ink3" />}
-              />
-            </FormField>
+          <View style={[styles.card, elevation.loginCard]}>
+            <Text variant="cardHeading" align="center" accessibilityRole="header" maxFontSizeMultiplier={fontScaleMax}>
+              {otpStep ? t('login.otp.title') : t('login.title')}
+            </Text>
 
-            <FormField label="Password" error={missing.password}>
-              <Input
-                ref={passwordRef}
-                value={password}
-                onChangeText={setPassword}
-                invalid={missing.password !== undefined}
-                disabled={busy}
-                accessibilityLabel="Password"
-                placeholder="Password"
-                secureTextEntry={!revealed}
-                autoCapitalize="none"
-                autoCorrect={false}
-                spellCheck={false}
-                autoComplete="current-password"
-                textContentType="password"
-                importantForAutofill="yes"
-                returnKeyType="go"
-                onSubmitEditing={() => void onSubmit()}
-                trailingIcon={
-                  <Button
-                    label={revealed ? 'Hide' : 'Show'}
-                    variant="ghost"
-                    size="sm"
-                    fullWidth={false}
-                    onPress={() => setRevealed((shown) => !shown)}
-                    accessibilityLabel={revealed ? 'Hide password' : 'Show password'}
-                    leadingIcon={<Icon name="view" size="sm" color="brand" />}
-                  />
-                }
-              />
-            </FormField>
+            <View style={styles.form}>
+              {form.online ? null : <LoginNotice tone="warn" icon="offline" lines={[t('login.offline')]} />}
+              {form.error !== null && form.error !== 'login.offline' ? (
+                <LoginNotice tone="error" title={t('login.error.heading')} lines={[t(form.error)]} />
+              ) : null}
+              {otpStep && form.error === null ? <LoginNotice tone="info" lines={[t('login.otp.body')]} /> : null}
+              {notice !== null && !otpStep && form.error === null ? <LoginNotice tone="notice" lines={[notice]} /> : null}
 
-            {error === null ? null : (
-              <View style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
-                <Icon name="alert" size="md" color="statusOverdue" />
-                <View style={styles.errorText}>
-                  <Text variant="body" color="ink1">
-                    {error.message}
-                  </Text>
-                  {error.detail ? (
-                    <Text variant="mono" color="ink3">
-                      {error.detail}
+              {otpStep ? (
+                <>
+                  <View style={styles.account}>
+                    <Icon name="user" size="sm" color="loginAccent" />
+                    <Text variant="note" color="loginLabel" numberOfLines={1} style={styles.flexShrink} maxFontSizeMultiplier={fontScaleMax}>
+                      {`${t('login.otp.account')} `}
+                      <Text variant="noteStrong" color="loginInputText" maxFontSizeMultiplier={fontScaleMax}>
+                        {form.usernameCheck.value}
+                      </Text>
                     </Text>
+                  </View>
+
+                  <LoginField
+                    label={t('login.otp.label')}
+                    error={otpError === null ? null : t(otpError)}
+                    counter={t('login.otp.digits', { count: form.otp.length })}
+                    hint={
+                      <Text variant="note" color="loginLabel" maxFontSizeMultiplier={fontScaleMax}>
+                        {t('login.otp.noApp')}
+                      </Text>
+                    }
+                  >
+                    <LoginInput
+                      ref={otpRef}
+                      variant="codeInput"
+                      value={form.otp}
+                      onChangeText={form.onChangeOtp}
+                      onBlur={() => form.onBlur('otp')}
+                      invalid={otpError !== null}
+                      editable={!form.busy}
+                      placeholder={t('login.otp.placeholder')}
+                      accessibilityLabel={t('login.otp.label')}
+                      keyboardType="number-pad"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      textContentType="oneTimeCode"
+                      maxLength={6}
+                      returnKeyType="go"
+                      onSubmitEditing={form.submit}
+                    />
+                  </LoginField>
+
+                  {form.skew !== null ? (
+                    <LoginNotice
+                      tone="warn"
+                      title={t('login.skew.title')}
+                      lines={[
+                        t('login.skew.body'),
+                        t(form.skew > 0 ? 'login.skew.ahead' : 'login.skew.behind', { seconds: Math.abs(form.skew) }),
+                      ]}
+                    />
                   ) : null}
-                </View>
-              </View>
-            )}
 
-            <Button
-              label="Sign in"
-              onPress={() => void onSubmit()}
-              loading={busy}
-              size="lg"
-              leadingIcon={<Icon name="verified" size="md" color="inkOnMuted" />}
-            />
+                  <SubmitButton label={form.busy ? t('login.otp.ctaBusy') : t('login.otp.cta')} busy={form.busy} onPress={form.submit} />
+                  <Text variant="note" color="loginLabel" align="center" maxFontSizeMultiplier={fontScaleMax}>
+                    {t('login.otp.wrongPassword')}
+                  </Text>
+                  <LoginLink label={t('login.otp.back')} icon="arrowLeft" onPress={form.backToPassword} disabled={form.busy} />
+                </>
+              ) : (
+                <>
+                  <LoginField
+                    label={t('login.username.label')}
+                    error={usernameError === null ? null : t(usernameError)}
+                    counter={form.usernameCheck.mobile ? t('login.username.digits', { count: form.usernameCheck.digits }) : null}
+                  >
+                    <LoginInput
+                      value={form.username}
+                      onChangeText={form.onChangeUsername}
+                      onBlur={() => form.onBlur('username')}
+                      invalid={usernameError !== null}
+                      editable={!form.busy}
+                      placeholder={t('login.username.placeholder')}
+                      accessibilityLabel={t('login.username.label')}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      autoComplete="username"
+                      textContentType="username"
+                      importantForAutofill="yes"
+                      returnKeyType="next"
+                      submitBehavior="submit"
+                      onSubmitEditing={() => passwordRef.current?.focus()}
+                    />
+                  </LoginField>
+
+                  <LoginField
+                    label={t('login.password.label')}
+                    labelVariant="fieldLabelLg"
+                    error={passwordError === null ? null : t(passwordError)}
+                  >
+                    <LoginInput
+                      ref={passwordRef}
+                      value={form.password}
+                      onChangeText={form.onChangePassword}
+                      onBlur={() => form.onBlur('password')}
+                      invalid={passwordError !== null}
+                      editable={!form.busy}
+                      placeholder={t('login.password.placeholder')}
+                      accessibilityLabel={t('login.password.label')}
+                      secureTextEntry={!form.revealed}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      autoComplete="current-password"
+                      textContentType="password"
+                      importantForAutofill="yes"
+                      returnKeyType="go"
+                      onSubmitEditing={form.submit}
+                      trailing={<EyeButton revealed={form.revealed} onPress={form.toggleRevealed} disabled={form.busy} />}
+                    />
+                  </LoginField>
+
+                  <View style={styles.options}>
+                    <RememberBox checked={form.remember} onChange={form.setRemember} disabled={form.busy} />
+                    <LoginLink
+                      label={t('login.forgot')}
+                      icon="phone"
+                      align="end"
+                      onPress={() => setForgotOpen(true)}
+                      disabled={form.busy}
+                    />
+                  </View>
+
+                  <SubmitButton label={form.busy ? t('login.ctaBusy') : t('login.cta')} busy={form.busy} onPress={form.submit} />
+                </>
+              )}
+            </View>
+
+            {contact.supportPhone !== null ? <SupportLine phone={contact.supportPhone} onCall={call} /> : <SupportNoNumber />}
           </View>
 
-          <View style={styles.footer}>
-            <InProgressBlock title="Support" />
-            {identity.version ? (
-              <Text variant="caption" color="ink3" align="center">
-                {`Version ${identity.version}`}
-              </Text>
-            ) : null}
-          </View>
+          <View style={styles.spacer} />
+
+          <LoginFooter
+            version={identity.version}
+            links={[
+              { label: t('login.footer.security'), url: contact.securityPolicyUrl },
+              { label: t('login.footer.gis'), url: contact.gisPortalUrl },
+              { label: t('login.footer.terms'), url: contact.termsOfServiceUrl },
+            ]}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+
+      <ForgotPasswordSheet
+        visible={forgotOpen}
+        phone={contact.supportPhone}
+        onCall={call}
+        onClose={() => setForgotOpen(false)}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.surface0 },
+  screen: { flex: 1, backgroundColor: colors.loginBackdrop },
+  wash: { backgroundColor: colors.loginWash },
   flex: { flex: 1 },
-  content: {
-    flexGrow: 1,
-    paddingHorizontal: space[4],
-    paddingVertical: space[6],
-    justifyContent: 'space-between',
-    gap: space[6],
+  flexShrink: { flexShrink: 1 },
+  content: { flexGrow: 1, alignItems: 'center', paddingHorizontal: m.sidePad },
+  toggleRow: { width: '100%', maxWidth: m.contentMaxWidth, alignItems: 'flex-end' },
+  wordmark: { width: '100%', maxWidth: m.contentMaxWidth, marginBottom: m.wordmarkGap },
+  card: {
+    width: '100%',
+    maxWidth: m.contentMaxWidth,
+    alignItems: 'center',
+    gap: m.cardGap,
+    paddingHorizontal: m.cardPadX,
+    paddingTop: m.cardPadTop,
+    paddingBottom: m.cardPadBottom,
+    borderRadius: m.cardRadius,
+    borderWidth: m.cardBorder,
+    borderColor: colors.loginCardBorder,
+    backgroundColor: colors.loginCardFill,
   },
-  brand: { alignItems: 'center', gap: space[4], paddingTop: space[8] },
-  form: { gap: space[4] },
-  error: { flexDirection: 'row', alignItems: 'flex-start', gap: space[2] },
-  errorText: { flex: 1, gap: space[1] },
-  footer: { gap: space[3] },
+  form: { width: '100%', gap: m.formGap },
+  account: { flexDirection: 'row', alignItems: 'center', gap: m.noticeGap },
+  options: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: m.noticeGap },
+  spacer: { flexGrow: 1, minHeight: m.cardGap },
 });

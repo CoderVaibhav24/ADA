@@ -5,19 +5,22 @@ import type {
   FilterSpecification,
   GeoJSONSource,
   LayerSpecification,
+  LngLatBoundsLike,
   Map as MlMap,
 } from "maplibre-gl";
 import { TerraDraw, TerraDrawPolygonMode } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import type { FeatureCollection, Polygon } from "geojson";
 import { api } from "../api/client";
-import { accessToken, cachedAccessToken } from "../auth/oidc";
+import { accessToken } from "../auth/oidc";
 import type { ChangeFeatureProps, Id, TileInfo } from "../api/types";
 import { sid, useStore } from "../state/store";
 import { createRedZone } from "../state/actions";
 import HoverPopup from "./HoverPopup";
 import type { HoverState } from "./HoverPopup";
 import Legend from "./Legend";
+import { AGRA_CENTER, osmBasemapStyle } from "./map/basemap";
+import { authorizeTileRequest } from "./map/tileAuth";
 
 // Invisible anchor layers keep the stacking order deterministic:
 // basemap < rasters < heat masks < red zones < change polygons < terra-draw.
@@ -30,8 +33,6 @@ const COLOR_CHANGE_LINE = "#ffc14d";
 const COLOR_REDZONE = "#ff2d55";
 const COLOR_REJECTED = "#6b7280";
 
-// Agra city — sensible default view before any raster exists.
-const AGRA_CENTER: [number, number] = [78.0081, 27.1767];
 
 
 function ensureSlots(map: MlMap): void {
@@ -141,10 +142,16 @@ const LINE_WIDTH_EXPR = [
 
 /** The few map commands a toolbar outside this component needs to issue. */
 export type MapViewHandle = {
+  /** The live map, for a second view that follows its camera. Null before mount. */
+  getMap: () => MlMap | null;
   zoomIn: () => void;
   zoomOut: () => void;
-  fitBounds: (bounds: [number, number, number, number]) => void;
+  fitBounds: (bounds: [number, number, number, number], options?: FitOptions) => void;
 };
+
+/** Overrides for one fit; maxZoom is a cap, and a closer view that already holds the box is kept. */
+export type FitOptions = { maxZoom?: number; padding?: number };
+
 
 export type MapSelection = {
   jobId: string;
@@ -169,6 +176,12 @@ export type MapViewProps = {
   showEmptyHint?: boolean;
   /** The OpenStreetMap base layer, as one entry in a layer tree. */
   basemapVisible?: boolean;
+  /** 0..1, the base layer's own opacity slider. */
+  basemapOpacity?: number;
+  /** Double-click or double-tap on a detection; the map's own double-click zoom is suppressed there. */
+  onFeatureDoubleClick?: (target: { jobId: string; featureId: Id }) => void;
+  /** A muted line on the hover card, e.g. what a double-click does. */
+  hoverHint?: string;
 };
 
 export default function MapView({
@@ -179,6 +192,9 @@ export default function MapView({
   showLegend = true,
   showEmptyHint = true,
   basemapVisible = true,
+  basemapOpacity = 1,
+  onFeatureDoubleClick,
+  hoverHint,
 }: MapViewProps = {}) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -220,19 +236,37 @@ export default function MapView({
     onZoomChangeRef.current = onZoomChange;
   }, [onZoomChange]);
 
+  const onDoubleRef = useRef<MapViewProps["onFeatureDoubleClick"]>(undefined);
+  useEffect(() => {
+    onDoubleRef.current = onFeatureDoubleClick;
+  }, [onFeatureDoubleClick]);
+
   useImperativeHandle(
     ref,
     () => ({
+      getMap: () => mapRef.current,
       zoomIn: () => mapRef.current?.zoomIn(),
       zoomOut: () => mapRef.current?.zoomOut(),
-      fitBounds: ([w, s, e, n]) =>
-        mapRef.current?.fitBounds(
-          [
-            [w, s],
-            [e, n],
-          ],
-          { padding: 56, duration: 700, maxZoom: 20 },
-        ),
+      fitBounds: ([w, s, e, n], options) => {
+        const map = mapRef.current;
+        if (!map) return;
+        const box: LngLatBoundsLike = [
+          [w, s],
+          [e, n],
+        ];
+        const padding = options?.padding ?? 56;
+        const maxZoom = options?.maxZoom ?? 20;
+        if (options) {
+          // Already closer than the cap and the box still fits: pan, don't zoom out.
+          const fit = map.cameraForBounds(box, { padding });
+          const zoom = map.getZoom();
+          if (fit?.zoom !== undefined && zoom > maxZoom && zoom <= fit.zoom) {
+            map.easeTo({ center: fit.center, duration: 700 });
+            return;
+          }
+        }
+        map.fitBounds(box, { padding, duration: 700, maxZoom });
+      },
     }),
     [],
   );
@@ -258,63 +292,10 @@ export default function MapView({
       center: AGRA_CENTER,
       zoom: 12,
       attributionControl: false,
-      // MapLibre issues tile requests itself, so the bearer token has to be
-      // attached here — nothing else in the app sees them. Only our own /api
-      // tiles get the header: sending it to the OpenStreetMap basemap would
-      // hand an access token to a third party.
-      //
-      // `transformRequest` is synchronous, so it can only use a token already
-      // in hand. The route guard (routes/RequireAuth) primes that cache before
-      // this component mounts, and the effect above keeps it fresh.
-      transformRequest: (url, resourceType) => {
-        if (resourceType !== "Tile") return { url };
-        // MapLibre substitutes {z}/{x}/{y} into the tile template and hands the
-        // result here unchanged, so our own tiles arrive as the relative path
-        // "/api/tiles/..." — never as an absolute URL. A startsWith(origin)
-        // test therefore never matched, every raster and mask tile went out
-        // without the bearer token, and the API answered 401: layers READY in
-        // the sidebar, nothing drawn on the map. Resolve against the page
-        // first, then decide.
-        let target: URL;
-        try {
-          target = new URL(url, window.location.href);
-        } catch {
-          return { url };
-        }
-        // Same-origin /api only: sending the header to the OpenStreetMap
-        // basemap would hand an access token to a third party.
-        if (
-          target.origin !== window.location.origin ||
-          !target.pathname.startsWith("/api/")
-        ) {
-          return { url };
-        }
-        const token = cachedAccessToken();
-        return token
-          ? { url, headers: { Authorization: `Bearer ${token}` } }
-          : { url };
-      },
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256,
-            maxzoom: 19,
-            attribution:
-              '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
-          },
-        },
-        layers: [
-          {
-            id: "basemap-osm",
-            type: "raster",
-            source: "osm",
-            paint: { "raster-saturation": -0.35, "raster-brightness-max": 0.85 },
-          },
-        ],
-      },
+      // Replaced by the observer below: MapLibre drops its observer's first callback.
+      trackResize: false,
+      transformRequest: authorizeTileRequest,
+      style: osmBasemapStyle(),
     });
     mapRef.current = map;
 
@@ -398,6 +379,63 @@ export default function MapView({
       });
     });
 
+    // Double-click (mouse) or double-tap (touch) on a detection. A handled one
+    // cancels the map's own double-click / double-tap zoom; empty map still zooms.
+    const polygonAt = (point: maplibregl.PointLike) => {
+      const layerIds = map
+        .getStyle()
+        .layers.map((l) => l.id)
+        .filter((lid) => lid.startsWith("poly-fill-"));
+      if (layerIds.length === 0) return null;
+      const hit = map.queryRenderedFeatures(point, { layers: layerIds })[0];
+      return hit && hit.id !== undefined
+        ? {
+            jobId: hit.layer.id.replace("poly-fill-", ""),
+            featureId: hit.id,
+            props: hit.properties as unknown as ChangeFeatureProps,
+          }
+        : null;
+    };
+    let lastFired = 0;
+    const fireDouble = (target: MapSelection) => {
+      // Some browsers send a dblclick after a double-tap as well; act once.
+      const now = performance.now();
+      if (now - lastFired < 600) return;
+      lastFired = now;
+      onSelectRef.current?.(target);
+      onDoubleRef.current?.({ jobId: target.jobId, featureId: target.featureId });
+    };
+    map.on("dblclick", (e) => {
+      if (drawActiveRef.current || !onDoubleRef.current) return;
+      const target = polygonAt(e.point);
+      if (!target) return;
+      e.preventDefault();
+      fireDouble(target);
+    });
+    let lastTap: { key: string; at: number } | null = null;
+    map.on("touchend", (e) => {
+      if (drawActiveRef.current || !onDoubleRef.current) return;
+      const touch = e.originalEvent;
+      if (touch.touches.length > 0 || touch.changedTouches.length !== 1) {
+        lastTap = null;
+        return;
+      }
+      const target = polygonAt(e.point);
+      if (!target) {
+        lastTap = null;
+        return;
+      }
+      const key = `${target.jobId}:${String(target.featureId)}`;
+      const now = performance.now();
+      if (lastTap && lastTap.key === key && now - lastTap.at < 350) {
+        lastTap = null;
+        e.preventDefault();
+        fireDouble(target);
+        return;
+      }
+      lastTap = { key, at: now };
+    });
+
     // Hover: track change polygons under the cursor.
     map.on("mousemove", (e) => {
       if (drawActiveRef.current) return;
@@ -432,6 +470,22 @@ export default function MapView({
       map.remove();
       mapRef.current = null;
       setMapReady(false);
+    };
+  }, []);
+
+  // Refit the canvas whenever the container changes size, at most once a frame.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => mapRef.current?.resize());
+    });
+    observer.observe(container);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
     };
   }, []);
 
@@ -702,6 +756,12 @@ export default function MapView({
     );
   }, [mapReady, basemapVisible]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !map.getLayer("basemap-osm")) return;
+    map.setPaintProperty("basemap-osm", "raster-opacity", basemapOpacity);
+  }, [mapReady, basemapOpacity]);
+
   // --------------------------------------------------------- selection ring
   // `features` is a dependency because the selection can be set before its
   // source exists — choosing a detection from the list while the collection is
@@ -739,6 +799,7 @@ export default function MapView({
 
   const noRasters = rasters.length === 0;
 
+
   return (
     <div className="map-wrap" ref={wrapRef}>
       <div className="map-canvas" ref={containerRef} />
@@ -757,6 +818,7 @@ export default function MapView({
         <HoverPopup
           hover={hover}
           containerWidth={wrapRef.current?.clientWidth ?? 0}
+          hint={hoverHint}
         />
       )}
     </div>

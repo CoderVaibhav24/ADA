@@ -86,11 +86,24 @@ class Settings(CoreSettings):
     #   mps  -> Apple Silicon GPU. Reached through torch's MPS backend and, for
     #           onnxruntime, the CoreML execution provider — there is no Metal
     #           EP. Requires the plain macOS arm64 wheels of both.
-    ml_device: str = "auto"              # auto | cuda | mps | cpu
-    # Hard-fail instead of silently running a GPU model on the CPU. onnxruntime
-    # only WARNS when its provider fails to load, which is how a misconfigured
-    # box ends up thermally throttling for minutes with no obvious cause.
+    # A pinned value (cuda | mps | metal | cpu) whose probe fails refuses to start.
+    ml_device: str = "auto"              # auto | cuda | mps (metal) | cpu
+    # Deprecated alias for pinning a GPU: with auto, refuses to start on the CPU tier.
     require_gpu: bool = False
+
+    # --- runtime tiers (doc §4.1) ---------------------------------------------
+    # SAM refinement on the CPU tier; off by default because it dominates CPU time.
+    ml_cpu_sam_refine: bool = False
+    # Working-grid side cap on the CPU tier.
+    ml_cpu_grid_cap_px: int = 3072
+    # Seconds per working-grid Mpx: CPU from the measured 13 s/tile; CUDA, Metal estimated.
+    ml_eta_s_per_mpx_cuda: float = 1.5
+    ml_eta_s_per_mpx_metal: float = 6.0
+    ml_eta_s_per_mpx_cpu: float = 60.0
+    # Re-runs of an analysis that exhausted the OOM degrade ladder ("retryable:").
+    ml_oom_retries: int = 3
+    # How often retryable analyses are re-queued while the process runs; 0 = only at startup.
+    ml_retry_interval_seconds: int = 900
     # Ceiling on ORT CPU threads. Keeps a fallback (or the CPU-side ops) from
     # saturating the machine; 0 would mean "use every core".
     onnx_cpu_threads: int = 4

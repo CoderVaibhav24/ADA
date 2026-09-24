@@ -5,6 +5,8 @@
 
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useScriptOf } from '@/services/i18n';
+
 import {
   colors,
   control,
@@ -38,6 +40,7 @@ export function Checkbox({
   testID,
   style,
 }: CheckboxProps) {
+  const script = useScriptOf(label);
   return (
     <Pressable
       testID={testID}
@@ -60,7 +63,7 @@ export function Checkbox({
       >
         {checked ? <View style={styles.tick} /> : null}
       </View>
-      {label ? <Text style={textStyle('body', 'ink1')}>{label}</Text> : null}
+      {label ? <Text style={textStyle('body', 'ink1', script)}>{label}</Text> : null}
     </Pressable>
   );
 }

@@ -150,12 +150,12 @@ export const MAX_PAGE_SIZE = 200;
 /* ---- permissions and error codes ----------------------------------------- */
 
 /**
- * The one code that gates this area, seeded by migration 0003.
- *
- * It covers the THREE READS only. Issuing is gated by the transition table, so
- * there is no `notice.manage` to import here and there never will be.
+ * The codes that gate this area: the screen, the three reads, and issuing.
+ * `notice.issue` is checked alongside the case's `allowed_actions`, not instead of it.
  */
+export const NOTICES_ACCESS = "notices.access";
 export const NOTICE_READ = "notice.read";
+export const NOTICE_ISSUE = "notice.issue";
 
 /** The refusals that mean something specific to a screen. */
 export const NOTICE_NOT_FOUND = "notice_not_found";

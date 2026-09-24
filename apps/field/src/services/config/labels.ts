@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import type { CodeValue } from '@/services/api/types';
+import { useLocale, type Locale } from '@/services/i18n';
 
 import { useCodeValues } from './code-values';
 
@@ -19,16 +20,18 @@ export function humanizeCode(code: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-// The seeded label for a code, falling back to the re-cased code.
-export function labelFor(values: readonly CodeValue[] | undefined, code: string): string {
+// The seeded label for a code in the locale (Hindi when seeded), falling back to the re-cased code.
+export function labelFor(values: readonly CodeValue[] | undefined, code: string, locale: Locale = 'en'): string {
   const row = values?.find((candidate) => candidate.code === code);
+  if (locale === 'hi' && row?.label_hi) return row.label_hi;
   return row?.label ?? humanizeCode(code);
 }
 
 // A stable labeller for one code-value domain.
 export function useCodeLabel(domain: string): (code: string) => string {
   const { data } = useCodeValues(domain);
-  return useCallback((code: string) => labelFor(data, code), [data]);
+  const locale = useLocale();
+  return useCallback((code: string) => labelFor(data, code, locale), [data, locale]);
 }
 
 /*

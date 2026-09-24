@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from ada_core.datetimes import IstDateTime
+from ada_core.datetimes import IstDateTime, now_ist
 from ada_core.models_icms import CASE_PRIORITIES
 from ada_core.validation import (
     ULPIN,
@@ -21,7 +21,15 @@ from ada_core.validation import (
     SafeLongText,
     SafeText,
 )
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from fastapi import UploadFile
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from .collection import CollectionParams
 from .schemas import UserId, ZoneCode
@@ -31,11 +39,17 @@ __all__ = [
     "CaseAmend",
     "CaseAssign",
     "CaseAssignmentOut",
+    "CaseClose",
     "CaseConfirm",
     "CaseCreate",
     "CaseDetail",
+    "CaseEvidenceCreate",
+    "CaseEvidenceList",
+    "CaseEvidenceOut",
+    "CaseEvidenceWritten",
     "CaseHandover",
     "CaseQuery",
+    "CaseReject",
     "CaseRow",
     "InspectionRoundOut",
 ]
@@ -43,6 +57,18 @@ __all__ = [
 SOURCES = ("detection", "public", "field", "office")
 STATUSES = tuple(str(s) for s in Status)
 PRIORITIES = CASE_PRIORITIES
+EARLIEST_COMPLAINT_DATE = date(2000, 1, 1)
+
+# The codes ada-core 0022 seeds into icms_code_value (case_reject_reason, case_close_outcome).
+REJECT_REASONS = ("false_complaint", "duplicate", "outside_jurisdiction",
+                  "no_violation_found", "other")
+CLOSE_OUTCOMES = ("demolished_by_owner", "demolished_by_authority", "regularised",
+                  "court_case_filed", "sealed", "other")
+OTHER_REMARKS_MIN = 10
+
+
+def today_ist() -> date:
+    return now_ist().date()
 
 
 class CaseLocation(BaseModel):
@@ -90,6 +116,11 @@ class CaseCreate(BaseModel):
     village_lgd_code: LGDCode | None = None
     district_lgd_code: LGDCode | None = None
     priority: Literal[PRIORITIES] | None = None  # type: ignore[valid-type]
+    complaint_date: date | None = Field(
+        default=None,
+        description="The date the complaint was made, IST. Not in the future and not "
+                    "before 2000-01-01. Omitted, it is today.",
+    )
 
     idempotency_key: IdempotencyKey | None = Field(
         default=None,
@@ -97,6 +128,17 @@ class CaseCreate(BaseModel):
                     "A replay returns the case the first attempt created rather than "
                     "filing the complaint twice.",
     )
+
+    @field_validator("complaint_date")
+    @classmethod
+    def _a_plausible_complaint_date(cls, value: date | None) -> date | None:
+        if value is None:
+            return value
+        if value > today_ist():
+            raise ValueError("complaint_date cannot be in the future")
+        if value < EARLIEST_COMPLAINT_DATE:
+            raise ValueError("complaint_date cannot be before 2000-01-01")
+        return value
 
     @model_validator(mode="after")
     def _locatable_and_coherent(self) -> CaseCreate:
@@ -183,6 +225,47 @@ class CaseConfirm(BaseModel):
     )
 
 
+def _remarks_for_other(code: str, remarks: str | None) -> None:
+    if code == "other" and len((remarks or "").strip()) < OTHER_REMARKS_MIN:
+        raise ValueError(
+            f"remarks of at least {OTHER_REMARKS_MIN} characters are required when the "
+            "reason is other")
+
+
+class CaseReject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason_cd: Literal[REJECT_REASONS] = Field(  # type: ignore[valid-type]
+        description="A `case_reject_reason` code.")
+    remarks: SafeLongText | None = Field(
+        default=None, description=f"Required, {OTHER_REMARKS_MIN}+ characters, when "
+                                  "`reason_cd` is `other`.")
+    idempotency_key: IdempotencyKey | None = Field(
+        default=None, description="A replay with the same key returns the case unchanged.")
+
+    @model_validator(mode="after")
+    def _other_needs_remarks(self) -> CaseReject:
+        _remarks_for_other(self.reason_cd, self.remarks)
+        return self
+
+
+class CaseClose(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome_cd: Literal[CLOSE_OUTCOMES] = Field(  # type: ignore[valid-type]
+        description="A `case_close_outcome` code.")
+    remarks: SafeLongText | None = Field(
+        default=None, description=f"Required, {OTHER_REMARKS_MIN}+ characters, when "
+                                  "`outcome_cd` is `other`.")
+    idempotency_key: IdempotencyKey | None = Field(
+        default=None, description="A replay with the same key returns the case unchanged.")
+
+    @model_validator(mode="after")
+    def _other_needs_remarks(self) -> CaseClose:
+        _remarks_for_other(self.outcome_cd, self.remarks)
+        return self
+
+
 class CaseQuery(CollectionParams):
     status: list[str] | None = Field(
         default=None, description=f"Repeatable. One of: {', '.join(STATUSES)}")
@@ -248,6 +331,7 @@ class CaseRow(BaseModel):
     source: str
     assignee_user_id: str | None = None
     raised_at: IstDateTime
+    complaint_date: date | None = None
 
     @computed_field
     @property
@@ -264,7 +348,11 @@ class CaseAssignmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     assignee_user_id: str
+    assignee_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     assigned_by: str
+    assigned_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     assignment_type: str
     note: str | None = None
     assigned_at: IstDateTime
@@ -278,9 +366,17 @@ class InspectionRoundOut(BaseModel):
     inspection_ref: str
     round_no: int
     surveyor_user_id: str
+    surveyor_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     status: str
     submitted_at: IstDateTime | None = None
     measured_area_sqm: float | None = None
+    occupant_name: str | None = Field(
+        default=None, description="Owner or occupant, as the surveyor recorded on site.")
+    occupant_phone: str | None = None
+    property_type_cd: str | None = None
+    floor_count: int | None = None
+    police_station: str | None = None
 
 
 class CaseDetail(CaseRow):
@@ -301,7 +397,19 @@ class CaseDetail(CaseRow):
     idempotency_key: str | None = None
     location: dict | None = None
     closed_at: IstDateTime | None = None
+    closed_by: str | None = None
+    closed_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
+    outcome_cd: str | None = Field(
+        default=None, description="Why it was rejected (`case_reject_reason`) or how it "
+                                  "was closed (`case_close_outcome`); null while open.")
+    outcome_label: str | None = None
+    outcome_label_hi: str | None = None
+    outcome_reason: str | None = Field(
+        default=None, description="The officer's remarks on the rejection or closure.")
     created_by: str | None = None
+    created_by_name: str | None = Field(
+        default=None, description="From Keycloak at read time; null when it cannot say.")
     updated_at: IstDateTime
 
     assignment: CaseAssignmentOut | None = None
@@ -313,3 +421,62 @@ class CaseDetail(CaseRow):
                     "A convenience for rendering buttons, never a control: "
                     "workflow.check runs on every request regardless.",
     )
+
+
+class CaseEvidenceCreate(BaseModel):
+    """The whole multipart body of a case evidence upload, the file included."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: UploadFile = Field(description="The photograph: JPEG, PNG or WebP.")
+    caption: SafeText | None = None
+    latitude: Latitude | None = None
+    longitude: Longitude | None = None
+
+    @model_validator(mode="after")
+    def _a_position_is_both_halves(self) -> CaseEvidenceCreate:
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("send both latitude and longitude, or neither")
+        return self
+
+
+class CaseEvidenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    filename: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
+    caption: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    created_at: IstDateTime
+    content_url: str
+
+
+class CaseEvidenceWritten(BaseModel):
+    evidence: CaseEvidenceOut
+    replayed: bool
+
+
+class CaseEvidenceList(BaseModel):
+    items: list[CaseEvidenceOut]
+
+
+class AssigneeRole(BaseModel):
+    role_cd: str
+    label: str
+    label_hi: str | None = None
+
+
+class AssigneeCandidate(BaseModel):
+    user_id: str
+    name: str | None
+    username: str | None
+    role_cds: list[str]
+
+
+# The assign dialog's two pickers: roles the workflow admits, then who holds them here.
+class AssigneeOptions(BaseModel):
+    roles: list[AssigneeRole]
+    candidates: list[AssigneeCandidate]

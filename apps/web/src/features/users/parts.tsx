@@ -252,7 +252,7 @@ export type RoleSetEditorProps = {
   /** The complete set currently ticked. This IS what the PUT will carry. */
   selected: readonly string[];
   onToggle: (roleCd: string, held: boolean) => void;
-  roles: readonly string[];
+  roles: readonly { role_cd: string; label: string }[];
   labels: UserLabels;
   disabled?: boolean;
   /** Names the officer in each checkbox's accessible name. */
@@ -278,9 +278,9 @@ export function RoleSetEditor({
       <legend className="text-sm font-medium text-fg-strong">{legend}</legend>
       <p className="max-w-prose text-2xs text-fg-faint text-pretty">{hint}</p>
       <ul className="flex flex-col gap-2">
-        {roles.map((roleCd) => {
+        {roles.map(({ role_cd: roleCd, label }) => {
           const id = `${prefix}-${roleCd}`;
-          const roleName = labels.role(roleCd);
+          const roleName = labels.role(roleCd, label);
           const roleHint = labels.roleHint(roleCd);
           return (
             <li key={roleCd}>

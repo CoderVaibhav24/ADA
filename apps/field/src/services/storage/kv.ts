@@ -3,7 +3,7 @@ import { createMMKV, type MMKV } from 'react-native-mmkv';
 /*
  * Durable key-value storage for everything that is not a token.
  *
- * Three stores rather than one, because they have different lifetimes and
+ * Four stores rather than one, because they have different lifetimes and
  * different rules about being cleared:
  *
  *   cacheStore   server-driven config and the persisted TanStack Query cache.
@@ -12,6 +12,8 @@ import { createMMKV, type MMKV } from 'react-native-mmkv';
  *                the round they belong to has been submitted and confirmed.
  *   evidenceStore capture records and their upload state. Append-only
  *                (code-standards.md rule 6) — nothing here is cleared by the app.
+ *   prefsStore   device preferences: the chosen language and the remembered
+ *                username. Never a password, never a token. Survives sign-out.
  *
  * Sign-out clears `cacheStore` only. A surveyor whose token expired in a field
  * with no signal must not lose a morning's captures to it.
@@ -19,6 +21,7 @@ import { createMMKV, type MMKV } from 'react-native-mmkv';
 export const cacheStore = createMMKV({ id: 'ada.cache' });
 export const draftStore = createMMKV({ id: 'ada.drafts' });
 export const evidenceStore = createMMKV({ id: 'ada.evidence' });
+export const prefsStore = createMMKV({ id: 'ada.prefs' });
 
 export type JsonStore = MMKV;
 

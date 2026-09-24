@@ -2,6 +2,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { currentAppConfig } from '@/services/config/app-config';
+import { withGpsExif } from '@/services/inspection/exif';
 import { evidenceStore, readJson, writeJson } from '@/services/storage/kv';
 
 /*
@@ -15,7 +16,8 @@ import { evidenceStore, readJson, writeJson } from '@/services/storage/kv';
  *
  * This store is append-only once anything may have reached the server. The one
  * removal is `discardCapture`, for a capture that provably never left the device
- * (never attempted) or that the server refused outright — there is no delete for
+ * (never attempted), that the server refused outright, or whose file is already
+ * gone and so can never be sent — there is no delete for
  * an uploaded record, or for one whose upload outcome is unknown: the case may be
  * litigated.
  */
@@ -59,7 +61,34 @@ export type CaptureRecord = {
   readonly refusedByServer?: boolean;
   /** The server's `geotag_flagged` on the stored evidence row. Null until uploaded. */
   readonly geotagFlagged?: boolean | null;
+  /** The server's error code and field for the last failure, so the screen can say it in words. */
+  readonly lastErrorCode?: string | null;
+  readonly lastErrorField?: string | null;
+  /** Kept back from upload while the surveyor reviews it in the camera; the holding process's id. */
+  readonly heldBy?: string | null;
 };
+
+/*
+ * Free space below which the camera is not opened: a downscaled capture is well
+ * under 1 MB, but the camera writes the full-size original first.
+ */
+export const LOW_STORAGE_BYTES = 50 * 1024 * 1024;
+
+// Bytes free on the device, or null where the platform cannot say (web).
+export function freeSpaceBytes(): number | null {
+  try {
+    const free = Paths.availableDiskSpace;
+    return Number.isFinite(free) && free > 0 ? free : null;
+  } catch {
+    return null;
+  }
+}
+
+// False when the phone is too full to keep another photograph; unknown counts as room.
+export function hasRoomForCapture(): boolean {
+  const free = freeSpaceBytes();
+  return free === null || free >= LOW_STORAGE_BYTES;
+}
 
 export type CaptureRejectionReason =
   | 'no_location'
@@ -94,9 +123,14 @@ export type NewCapture = {
    * one may pass this, and the record is marked `captureSource: 'gallery'` forever.
    */
   readonly allowGallery?: boolean;
+  /** Keeps the capture off the upload queue until `releaseHeldCaptures`. */
+  readonly held?: boolean;
 };
 
 const INDEX_KEY = 'captures:index';
+
+// Identifies this run of the app: a hold left by a process that died no longer holds.
+const PROCESS_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 // The directory captures live in, created on first use.
 function capturesDirectory(): Directory {
@@ -164,13 +198,31 @@ function assertEvidenceGrade(input: NewCapture): void {
   }
 }
 
+// Writes the capture's GPS stamp back into a re-encoded JPEG; best effort, the form fields stay authoritative.
+async function restoreGpsExif(file: File, geo: GeoStamp): Promise<void> {
+  try {
+    const bytes = await file.bytes();
+    file.write(
+      withGpsExif(bytes, {
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        accuracyM: geo.accuracyM,
+        takenAt: new Date(geo.deviceTimestamp),
+      }),
+    );
+  } catch (cause) {
+    if (__DEV__) console.warn('[captures] could not write GPS EXIF', cause);
+  }
+}
+
 /*
  * Downscales a photo to `photoMaxEdgePx` at `photoJpegQuality` and writes the
  * result over `destination`, deleting the full-size original (code-standards.md
  * §7). Never upscales: an image already at or under the limit is moved as-is. A
  * manipulation failure falls back to the original bytes — a capture is never lost.
+ * The re-encode drops EXIF, so the GPS tags are written back onto the result.
  */
-async function downscalePhotoInto(source: File, destination: File): Promise<void> {
+async function downscalePhotoInto(source: File, destination: File, geo: GeoStamp): Promise<void> {
   const { photoMaxEdgePx, photoJpegQuality } = currentAppConfig();
   try {
     const context = ImageManipulator.manipulate(source.uri);
@@ -181,12 +233,14 @@ async function downscalePhotoInto(source: File, destination: File): Promise<void
     }
     const longEdge =
       original.width >= original.height ? { width: photoMaxEdgePx } : { height: photoMaxEdgePx };
-    const resized = await context.reset().resize(longEdge).renderAsync();
+    // A fresh context, not reset(): on iOS reset() drops the EXIF-orientation fix applied at load.
+    const resized = await ImageManipulator.manipulate(source.uri).resize(longEdge).renderAsync();
     const saved = await resized.saveAsync({ compress: photoJpegQuality, format: SaveFormat.JPEG });
     await new File(saved.uri).move(destination);
     if (source.exists) source.delete();
+    await restoreGpsExif(destination, geo);
   } catch (cause) {
-    console.warn('[captures] downscale failed, keeping the original capture', cause);
+    if (__DEV__) console.warn('[captures] downscale failed, keeping the original capture', cause);
     if (!destination.exists && source.exists) {
       await source.move(destination);
     }
@@ -214,7 +268,7 @@ export async function saveCapture(input: NewCapture): Promise<CaptureRecord> {
   const destination = new File(capturesDirectory(), `${input.idempotencyKey}${extension}`);
   if (!destination.exists) {
     if (input.kind === 'photo') {
-      await downscalePhotoInto(source, destination);
+      await downscalePhotoInto(source, destination, input.geo);
     } else {
       await source.move(destination);
     }
@@ -232,7 +286,7 @@ export async function saveCapture(input: NewCapture): Promise<CaptureRecord> {
     idempotencyKey: input.idempotencyKey,
     state: 'pending',
     attempts: 0,
-    nextAttemptAt: new Date().toISOString(),
+    nextAttemptAt: input.held === true ? null : new Date().toISOString(),
     lastError: null,
     createdAt: new Date().toISOString(),
     uploadedAt: null,
@@ -240,6 +294,7 @@ export async function saveCapture(input: NewCapture): Promise<CaptureRecord> {
     inspectionRef: input.inspectionRef ?? null,
     refusedByServer: false,
     geotagFlagged: null,
+    heldBy: input.held === true ? PROCESS_ID : null,
   };
 
   const index = readIndex();
@@ -264,17 +319,40 @@ export function dueCaptures(now: Date = new Date()): CaptureRecord[] {
   return readIndex().filter(
     (record) =>
       (record.state === 'pending' || record.state === 'failed') &&
-      record.nextAttemptAt !== null &&
-      Date.parse(record.nextAttemptAt) <= now.getTime(),
+      ((record.nextAttemptAt !== null && Date.parse(record.nextAttemptAt) <= now.getTime()) || isOrphanedHold(record)),
   );
 }
 
-// Captures that failed past the attempt ceiling. The sync banner reads this.
+// A never-sent capture still held by a process that has since died: nobody will release it, so it is due.
+function isOrphanedHold(record: CaptureRecord): boolean {
+  const holder = record.heldBy ?? null;
+  return record.state === 'pending' && holder !== null && holder !== PROCESS_ID;
+}
+
+export type StuckReason = 'retake' | 'retry';
+
+// Why a failed capture will not go by itself: file gone (retake) or out of tries (retry); an office refusal is neither.
+export function stuckReason(record: CaptureRecord): StuckReason | null {
+  if (record.state !== 'failed') return null;
+  if (record.lastErrorCode === 'file_missing') return 'retake';
+  if (record.refusedByServer === true) return null;
+  return record.nextAttemptAt === null ? 'retry' : null;
+}
+
+// True when this capture can never be sent as it is: the office refused it, or its file is gone.
+export function cannotBeSent(record: CaptureRecord): boolean {
+  return record.state === 'failed' && (record.refusedByServer === true || record.lastErrorCode === 'file_missing');
+}
+
+// True while the capture is on its way, or will be tried again by itself.
+export function isInFlight(record: CaptureRecord): boolean {
+  if (record.state === 'pending' || record.state === 'uploading') return true;
+  return record.state === 'failed' && !cannotBeSent(record) && record.nextAttemptAt !== null;
+}
+
+// Captures that will not go without the surveyor. The sync banner reads this.
 export function stuckCaptures(): CaptureRecord[] {
-  const { uploadMaxAttempts } = currentAppConfig();
-  return readIndex().filter(
-    (record) => record.state === 'failed' && record.attempts >= uploadMaxAttempts,
-  );
+  return readIndex().filter((record) => stuckReason(record) !== null);
 }
 
 // Replaces one record. The only way state changes; every change is written before the UI sees it.
@@ -302,10 +380,24 @@ export function bindCapturesToRound(caseRef: string, inspectionRef: string): voi
   if (changed) writeIndex(next);
 }
 
-// True only when the server cannot hold this capture: never attempted, or refused outright.
+// Puts a case's held captures on the upload queue; true when any were released.
+export function releaseHeldCaptures(caseRef: string): boolean {
+  const index = readIndex();
+  const now = new Date().toISOString();
+  let changed = false;
+  const next = index.map((record) => {
+    if (record.caseRef !== caseRef || (record.heldBy ?? null) === null) return record;
+    changed = true;
+    return { ...record, heldBy: null, nextAttemptAt: record.state === 'pending' ? now : record.nextAttemptAt };
+  });
+  if (changed) writeIndex(next);
+  return changed;
+}
+
+// True only when nothing can be kept by sending it: never attempted, refused outright, or its file is gone.
 export function isRemovable(record: CaptureRecord): boolean {
   if (record.state === 'pending' && record.attempts === 0) return true;
-  return record.state === 'failed' && record.refusedByServer === true;
+  return cannotBeSent(record);
 }
 
 /*

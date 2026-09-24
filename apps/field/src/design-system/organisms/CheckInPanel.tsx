@@ -1,158 +1,197 @@
 /**
- * CheckInPanel — step 1 (`179:5884`). Live coordinates, accuracy and lock state, and
- * Confirm Arrival, which stays disabled below the accuracy threshold with the reason
- * stated: the current accuracy, what is needed and what to do (ui-rules.md §3).
+ * CheckInPanel — step 1 (`179:5884`). The location card (marker, coordinates, signal in
+ * words, time), how far the surveyor stands from the case point, and Confirm Arrival,
+ * which stays disabled until the fix meets the server's accuracy gate, with the reason
+ * and the next thing to do stated under it (ui-rules.md §3). When the served geofence is
+ * enforced it also stays disabled until the fix is within the radius; otherwise distance only warns.
  *
- * The server is the authority — it refuses a poor fix with `poor_accuracy` — and this
- * panel states that refusal in the server's own words rather than spinning.
- * Permission is primed inline before the OS dialog (ui-rules.md §6).
+ * Permission is primed before the OS dialog; a denial degrades to a settings route
+ * (ui-rules.md §6). A refusal from the office is said in words, never as a code.
  */
 
 import { useEffect, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Animated, Easing, Platform, StyleSheet, View } from 'react-native';
 
 import { useInspectionDetail } from '@/services/api/inspection-reads';
 import { useAppConfig } from '@/services/config/use-app-config';
 import { formatDateTime } from '@/services/format/datetime';
-import { adoptServerCheckIn, confirmArrival, type CheckInRecord } from '@/services/inspection/check-in';
+import { useT, type PlainKey, type TFunction } from '@/services/i18n';
+import { adoptServerCheckIn, confirmArrival } from '@/services/inspection/check-in';
 import { useCheckInRecord } from '@/services/inspection/queries';
+import { checkInRefusalKey } from '@/services/inspection/refusals';
 import { isWorkable } from '@/services/inspection/rounds';
-import {
-  judgeFix,
-  preciseLocationHowTo,
-  useLiveFix,
-  useLocationPermission,
-  type LiveFix,
-} from '@/services/location/live-fix';
+import { SLOW_FIX_MS, formatCoordinates, signalQuality, siteDistance, type SignalQuality } from '@/services/inspection/site';
+import { judgeFix, useLiveFix, useLocationPermission, type LiveFix } from '@/services/location/live-fix';
 
-import { Button, Icon, Skeleton, Text, type IconName } from '../atoms';
-import { GpsReadout, ListRow, SectionCard, type GpsFixState } from '../molecules';
-import { colors, control, radius, space, type ColorToken, type LayoutStyle } from '../tokens';
-
-export type StepGate = { readonly ready: boolean; readonly reason: string | null };
+import { type LayoutStyle } from '../tokens';
+import { wizardColors, wizardMetrics as m, wizardShadow, type WizardColor } from '../tokens/wizard';
+import { Glyph, Notice, WButton, WIcon, WText, type WizardIconName } from './wizard/kit';
 
 export type CheckInPanelProps = {
   caseRef: string;
   /** Null while the round is not yet known on the device; the tap is then held. */
   inspectionRef: string | null;
-  /** Tells the screen whether Next may enable, and if not, why. Pass a stable function. */
-  onGateChange: (gate: StepGate) => void;
+  /** The case's filed point, for the distance warning; null when the case has none. */
+  site: { readonly latitude: number; readonly longitude: number } | null;
+  /** Called once arrival is saved (held or recorded): the screen moves to step 2. */
+  onArrived: () => void;
   style?: LayoutStyle;
 };
 
-// A bordered callout: icon, title, body and an optional action.
-function Callout({
-  icon,
-  tone,
-  title,
-  body,
-  children,
-}: {
-  icon: IconName;
-  tone: ColorToken;
-  title: string;
-  body?: string;
-  children?: React.ReactNode;
-}) {
+// "1.2 km" / "40 m" with the shared distance words.
+function distanceText(meters: number, t: TFunction): string {
+  if (meters >= 1000) return t('distance.km', { value: (meters / 1000).toFixed(1) });
+  return t('distance.meters', { value: Math.max(1, Math.round(meters / 10) * 10) });
+}
+
+const QUALITY: Record<SignalQuality, { color: WizardColor; icon: WizardIconName | null }> = {
+  good: { color: 'gpsLocked', icon: null },
+  fair: { color: 'gpsWeak', icon: 'signalFair' },
+  weak: { color: 'gpsWeak', icon: 'warning' },
+  searching: { color: 'beige', icon: null },
+};
+
+// The status line under the coordinates: a glyph and the signal in words (179:6378).
+function SignalLine({ quality, accuracyM, t }: { quality: SignalQuality; accuracyM: number | null; t: TFunction }) {
+  const look = QUALITY[quality];
+  const meters = Math.round(accuracyM ?? 0);
+  const text =
+    quality === 'good'
+      ? t('checkin.signal.good', { meters })
+      : quality === 'fair'
+        ? t('checkin.signal.fair', { meters })
+        : quality === 'weak'
+          ? t('checkin.signal.weak')
+          : t('checkin.signal.searching');
   return (
-    <View style={[styles.callout, { borderColor: colors[tone] }]} accessibilityRole="summary">
-      <View style={styles.row}>
-        <Icon name={icon} size="md" color={tone} />
-        <Text variant="subheading" color="ink0" style={styles.flex}>
-          {title}
-        </Text>
-      </View>
-      {body ? (
-        <Text variant="body" color="ink1">
-          {body}
-        </Text>
+    <View style={styles.signal} accessibilityLiveRegion="polite">
+      {quality === 'good' ? (
+        <Glyph name="check" color="gpsLocked" />
+      ) : quality === 'searching' ? (
+        <ActivityIndicator size="small" color={wizardColors.beige} />
+      ) : look.icon !== null ? (
+        <WIcon name={look.icon} size={16} color={look.color} />
       ) : null}
-      {children}
+      <WText variant="lock" color={look.color} align="center" style={styles.shrink}>
+        {text}
+      </WText>
     </View>
   );
 }
 
-// The readout's state word from the fix and the verdict on it.
-function readoutState(fix: LiveFix | null, usable: boolean, failed: boolean): GpsFixState {
-  if (failed) return 'none';
-  if (fix === null) return 'searching';
-  return usable ? 'locked' : 'weak';
-}
-
-// What the server said about the fix's position against the case's zone.
-function zoneLine(insideZone: boolean | null | undefined): string {
-  if (insideZone === true) return 'Inside the case zone';
-  if (insideZone === false) return 'Outside the case zone boundary';
-  return 'Not checked — the zone has no boundary on the server';
-}
-
-// Whether a check-in still held on the device is nearing or past the server's staleness limit.
-function expiryCaption(deviceTimestamp: string, maxAgeHours: number, now: number): string | null {
-  const takenAt = Date.parse(deviceTimestamp);
-  if (Number.isNaN(takenAt)) return null;
-  const remainingHours = maxAgeHours - (now - takenAt) / 3_600_000;
-  if (remainingHours <= 0) {
-    return 'Past the office’s time limit — it will be refused when it sends. Confirm arrival again for a fresh fix.';
-  }
-  if (remainingHours <= 1) {
-    return 'Expires within the hour — send it soon, or confirm arrival again for a fresh fix.';
-  }
-  return null;
-}
-
-// The confirmed check-in, from the server's record of it.
-function ConfirmedCheckIn({ record, gateM }: { record: CheckInRecord; gateM: number }) {
-  const confirmed = record.confirmed;
-  const accuracy = confirmed?.accuracy_m ?? record.accuracyM;
-  const lat = confirmed?.lat ?? record.latitude;
-  const lon = confirmed?.lon ?? record.longitude;
+// The 80px marker: a pulsing beige ring around the pin disc (179:6386).
+function Marker({ still }: { still: boolean }) {
+  const t = useT();
+  const [pulse] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (still) return undefined;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1100, easing: Easing.out(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulse, { toValue: 0, duration: 1100, easing: Easing.in(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse, still]);
+  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.04] });
   return (
-    <SectionCard title="Checked in">
-      <View style={styles.row}>
-        <Icon name="success" size="md" color="syncClear" />
-        <Text variant="subheading" color="syncClear">
-          Received by the office
-        </Text>
+    <View style={styles.marker} accessible accessibilityRole="image" accessibilityLabel={t('checkin.markerA11y')}>
+      <Animated.View style={[styles.ring, { transform: [{ scale: still ? 1 : scale }] }]} />
+      <View style={styles.disc}>
+        <Glyph name="pin" color="accent" />
       </View>
-      {lat !== null && lon !== null ? (
-        <ListRow label="Position" value={`${lat.toFixed(6)}, ${lon.toFixed(6)}`} monospaceValue showDivider />
-      ) : null}
-      <ListRow
-        label="Accuracy"
-        value={`±${Math.round(accuracy)} m (limit ±${Math.round(gateM)} m)`}
-        showDivider
-      />
-      <ListRow
-        label="Fix taken"
-        value={formatDateTime(confirmed?.device_timestamp ?? record.deviceTimestamp) ?? '—'}
-        showDivider
-      />
-      <ListRow label="Recorded by server" value={formatDateTime(confirmed?.server_timestamp) ?? '—'} showDivider />
-      <ListRow label="Zone" value={zoneLine(confirmed?.inside_zone)} />
-    </SectionCard>
+    </View>
   );
 }
 
-// Step 1: the accuracy gate. Blocks below threshold with the reason stated on screen.
-export function CheckInPanel({ caseRef, inspectionRef, onGateChange, style }: CheckInPanelProps) {
-  const { config } = useAppConfig();
+// The location card (179:6372): marker, coordinates, signal, time.
+function LocationCard({
+  latitude,
+  longitude,
+  line,
+  time,
+  still,
+}: {
+  latitude: number | null;
+  longitude: number | null;
+  line: React.ReactNode;
+  time: string | null;
+  still: boolean;
+}) {
+  const t = useT();
+  return (
+    <View style={[styles.card, wizardShadow]}>
+      <Marker still={still} />
+      <WText variant="coords" align="center" selectable>
+        {latitude !== null && longitude !== null ? formatCoordinates(latitude, longitude) : t('gps.coordinatesUnavailable')}
+      </WText>
+      {line}
+      {time !== null ? (
+        <WText variant="timestamp" color="timestamp" align="center">
+          {t('checkin.capturedAt', { time })}
+        </WText>
+      ) : null}
+    </View>
+  );
+}
+
+// After a minute without a usable fix: the "step outside" tips, with the time waited.
+function SlowFixHint({ usable, now }: { usable: boolean; now: number }) {
+  const t = useT();
+  const [since] = useState(() => Date.now());
+  if (usable || now - since <= SLOW_FIX_MS) return null;
+  return <Notice tone="warn" icon="warning" body={t('checkin.detail.slow', { seconds: Math.floor((now - since) / 1000) })} />;
+}
+
+// Whether a held check-in is nearing or past the server's staleness limit.
+function heldExpiry(deviceTimestamp: string, maxAgeHours: number, now: number): PlainKey | null {
+  const takenAt = Date.parse(deviceTimestamp);
+  if (Number.isNaN(takenAt)) return null;
+  const remainingHours = maxAgeHours - (now - takenAt) / 3_600_000;
+  if (remainingHours <= 0) return 'checkin.held.expired';
+  if (remainingHours <= 1) return 'checkin.held.expiring';
+  return null;
+}
+
+// What the verdict on a live fix means, and what to do next.
+function detailKey(fix: LiveFix | null, quality: SignalQuality, usable: boolean, stale: boolean): PlainKey | null {
+  if (fix === null) return 'checkin.detail.searching';
+  if (fix.mocked) return 'checkin.detail.mocked';
+  if (fix.accuracyM === null) return 'checkin.detail.noAccuracy';
+  if (stale) return 'checkin.detail.stale';
+  if (quality === 'fair' && usable) return 'checkin.detail.fair';
+  return null;
+}
+
+// Step 1: the accuracy gate and the arrival record.
+export function CheckInPanel({ caseRef, inspectionRef, site, onArrived, style }: CheckInPanelProps) {
+  const t = useT();
+  const { config, refetch: refetchConfig } = useAppConfig();
   const gateM = config.gpsAccuracyGateM;
   const flagM = config.gpsAccuracyFlagM;
+  const radiusM = config.geofenceRadiusM;
+  const enforced = config.geofenceEnforced;
+
+  // The geofence switch can change at any time, so step 1 reads it fresh.
+  useEffect(() => {
+    void refetchConfig();
+  }, [refetchConfig]);
   const permission = useLocationPermission();
   const record = useCheckInRecord(caseRef, inspectionRef);
   const detail = useInspectionDetail(inspectionRef);
 
-  const confirmed = record?.state === 'confirmed';
-  const live = useLiveFix(permission.status === 'granted' && !confirmed);
+  const saved = record?.state === 'confirmed' || record?.state === 'held';
+  const live = useLiveFix(permission.status === 'granted' && record?.state !== 'confirmed');
   const [now, setNow] = useState(() => Date.now());
   const [sending, setSending] = useState(false);
 
   // The fix's age is judged every second, so a watch that goes quiet stops being "live".
   useEffect(() => {
-    if (confirmed) return undefined;
+    if (record?.state === 'confirmed') return undefined;
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
-  }, [confirmed]);
+  }, [record?.state]);
 
   // A check-in the server already holds (resumed round) is adopted rather than repeated.
   const serverCheckIns = detail.data?.check_ins ?? [];
@@ -165,77 +204,84 @@ export function CheckInPanel({ caseRef, inspectionRef, onGateChange, style }: Ch
   }, [caseRef, latestServerCheckIn, record?.state, workable]);
 
   const verdict = judgeFix(live.fix, gateM, config.gpsFixMaxAgeMs, now);
-  // Usable but coarser than the flag threshold: allowed, but the office will see it as low-accuracy.
-  const flaggedAccuracyM =
-    verdict.usable && live.fix !== null && live.fix.accuracyM !== null && live.fix.accuracyM > flagM
-      ? live.fix.accuracyM
-      : null;
-  // A held check-in ages toward the server's device_timestamp limit while it waits to send.
-  const heldExpiry =
-    record?.state === 'held'
-      ? expiryCaption(record.deviceTimestamp, config.deviceTimestampMaxAgeHours, now)
-      : null;
-
-  const ready = record?.state === 'confirmed' || record?.state === 'held';
-  // Granted, but approximate only: every fix is ~km, so it would fail the gate with a confusing number.
-  const approximateOnly = permission.status === 'granted' && (permission.precise === false || live.approximate);
-  const reason = ready
-    ? null
-    : permission.status === 'denied'
-      ? 'Location permission is off, so arrival cannot be recorded.'
-      : approximateOnly
-        ? 'Precise location is off, so arrival cannot be recorded.'
-        : 'Confirm your arrival at the property to continue.';
-  useEffect(() => {
-    onGateChange({ ready, reason });
-  }, [onGateChange, ready, reason]);
+  const accuracy = live.fix?.accuracyM ?? null;
+  const quality = live.fix === null ? 'searching' : signalQuality(accuracy, gateM, flagM);
+  const stale = live.fix !== null && now - live.fix.timestamp > config.gpsFixMaxAgeMs;
+  const distance = siteDistance(live.fix, site, radiusM);
+  const outsideFence = enforced && distance !== null && distance.far;
+  const canConfirm = verdict.usable && !outsideFence;
 
   const onConfirm = async () => {
     const fix = live.fix;
-    if (!verdict.usable || fix === null || fix.accuracyM === null) return;
+    if (!canConfirm || fix === null || fix.accuracyM === null || sending) return;
     setSending(true);
     try {
-      await confirmArrival(caseRef, inspectionRef, {
+      const next = await confirmArrival(caseRef, inspectionRef, {
         latitude: fix.latitude,
         longitude: fix.longitude,
         accuracyM: fix.accuracyM,
         timestamp: fix.timestamp,
       });
+      if (next.state !== 'refused') onArrived();
     } finally {
       setSending(false);
     }
   };
 
-  if (record?.state === 'confirmed') {
+  // Recorded or held: the card shows what was saved, and the one action moves on.
+  if (saved && record !== null) {
+    const confirmed = record.confirmed;
+    const expiry = record.state === 'held' ? heldExpiry(record.deviceTimestamp, config.deviceTimestampMaxAgeHours, now) : null;
     return (
       <View style={[styles.stack, style]}>
-        <ConfirmedCheckIn record={record} gateM={gateM} />
+        <LocationCard
+          latitude={confirmed?.lat ?? record.latitude}
+          longitude={confirmed?.lon ?? record.longitude}
+          still
+          time={formatDateTime(confirmed?.device_timestamp ?? record.deviceTimestamp)}
+          line={
+            <View style={styles.signal}>
+              {record.state === 'confirmed' ? <Glyph name="check" color="gpsLocked" /> : <WIcon name="clock" size={16} color="gpsWeak" />}
+              <WText variant="lock" color={record.state === 'confirmed' ? 'gpsLocked' : 'gpsWeak'} align="center" style={styles.shrink}>
+                {record.state === 'confirmed' ? t('checkin.confirmed') : t('checkin.held.title')}
+              </WText>
+            </View>
+          }
+        />
+        {record.state === 'held' ? (
+          <Notice tone="warn" icon="upload" title={t('checkin.held.title')} body={t('checkin.held.body')}>
+            {expiry !== null ? (
+              <WText variant="note" color="warn">
+                {t(expiry)}
+              </WText>
+            ) : null}
+          </Notice>
+        ) : confirmed?.inside_zone === false ? (
+          <Notice tone="warn" icon="location" body={t('checkin.zone.outside')} />
+        ) : null}
+        <WButton
+          label={expiry === 'checkin.held.expired' ? t('checkin.cta') : t('common.next')}
+          onPress={expiry === 'checkin.held.expired' ? () => void onConfirm() : onArrived}
+          disabled={expiry === 'checkin.held.expired' && !canConfirm}
+          loading={sending}
+          trailing={<Glyph name="chevronRight" />}
+          style={styles.cta}
+        />
       </View>
     );
   }
 
-  if (permission.status === 'checking') {
-    return <Skeleton height={control.textAreaMinHeight} shape="lg" style={style} />;
-  }
-
-  if (permission.status === 'undetermined') {
+  if (permission.status === 'undetermined' || permission.status === 'checking') {
     return (
       <View style={[styles.stack, style]}>
-        <Callout
-          icon="location"
-          tone="brand"
-          title="Location is needed to check in"
-          body={
-            'ICMS records where each check-in and photograph was taken so the inspection can ' +
-            'be verified later. Your position is read only while an inspection step is open.'
-          }
-        >
-          <Button
-            label="Allow location"
+        <Notice tone="info" icon="location" title={t('checkin.perm.title')} body={t('checkin.perm.body')}>
+          <WButton
+            label={t('checkin.perm.allow')}
             onPress={() => void permission.request()}
-            accessibilityHint="Shows the system permission dialog"
+            disabled={permission.status === 'checking'}
+            leading={<WIcon name="location" size={18} />}
           />
-        </Callout>
+        </Notice>
       </View>
     );
   }
@@ -243,149 +289,141 @@ export function CheckInPanel({ caseRef, inspectionRef, onGateChange, style }: Ch
   if (permission.status === 'denied') {
     return (
       <View style={[styles.stack, style]}>
-        <Callout
-          icon="warning"
-          tone="statusOverdue"
-          title="Location is off for ICMS"
-          body={
-            'Arrival cannot be recorded without your position, and photographs need it too. ' +
-            (permission.canAskAgain
-              ? 'Allow location to continue.'
-              : 'Turn on location for ICMS in the system settings, then come back here.')
-          }
-        >
+        <Notice tone="error" icon="location" title={t('checkin.perm.deniedTitle')} body={t('checkin.perm.deniedBody')}>
           {permission.canAskAgain ? (
-            <Button label="Allow location" onPress={() => void permission.request()} />
+            <WButton label={t('checkin.perm.allow')} onPress={() => void permission.request()} leading={<WIcon name="location" size={18} />} />
           ) : (
-            <Button label="Open settings" variant="secondary" onPress={permission.openSettings} />
+            <WButton label={t('checkin.perm.settings')} variant="secondary" onPress={permission.openSettings} leading={<WIcon name="settings" size={18} />} />
           )}
-        </Callout>
+        </Notice>
       </View>
     );
   }
 
+  const approximateOnly = permission.precise === false || live.approximate;
   if (approximateOnly) {
-    // Android 12+ re-asks with an upgrade-to-precise dialog; iOS only changes it in Settings.
     const canUpgradeInApp = Platform.OS === 'android' && permission.canAskAgain;
     return (
       <View style={[styles.stack, style]}>
-        <Callout
-          icon="warning"
-          tone="statusOverdue"
-          title="Precise location is needed"
-          body={
-            'ICMS has been given only your approximate location, which is accurate to about a ' +
-            `kilometre. A check-in must be accurate to ±${Math.round(gateM)} m, so arrival cannot ` +
-            'be recorded. ' +
-            (canUpgradeInApp ? 'Tap Allow precise location, or turn it on in Settings.' : preciseLocationHowTo())
-          }
-        >
+        <Notice tone="error" icon="location" title={t('checkin.perm.preciseTitle')} body={t('checkin.perm.preciseBody')}>
           {canUpgradeInApp ? (
-            <Button label="Allow precise location" onPress={() => void permission.request()} />
+            <WButton label={t('checkin.perm.allowPrecise')} onPress={() => void permission.request()} leading={<WIcon name="location" size={18} />} />
           ) : null}
-          <Button label="Open settings" variant="secondary" onPress={permission.openSettings} />
-        </Callout>
+          <WButton label={t('checkin.perm.settings')} variant="secondary" onPress={permission.openSettings} leading={<WIcon name="settings" size={18} />} />
+        </Notice>
       </View>
     );
   }
 
+  const detailLine = detailKey(live.fix, quality, verdict.usable, stale);
+  const refusal = record?.state === 'refused' && record.error !== null ? checkInRefusalKey(record.error.code, record.error.field ?? null) : null;
+
   return (
     <View style={[styles.stack, style]}>
-      {live.servicesEnabled === false ? (
-        <Callout
-          icon="offline"
-          tone="statusOverdue"
-          title="Location services are switched off"
-          body="Turn on Location in the handset's quick settings. This screen picks up the fix as soon as it is on."
-        />
-      ) : null}
+      {live.servicesEnabled === false ? <Notice tone="error" icon="offline" body={t('checkin.servicesOff')} /> : null}
+      {refusal !== null ? <Notice tone="error" title={t('checkin.refused.title')} body={t(refusal)} /> : null}
 
-      <GpsReadout
-        state={readoutState(live.fix, verdict.usable, live.error !== null)}
-        latitude={live.fix?.latitude}
-        longitude={live.fix?.longitude}
-        accuracyMeters={live.fix?.accuracyM ?? undefined}
-        thresholdMeters={gateM}
-        capturedAtLabel={
-          live.fix ? (formatDateTime(new Date(live.fix.timestamp).toISOString()) ?? undefined) : undefined
-        }
+      <LocationCard
+        latitude={live.fix?.latitude ?? null}
+        longitude={live.fix?.longitude ?? null}
+        still={verdict.usable}
+        time={live.fix ? formatDateTime(new Date(live.fix.timestamp).toISOString()) : null}
+        line={<SignalLine quality={quality} accuracyM={accuracy} t={t} />}
       />
 
-      {flaggedAccuracyM !== null ? (
-        <Text variant="caption" color="priorityMedium" accessibilityLiveRegion="polite">
-          {`Accuracy is ±${Math.round(flaggedAccuracyM)} m. This location will be recorded as low accuracy — you can still confirm arrival.`}
-        </Text>
+      {quality === 'weak' && live.fix !== null ? (
+        <Notice
+          tone="warn"
+          icon="warning"
+          body={t('checkin.detail.weak', { meters: Math.round(accuracy ?? 0), needed: Math.round(gateM) })}
+        />
       ) : null}
-
-      {live.error !== null ? (
-        <Text variant="caption" color="statusOverdue" accessibilityLiveRegion="polite">
-          {`The position could not be read: ${live.error}`}
-        </Text>
+      {/* Remounted whenever the fix turns usable or unusable, so it times the current spell. */}
+      <SlowFixHint key={String(verdict.usable)} usable={verdict.usable} now={now} />
+      {detailLine !== null ? (
+        <WText variant="note" color={quality === 'fair' ? 'warn' : 'beige'} align="center" accessibilityLiveRegion="polite">
+          {t(detailLine)}
+        </WText>
       ) : null}
-
-      {record?.state === 'held' ? (
-        <Callout
-          icon="sync"
-          tone="syncPending"
-          title="Arrival saved on this device — not yet received by the office"
-          body={
-            (record.error?.message ?? 'It will be sent as soon as the inspection round is open.') +
-            ' It is sent automatically when you have signal; you can carry on meanwhile.'
-          }
-        >
-          {heldExpiry !== null ? (
-            <Text variant="caption" color="priorityMedium" accessibilityLiveRegion="polite">
-              {heldExpiry}
-            </Text>
-          ) : null}
-        </Callout>
-      ) : null}
-
-      {record?.state === 'refused' && record.error !== null ? (
-        <Callout
-          icon="alert"
-          tone="statusOverdue"
-          title={record.error.code === 'poor_accuracy' ? 'The office refused this fix' : 'Check-in was not accepted'}
-          body={`${record.error.message} (${record.error.code})`}
-        >
-          <Text variant="caption" color="ink2">
-            {record.error.code === 'poor_accuracy'
-              ? 'Wait for the accuracy reading above to improve, then confirm again.'
-              : 'Nothing was recorded. Resolve the problem above, then confirm again.'}
-          </Text>
-        </Callout>
-      ) : null}
-
-      {record?.state !== 'held' ? (
-        <View style={styles.stack}>
-          <Button
-            label="Confirm Arrival"
-            onPress={() => void onConfirm()}
-            disabled={!verdict.usable}
-            loading={sending}
-            leadingIcon={<Icon name="location" size="md" color="inkOnMuted" />}
-            accessibilityHint="Records that you are at the property, with this position and time"
+      {live.error !== null ? <Notice tone="error" body={t('checkin.readError')} /> : null}
+      {distance !== null && enforced ? (
+        distance.far ? (
+          <Notice
+            tone="warn"
+            icon="location"
+            body={t('checkin.distance.gate', { meters: Math.round(distance.meters), radius: Math.round(radiusM) })}
           />
-          {!verdict.usable ? (
-            <Text variant="caption" color="priorityMedium" accessibilityLiveRegion="polite">
-              {verdict.reason}
-            </Text>
-          ) : null}
-        </View>
+        ) : (
+          <View style={styles.near}>
+            <WIcon name="location" size={16} color="ok" />
+            <WText variant="note" color="ok" style={styles.shrink}>
+              {t('checkin.distance.within', { meters: Math.round(distance.meters), radius: Math.round(radiusM) })}
+            </WText>
+          </View>
+        )
+      ) : distance !== null ? (
+        distance.far ? (
+          <Notice tone="warn" icon="location" body={t('checkin.distance.far', { distance: distanceText(distance.meters, t) })} />
+        ) : (
+          <View style={styles.near}>
+            <WIcon name="location" size={16} color="ok" />
+            <WText variant="note" color="ok" style={styles.shrink}>
+              {t('checkin.distance.near', { distance: distanceText(distance.meters, t) })}
+            </WText>
+          </View>
+        )
       ) : null}
+
+      <WButton
+        label={t('checkin.cta')}
+        onPress={() => void onConfirm()}
+        disabled={!canConfirm}
+        loading={sending}
+        trailing={<Glyph name="chevronRight" />}
+        accessibilityHint={t('checkin.ctaHint')}
+        style={styles.cta}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  stack: { gap: space[3] },
-  flex: { flex: 1 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  callout: {
-    gap: space[2],
-    padding: space[4],
-    borderRadius: radius.md,
-    borderWidth: control.borderWidth,
-    backgroundColor: colors.surface1,
+  stack: { gap: m.gap },
+  shrink: { flexShrink: 1 },
+  card: {
+    minHeight: m.locationCard,
+    marginTop: m.locationCardTop - m.gap,
+    marginBottom: 24,
+    paddingTop: 24,
+    paddingBottom: 22,
+    paddingHorizontal: 16,
+    gap: 6,
+    alignItems: 'center',
+    borderRadius: m.cardRadius,
+    borderWidth: m.hairline,
+    borderColor: wizardColors.cardBorder,
+    backgroundColor: wizardColors.card,
   },
+  marker: { width: m.marker, height: m.marker, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  ring: {
+    position: 'absolute',
+    width: m.marker,
+    height: m.marker,
+    borderRadius: m.marker / 2,
+    backgroundColor: wizardColors.pulse,
+    opacity: 0.6,
+  },
+  disc: {
+    width: m.markerDisc,
+    height: m.markerDisc,
+    borderRadius: m.markerDisc / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: m.hairline,
+    borderColor: wizardColors.pinDiscBorder,
+    backgroundColor: wizardColors.pinDisc,
+  },
+  signal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  near: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  cta: { flex: 0, alignSelf: 'stretch' },
 });

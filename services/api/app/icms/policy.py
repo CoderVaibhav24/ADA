@@ -17,7 +17,6 @@ from ada_core.models_icms import (
     PolicyRevision,
     PolicyRole,
     RolePermission,
-    TransitionRole,
     WorkflowTransition,
 )
 from sqlalchemy import Engine
@@ -25,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from .workflow import AMENDABLE_ROLES, TRANSITIONS, Action, Role, Status, Transition
+from .workflow import AMEND_PERMISSION, TRANSITIONS, Action, Status, Transition
 
 __all__ = [
     "AMEND_PERMISSION",
@@ -51,12 +50,9 @@ CHANNEL = "icms_policy"
 _LISTEN = 'LISTEN "icms_policy"'
 _NOTIFY = sa.text("SELECT pg_notify('icms_policy', :payload)")
 
-# Not seeded by 0003. Until a migration adds it, `check_amendable` falls back to
-# workflow.AMENDABLE_ROLES; the moment it exists the grant table governs.
-AMEND_PERMISSION = "case.amend"
-
 # The code side of the RBAC seed, mirroring 0003_policy_tables.py plus
-# 0008_imagery_permissions.py. A test asserts
+# 0008_imagery_permissions.py, 0010_atomic_permissions.py and the revokes in
+# 0012_change_detection_nodal_only.py. A test asserts
 # the two still agree, so a grant changed in one place and not the other fails
 # the build instead of behaving differently on an unmigrated database.
 PERMISSIONS: tuple[str, ...] = (
@@ -64,6 +60,20 @@ PERMISSIONS: tuple[str, ...] = (
     "zone_assignment.manage", "case.read", "case.export", "inspection.read",
     "evidence.read", "notice.read", "dashboard.read", "policy.read",
     "policy.manage", "user.read", "user.manage", "imagery.read", "imagery.write",
+    # 0010: atomic codes, seeded ahead of the checks that will read them.
+    "dashboard.access", "change_detection.access", "complaint_create.access",
+    "complaints.access", "inspections.access", "notices.access", "reports.access",
+    "administration.access", "officers.access",
+    "imagery.export", "imagery.run",
+    "case.raise", "case.assign", "case.reassign", "case.reject", "case.amend",
+    "case.hand_over", "case.confirm", "case.close",
+    "evidence.write",
+    "inspection.export", "inspection.open_round", "inspection.check_in",
+    "inspection.record_findings", "inspection.submit", "inspection.verify",
+    "inspection.request_resurvey",
+    "notice.export", "notice.issue", "notice.download",
+    "report.read", "report.export",
+    "user.create", "user.update", "user.roles", "user.password", "user.disable",
 )
 
 DEFAULT_GRANTS: Mapping[str, frozenset[str]] = MappingProxyType({
@@ -75,26 +85,55 @@ DEFAULT_GRANTS: Mapping[str, frozenset[str]] = MappingProxyType({
     # Admin holds no transition in `workflow`, so it can act on no case. That
     # is what the router module docstrings mean by administration rather than
     # enforcement. Do not narrow this without changing that decision first.
-    "super-admin": frozenset(PERMISSIONS),
+    # The 0010 transition codes and `case.amend` are withheld for the same reason.
+    "super-admin": frozenset(PERMISSIONS) - {
+        AMEND_PERMISSION,
+        "case.raise", "case.assign", "case.reassign", "case.reject", "case.hand_over",
+        "case.confirm", "case.close", "evidence.write", "inspection.open_round",
+        "inspection.check_in", "inspection.record_findings", "inspection.submit",
+        "inspection.verify", "inspection.request_resurvey", "notice.issue",
+        # 0012: change detection is the nodal officer's alone.
+        "change_detection.access", "imagery.run", "imagery.write", "imagery.export",
+    },
     "pcs-nodal-officer": frozenset({
         "reference.read", "zone.read", "zone_assignment.read", "case.read",
         "case.export", "inspection.read", "evidence.read", "notice.read",
         "dashboard.read", "imagery.read", "imagery.write",
+        "dashboard.access", "change_detection.access", "complaint_create.access",
+        "complaints.access", "inspections.access", "notices.access", "reports.access",
+        "imagery.export", "imagery.run",
+        "case.raise", "case.assign", "case.reassign", "case.reject", "case.amend",
+        "case.hand_over",
+        "inspection.export", "inspection.open_round", "inspection.verify",
+        "inspection.request_resurvey",
+        "notice.export", "notice.download", "report.read", "report.export",
     }),
     "field-surveyor": frozenset({
         "reference.read", "zone.read", "case.read", "inspection.read", "evidence.read",
         "imagery.read",
+        "complaint_create.access", "complaints.access",
+        "inspections.access", "case.raise", "evidence.write",
+        "inspection.open_round", "inspection.check_in", "inspection.record_findings",
+        "inspection.submit",
     }),
     "ada-project-lead": frozenset({
         "reference.read", "zone.read", "case.read", "case.export", "inspection.read",
-        "evidence.read", "notice.read", "dashboard.read", "imagery.read", "imagery.write",
+        "evidence.read", "notice.read", "dashboard.read", "imagery.read",
+        "dashboard.access", "complaint_create.access",
+        "complaints.access", "inspections.access", "notices.access", "reports.access",
+        "case.raise", "case.confirm", "case.close",
+        "inspection.export", "notice.export", "notice.issue", "notice.download",
+        "report.read", "report.export",
     }),
-    "public": frozenset(),
+    "public": frozenset({"case.raise"}),
 })
 
 _CODE_REVISION = -1
 
-_ROLE_VALUES = frozenset(role.value for role in Role)
+# The code seed's action -> permission, for a row whose permission_cd is NULL.
+_SEED_PERMISSION: Mapping[Action, str] = MappingProxyType(
+    {t.action: t.permission for t in TRANSITIONS}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +144,6 @@ class PolicySnapshot:
     source: str
     permissions: frozenset[str]
     grants: Mapping[str, frozenset[str]]
-    amendable_roles: frozenset[Role]
     transitions: tuple[Transition, ...]
     by_key: Mapping[tuple[Status | None, Action], Transition]
     by_source: Mapping[Status | None, tuple[Transition, ...]]
@@ -155,21 +193,11 @@ def _assemble(
         by_key[key] = transition
         by_source.setdefault(transition.source, []).append(transition)
 
-    amendable = (
-        frozenset(
-            Role(role) for role in grants
-            if AMEND_PERMISSION in grants[role] and role in _ROLE_VALUES
-        )
-        if AMEND_PERMISSION in permissions
-        else AMENDABLE_ROLES
-    )
-
     return PolicySnapshot(
         revision=revision,
         source=source,
         permissions=permissions,
         grants=MappingProxyType(dict(grants)),
-        amendable_roles=amendable,
         transitions=transitions,
         by_key=MappingProxyType(by_key),
         by_source=MappingProxyType({k: tuple(v) for k, v in by_source.items()}),
@@ -187,16 +215,17 @@ def from_code() -> PolicySnapshot:
     )
 
 
-# A row the enums cannot spell is dropped rather than raising: one bad row must
-# not leave the process with no policy at all.
-def _to_transition(row, roles: Iterable[str]) -> Transition | None:
+# A row the enums cannot spell, or whose permission is unknown, is dropped rather
+# than raising: one bad row must not leave the process with no policy at all.
+def _to_transition(row, permissions: frozenset[str]) -> Transition | None:
     try:
-        return Transition(
-            action=Action(row.action_cd),
+        action = Action(row.action_cd)
+        transition = Transition(
+            action=action,
             source=None if row.source_status is None else Status(row.source_status),
             target=Status(row.target_status),
             stage_no=int(row.stage_no),
-            roles=frozenset(Role(r) for r in roles if r in _ROLE_VALUES),
+            permission=row.permission_cd or _SEED_PERMISSION.get(action, ""),
             assignee_only=bool(row.assignee_only),
             requires=tuple(row.requires or ()),
             opens_round=bool(row.opens_round),
@@ -205,6 +234,11 @@ def _to_transition(row, roles: Iterable[str]) -> Transition | None:
     except ValueError:
         log.warning("policy transition %s is not a status or action this build knows", row.id)
         return None
+    if transition.permission not in permissions:
+        log.warning("policy transition %s names unknown permission %r",
+                    row.id, transition.permission)
+        return None
+    return transition
 
 
 def load(db: Session) -> PolicySnapshot:
@@ -236,16 +270,11 @@ def load(db: Session) -> PolicySnapshot:
         .where(WorkflowTransition.active.is_(True))
         .order_by(WorkflowTransition.sort_order, WorkflowTransition.id)
     ).scalars().all()
-    role_rows = db.execute(
-        sa.select(TransitionRole.transition_id, TransitionRole.role_cd)
-    ).all()
-    roles_by_transition: dict[int, list[str]] = {}
-    for transition_id, role_cd in role_rows:
-        roles_by_transition.setdefault(transition_id, []).append(role_cd)
 
+    known = permission_codes or frozenset(PERMISSIONS)
     loaded: list[Transition] = []
     for row in transition_rows:
-        built = _to_transition(row, roles_by_transition.get(row.id, ()))
+        built = _to_transition(row, known)
         if built is not None:
             loaded.append(built)
 
@@ -253,7 +282,7 @@ def load(db: Session) -> PolicySnapshot:
     return _assemble(
         revision=revision if revision is not None else _CODE_REVISION,
         source="database" if all(from_db) else "partial" if any(from_db) else "code",
-        permissions=permission_codes or frozenset(PERMISSIONS),
+        permissions=known,
         grants=grants or DEFAULT_GRANTS,
         transitions=tuple(loaded) or TRANSITIONS,
     )

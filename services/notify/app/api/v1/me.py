@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import CurrentUserSub, DbSession
 from app.models import Channel, Notification, Project, PushDevice, Template
 from app.rendering import TemplateError, render_message
+from app.routing import routing_data
 from app.schemas import (
     DeviceRegister,
     DeviceResponse,
@@ -143,7 +144,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         ) from exc
 
 
-# The push template's text for an inbox row, or (None, None) if there is none.
+# The inbox text for a row: the in-app template, else the push one, else (None, None).
 async def _display_text(
     session: AsyncSession,
     cache: dict,
@@ -156,19 +157,22 @@ async def _display_text(
     lookup = (project_id, key, locale)
     if lookup not in cache:
         template = None
-        for candidate in (locale, "en") if locale != "en" else ("en",):
-            template = await session.scalar(
-                select(Template)
-                .where(
-                    Template.project_id == project_id,
-                    Template.key == key,
-                    Template.channel == Channel.PUSH,
-                    Template.locale == candidate,
-                    Template.active.is_(True),
+        for channel in (Channel.INAPP, Channel.PUSH):
+            for candidate in (locale, "en") if locale != "en" else ("en",):
+                template = await session.scalar(
+                    select(Template)
+                    .where(
+                        Template.project_id == project_id,
+                        Template.key == key,
+                        Template.channel == channel,
+                        Template.locale == candidate,
+                        Template.active.is_(True),
+                    )
+                    .order_by(Template.version.desc())
+                    .limit(1)
                 )
-                .order_by(Template.version.desc())
-                .limit(1)
-            )
+                if template is not None:
+                    break
             if template is not None:
                 break
         cache[lookup] = (template.subject, template.body) if template else None
@@ -195,6 +199,10 @@ async def list_my_notifications(
     cursor: Annotated[str | None, Query(max_length=200)] = None,
     project: Annotated[
         str | None, Query(max_length=64, description="Filter by project key, e.g. 'ada'")
+    ] = None,
+    locale: Annotated[
+        str | None,
+        Query(max_length=16, description="Render title/body in this locale, e.g. 'hi'"),
     ] = None,
 ) -> InboxPage:
     query = (
@@ -231,7 +239,7 @@ async def list_my_notifications(
             cache,
             project_id=notification.project_id,
             key=notification.template_key,
-            locale=notification.locale,
+            locale=locale or notification.locale,
             payload=payload,
         )
         case_ref = payload.get("case_ref")
@@ -246,6 +254,7 @@ async def list_my_notifications(
                 read=notification.read_at is not None,
                 read_at=notification.read_at,
                 created_at=notification.created_at,
+                data=routing_data(template_key=notification.template_key, payload=payload),
             )
         )
 

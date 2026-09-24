@@ -13,22 +13,31 @@ import type { ReactNode } from "react";
 import { cn } from "cn";
 
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Icon, type IconKey } from "@/lib/icons";
 
 import { BAND_TEXT } from "./bands";
 import type { ConfidenceBand } from "./model";
 
 /**
- * A card in the 280px right column: Layer Controls, Detected Changes, Legend.
+ * A collapsible card in the right column: Layer Controls, Detected Changes,
+ * Legend, Detection Details.
  *
  * The heading is Inter Medium, uppercase and letter-spaced over a hairline rule
- * in the accent — measured on 17:4836. It is a real heading element so the
- * three cards are three landmarks to a screen reader rather than three divs.
+ * in the accent — measured on 17:4836. It is a real heading element whose
+ * content is the open/close button; `action` sits beside it, never inside.
  */
 export function PanelSection({
   title,
   headingId,
   action,
+  toolbar,
   children,
   className,
   bodyClassName,
@@ -36,26 +45,39 @@ export function PanelSection({
   title: ReactNode;
   headingId?: string;
   action?: ReactNode;
+  /** A full-width row above the heading, e.g. search and hide-panel. */
+  toolbar?: ReactNode;
   children: ReactNode;
   className?: string;
   bodyClassName?: string;
 }) {
   return (
-    <section
-      aria-labelledby={headingId}
-      className={cn("flex min-h-0 flex-col border-b border-line px-3.5 py-3", className)}
-    >
-      <div className="flex items-center justify-between gap-2 border-b border-accent-soft-border pb-2">
-        <h2
-          id={headingId}
-          className="truncate text-sm font-medium tracking-wider text-ochre-500 uppercase"
-        >
-          {title}
-        </h2>
-        {action}
-      </div>
-      <div className={cn("min-h-0 pt-3", bodyClassName)}>{children}</div>
-    </section>
+    <Collapsible asChild defaultOpen>
+      <section
+        aria-labelledby={headingId}
+        className={cn("flex flex-col border-b border-line px-3.5 py-3", className)}
+      >
+        {toolbar && <div className="pb-2">{toolbar}</div>}
+        <div className="flex items-center justify-between gap-2 border-b border-accent-soft-border pb-2">
+          <h2
+            id={headingId}
+            className="min-w-0 flex-1 text-sm font-medium tracking-wider text-ochre-500 uppercase"
+          >
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-xs text-start uppercase focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none">
+              <span className="truncate">{title}</span>
+              <Icon
+                name="form.chevronDown"
+                className="size-4 shrink-0 transition-transform group-data-[state=closed]:rotate-180"
+              />
+            </CollapsibleTrigger>
+          </h2>
+          {action}
+        </div>
+        <CollapsibleContent className={cn("pt-3", bodyClassName)}>
+          {children}
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
   );
 }
 
@@ -96,7 +118,9 @@ export function ConfidenceReading({
   className?: string;
 }) {
   return (
-    <span className={cn("flex shrink-0 items-baseline gap-1.5", className)}>
+    // relative: sr-only is absolutely positioned, and without a positioned
+    // parent every row's copy stacks up as document overflow (a page scrollbar).
+    <span className={cn("relative flex shrink-0 items-baseline gap-1.5", className)}>
       <span className="sr-only">{srText}</span>
       <span aria-hidden className={cn("text-sm font-medium tabular", BAND_TEXT[band])}>
         {percentText}
@@ -230,6 +254,55 @@ export function Failure({
         <Button variant="outline" size="sm" onClick={onRetry}>
           <Icon name="action.retry" className="size-4" />
           {retryLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// The detection search; moved from the toolbar into the side panel header on 2026-09-24.
+export function DetectionSearch({
+  value,
+  onChange,
+  label,
+  placeholder,
+  clearLabel,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  placeholder: string;
+  clearLabel: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("relative", className)}>
+      <Label htmlFor="cd-search" className="sr-only">
+        {label}
+      </Label>
+      <Icon
+        name="nav.search"
+        aria-hidden
+        className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-fg-faint"
+      />
+      <Input
+        id="cd-search"
+        type="search"
+        value={value}
+        placeholder={placeholder}
+        className="ps-9 pe-9"
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {value !== "" && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={clearLabel}
+          className="absolute end-2 top-1/2 -translate-y-1/2"
+          onClick={() => onChange("")}
+        >
+          <Icon name="action.clear" />
         </Button>
       )}
     </div>

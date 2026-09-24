@@ -426,7 +426,7 @@ def _last_round(db: Session, case_id: int):
     return db.execute(
         select(
             Inspection.id, Inspection.inspection_ref, Inspection.measured_area_sqm,
-            Inspection.occupant_name,
+            Inspection.occupant_name, Inspection.police_station,
         )
         .where(Inspection.case_id == case_id)
         .order_by(Inspection.round_no.desc(), Inspection.id.desc())
@@ -597,7 +597,8 @@ def _issue_rows(
                    else row.khasra_no),
         village_lgd_code=row.village_lgd_code,
         ulpin=row.ulpin,
-        police_station=row.police_station,
+        police_station=row.police_station or (
+            round_row.police_station if round_row is not None else None),
         district=row.district,
         pin_code=row.pin_code,
         zone_cd=row.zone_cd,

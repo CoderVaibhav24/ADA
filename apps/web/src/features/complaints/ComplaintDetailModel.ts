@@ -51,14 +51,48 @@ export const CASE_ACTION_ORDER = [
   "close",
 ] as const;
 
-/** The two this screen owns a dialog for. Everything else belongs to another screen. */
+/** The assign pair, sharing one dialog. Reject and close are `ENDING_ACTIONS`. */
 export const BUILT_ACTIONS = ["assign", "reassign"] as const;
 
 export type BuiltAction = (typeof BUILT_ACTIONS)[number];
 
+/** The two terminal actions, each with its own reason dialog on this screen. */
+export const ENDING_ACTIONS = ["reject", "close"] as const;
+
+export type EndingAction = (typeof ENDING_ACTIONS)[number];
+
+/** `case_schemas.REJECT_REASONS` and `CLOSE_OUTCOMES`, the codes ada-core 0022 seeds. */
+export const REJECT_REASONS = [
+  "false_complaint",
+  "duplicate",
+  "outside_jurisdiction",
+  "no_violation_found",
+  "other",
+] as const;
+
+export const CLOSE_OUTCOMES = [
+  "demolished_by_owner",
+  "demolished_by_authority",
+  "regularised",
+  "court_case_filed",
+  "sealed",
+  "other",
+] as const;
+
+/** `case_schemas.OTHER_REMARKS_MIN`: remarks this long are required when the code is `other`. */
+export const OTHER_REMARKS_MIN = 10;
+
+/** Whether the ending form may be sent: a code chosen, and remarks when that code is `other`. */
+export function endingIncomplete(code: string, remarks: string): boolean {
+  if (code === "") return true;
+  return code === "other" && remarks.trim().length < OTHER_REMARKS_MIN;
+}
+
 export type CaseActionSet = {
   /** Offered by the server AND buildable here. */
   built: BuiltAction[];
+  /** Reject / close, offered by the server; each opens its own dialog. */
+  endings: EndingAction[];
   /** Offered by the server, owned by another screen. Drawn, disabled, by code. */
   offered: string[];
 };
@@ -67,17 +101,17 @@ export type CaseActionSet = {
 export function orderedCaseActions(allowed: readonly string[]): CaseActionSet {
   const offeredSet = new Set(allowed);
   const built = BUILT_ACTIONS.filter((action) => offeredSet.has(action));
+  const endings = ENDING_ACTIONS.filter((action) => offeredSet.has(action));
+  const own: readonly string[] = [...BUILT_ACTIONS, ...ENDING_ACTIONS];
 
-  const known = CASE_ACTION_ORDER.filter(
-    (code) => offeredSet.has(code) && !(BUILT_ACTIONS as readonly string[]).includes(code),
-  );
+  const known = CASE_ACTION_ORDER.filter((code) => offeredSet.has(code) && !own.includes(code));
   // A transition added to the workflow after this build keeps its place at the
   // end rather than being dropped, because dropping it hides a policy change.
   const unlisted = allowed.filter(
     (code) => !(CASE_ACTION_ORDER as readonly string[]).includes(code),
   );
 
-  return { built: [...built], offered: [...known, ...unlisted] };
+  return { built: [...built], endings: [...endings], offered: [...known, ...unlisted] };
 }
 
 /** Which transition the assign endpoint will run, decided the way the server decides it. */
@@ -122,6 +156,25 @@ export const CASE_NOT_FOUND = "case_not_found";
  * Every round of the case, oldest first — round 1 is what round 2 was opened to
  * correct, and it has to stay legible after round 2 exists.
  */
+/** The occupant and property facts a surveyor records on a round. */
+export const SURVEYED_FIELDS = [
+  "occupant_name",
+  "occupant_phone",
+  "property_type_cd",
+  "floor_count",
+  "police_station",
+] as const;
+
+// The newest round that recorded any surveyed fact, or null when none has.
+export function surveyedRound(rounds: readonly CaseRound[]): CaseRound | null {
+  const newestFirst = roundsAscending(rounds).reverse();
+  return (
+    newestFirst.find((round) =>
+      SURVEYED_FIELDS.some((field) => round[field] !== null && round[field] !== undefined && round[field] !== ""),
+    ) ?? null
+  );
+}
+
 export function roundsAscending(rounds: readonly CaseRound[]): CaseRound[] {
   return [...rounds].sort(
     (a, b) => a.round_no - b.round_no || a.inspection_ref.localeCompare(b.inspection_ref),

@@ -78,6 +78,8 @@ export async function uploadCapture(
     updateCapture(record.id, {
       state: 'failed',
       lastError: 'The file is no longer on the device.',
+      lastErrorCode: 'file_missing',
+      lastErrorField: null,
       nextAttemptAt: null,
     });
     return 'retry_scheduled';
@@ -103,6 +105,8 @@ export async function uploadCapture(
         state: 'uploaded',
         uploadedAt: new Date().toISOString(),
         lastError: null,
+        lastErrorCode: null,
+        lastErrorField: null,
         nextAttemptAt: null,
         refusedByServer: false,
         serverEvidenceId: stored === null ? null : String(stored.id),
@@ -123,11 +127,14 @@ export async function uploadCapture(
       result.status !== 408 &&
       result.status !== 429;
     const attempts = record.attempts + 1;
+    const failure = errorOf(result.status, result.body);
     updateCapture(record.id, {
       state: 'failed',
       attempts,
       refusedByServer: refused,
-      lastError: errorMessage(result.status, result.body),
+      lastError: failure.message,
+      lastErrorCode: failure.code,
+      lastErrorField: failure.field,
       nextAttemptAt:
         refused || attempts >= currentAppConfig().uploadMaxAttempts ? null : nextAttemptAt(attempts),
     });
@@ -139,6 +146,8 @@ export async function uploadCapture(
       attempts,
       refusedByServer: false,
       lastError: cause instanceof Error ? cause.message : 'The upload failed.',
+      lastErrorCode: 'network',
+      lastErrorField: null,
       nextAttemptAt:
         attempts >= currentAppConfig().uploadMaxAttempts ? null : nextAttemptAt(attempts),
     });
@@ -185,15 +194,17 @@ function parseEvidence(body: string): { id: number; geotagFlagged: boolean } | n
   }
 }
 
-// The server's own message from the `/api/icms/*` envelope, with its code for support.
-function errorMessage(status: number, body: string): string {
+// The server's message, code and field from the `/api/icms/*` envelope. Kept for support; the screen shows words.
+function errorOf(status: number, body: string): { message: string; code: string; field: string | null } {
   try {
     const parsed: unknown = JSON.parse(body);
-    if (isErrorEnvelope(parsed)) return `${parsed.error.message} (${parsed.error.code})`;
+    if (isErrorEnvelope(parsed)) {
+      return { message: parsed.error.message, code: parsed.error.code, field: parsed.error.field ?? null };
+    }
   } catch {
     // Not JSON: a proxy page. Fall through to the status line.
   }
-  return `The server answered ${status}.`;
+  return { message: `The server answered ${status}.`, code: `http_${status}`, field: null };
 }
 
 // Moves a failed capture back to the front of the queue, on the surveyor's say-so.

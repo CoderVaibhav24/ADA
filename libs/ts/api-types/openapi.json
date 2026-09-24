@@ -15,6 +15,10 @@
             "title": "Opens Round",
             "type": "boolean"
           },
+          "permission": {
+            "title": "Permission",
+            "type": "string"
+          },
           "requires": {
             "items": {
               "type": "string"
@@ -44,6 +48,7 @@
         },
         "required": [
           "action",
+          "permission",
           "source_status",
           "target_status",
           "stage_no",
@@ -188,6 +193,16 @@
             "title": "Device Timestamp Max Age Hours",
             "type": "number"
           },
+          "geofence_enforced": {
+            "description": "When true a check-in farther than `geofence_radius_m` from the case location is refused 422 `outside_geofence`. Held in `icms_runtime_setting`; a Super Admin switches it.",
+            "title": "Geofence Enforced",
+            "type": "boolean"
+          },
+          "geofence_radius_m": {
+            "description": "Check-in geofence radius around the case location, in metres. When not enforced it is only the far-from-site warning.",
+            "title": "Geofence Radius M",
+            "type": "number"
+          },
           "gps_accuracy_flag_m": {
             "description": "Evidence with a fix worse than this is stored and marked `geotag_flagged`. Capture it anyway — this is an annotation, not a refusal.",
             "title": "Gps Accuracy Flag M",
@@ -214,9 +229,166 @@
           "gps_accuracy_flag_m",
           "device_timestamp_max_age_hours",
           "minimum_photo_count",
-          "maximum_photo_count"
+          "maximum_photo_count",
+          "geofence_enforced",
+          "geofence_radius_m"
         ],
         "title": "AppConfigOut",
+        "type": "object"
+      },
+      "AssignableRoleOut": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "label_hi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Hi"
+          },
+          "role_cd": {
+            "title": "Role Cd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_cd",
+          "label",
+          "label_hi",
+          "description"
+        ],
+        "title": "AssignableRoleOut",
+        "type": "object"
+      },
+      "AssigneeCandidate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role_cds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Role Cds",
+            "type": "array"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "username",
+          "role_cds"
+        ],
+        "title": "AssigneeCandidate",
+        "type": "object"
+      },
+      "AssigneeOptions": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AssigneeCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/AssigneeRole"
+            },
+            "title": "Roles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "roles",
+          "candidates"
+        ],
+        "title": "AssigneeOptions",
+        "type": "object"
+      },
+      "AssigneeRole": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "label_hi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Hi"
+          },
+          "role_cd": {
+            "title": "Role Cd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_cd",
+          "label"
+        ],
+        "title": "AssigneeRole",
+        "type": "object"
+      },
+      "Body_import_boundaries_api_icms_admin_geo_import_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "One .kml or .kmz, at most 50 MB.",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_boundaries_api_icms_admin_geo_import_post",
         "type": "object"
       },
       "Body_upload_raster_api_projects__project_id__rasters_post": {
@@ -282,6 +454,138 @@
           "file"
         ],
         "title": "Body_upload_raster_api_projects__project_id__rasters_post",
+        "type": "object"
+      },
+      "BoundaryCounts": {
+        "properties": {
+          "parcels": {
+            "$ref": "#/components/schemas/LayerCounts"
+          },
+          "reserved": {
+            "$ref": "#/components/schemas/LayerCounts"
+          },
+          "villages": {
+            "$ref": "#/components/schemas/LayerCounts"
+          },
+          "zones": {
+            "$ref": "#/components/schemas/LayerCounts"
+          }
+        },
+        "required": [
+          "zones",
+          "villages",
+          "parcels",
+          "reserved"
+        ],
+        "title": "BoundaryCounts",
+        "type": "object"
+      },
+      "BoundaryImportOut": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/BoundaryCounts"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "import_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The icms_boundary_import row; null on a dry run.",
+            "title": "Import Id"
+          },
+          "rejected": {
+            "items": {
+              "$ref": "#/components/schemas/PlacemarkIssue"
+            },
+            "title": "Rejected",
+            "type": "array"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "warnings": {
+            "description": "Loaded, but worth a look: a repaired ring, a parcel outside its village.",
+            "items": {
+              "$ref": "#/components/schemas/PlacemarkIssue"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "import_id",
+          "filename",
+          "sha256",
+          "dry_run",
+          "counts",
+          "rejected",
+          "warnings"
+        ],
+        "title": "BoundaryImportOut",
+        "type": "object"
+      },
+      "BoundaryImportRow": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/BoundaryCounts"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "imported_at": {
+            "title": "Imported At",
+            "type": "string"
+          },
+          "imported_by": {
+            "description": "The importer's user id.",
+            "title": "Imported By",
+            "type": "string"
+          },
+          "imported_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The importer's name as their sign-in carried it, else from Keycloak at read time; null when neither can say.",
+            "title": "Imported By Name"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "sha256",
+          "imported_by",
+          "imported_by_name",
+          "imported_at",
+          "counts"
+        ],
+        "title": "BoundaryImportRow",
         "type": "object"
       },
       "CapabilitiesOut": {
@@ -686,6 +990,30 @@
             "title": "Assigned By",
             "type": "string"
           },
+          "assigned_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Assigned By Name"
+          },
+          "assignee_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Assignee Name"
+          },
           "assignee_user_id": {
             "title": "Assignee User Id",
             "type": "string"
@@ -725,6 +1053,56 @@
           "active"
         ],
         "title": "CaseAssignmentOut",
+        "type": "object"
+      },
+      "CaseClose": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A replay with the same key returns the case unchanged.",
+            "title": "Idempotency Key"
+          },
+          "outcome_cd": {
+            "description": "A `case_close_outcome` code.",
+            "enum": [
+              "demolished_by_owner",
+              "demolished_by_authority",
+              "regularised",
+              "court_case_filed",
+              "sealed",
+              "other"
+            ],
+            "title": "Outcome Cd",
+            "type": "string"
+          },
+          "remarks": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required, 10+ characters, when `outcome_cd` is `other`.",
+            "title": "Remarks"
+          }
+        },
+        "required": [
+          "outcome_cd"
+        ],
+        "title": "CaseClose",
         "type": "object"
       },
       "CaseConfirm": {
@@ -786,6 +1164,19 @@
               }
             ],
             "title": "Complainant Phone"
+          },
+          "complaint_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The date the complaint was made, IST. Not in the future and not before 2000-01-01. Omitted, it is today.",
+            "title": "Complaint Date"
           },
           "complaint_type_cd": {
             "anyOf": [
@@ -1132,6 +1523,29 @@
             ],
             "title": "Closed At"
           },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
+          },
+          "closed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Closed By Name"
+          },
           "complainant_email": {
             "anyOf": [
               {
@@ -1164,6 +1578,18 @@
               }
             ],
             "title": "Complainant Phone"
+          },
+          "complaint_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complaint Date"
           },
           "complaint_type_cd": {
             "anyOf": [
@@ -1208,6 +1634,18 @@
               }
             ],
             "title": "Created By"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Created By Name"
           },
           "current_round": {
             "title": "Current Round",
@@ -1339,6 +1777,52 @@
               }
             ],
             "title": "Other Type"
+          },
+          "outcome_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it was rejected (`case_reject_reason`) or how it was closed (`case_close_outcome`); null while open.",
+            "title": "Outcome Cd"
+          },
+          "outcome_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Label"
+          },
+          "outcome_label_hi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Label Hi"
+          },
+          "outcome_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The officer's remarks on the rejection or closure.",
+            "title": "Outcome Reason"
           },
           "owner_name": {
             "anyOf": [
@@ -1513,6 +1997,184 @@
         "title": "CaseDetail",
         "type": "object"
       },
+      "CaseEvidenceCreate": {
+        "additionalProperties": false,
+        "description": "The whole multipart body of a case evidence upload, the file included.",
+        "properties": {
+          "caption": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "The photograph: JPEG, PNG or WebP.",
+            "title": "File",
+            "type": "string"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "CaseEvidenceCreate",
+        "type": "object"
+      },
+      "CaseEvidenceList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CaseEvidenceOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CaseEvidenceList",
+        "type": "object"
+      },
+      "CaseEvidenceOut": {
+        "properties": {
+          "caption": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "content_url": {
+            "title": "Content Url",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "content_url"
+        ],
+        "title": "CaseEvidenceOut",
+        "type": "object"
+      },
+      "CaseEvidenceWritten": {
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/CaseEvidenceOut"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "evidence",
+          "replayed"
+        ],
+        "title": "CaseEvidenceWritten",
+        "type": "object"
+      },
       "CaseFeature": {
         "properties": {
           "geometry": {
@@ -1676,6 +2338,55 @@
         "title": "CaseLocation",
         "type": "object"
       },
+      "CaseReject": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A replay with the same key returns the case unchanged.",
+            "title": "Idempotency Key"
+          },
+          "reason_cd": {
+            "description": "A `case_reject_reason` code.",
+            "enum": [
+              "false_complaint",
+              "duplicate",
+              "outside_jurisdiction",
+              "no_violation_found",
+              "other"
+            ],
+            "title": "Reason Cd",
+            "type": "string"
+          },
+          "remarks": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required, 10+ characters, when `reason_cd` is `other`.",
+            "title": "Remarks"
+          }
+        },
+        "required": [
+          "reason_cd"
+        ],
+        "title": "CaseReject",
+        "type": "object"
+      },
       "CaseRow": {
         "properties": {
           "assignee_user_id": {
@@ -1703,6 +2414,18 @@
               }
             ],
             "title": "Complainant Name"
+          },
+          "complaint_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complaint Date"
           },
           "complaint_type_cd": {
             "anyOf": [
@@ -1956,6 +2679,30 @@
             ],
             "title": "Brightness Delta"
           },
+          "case_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Newest complaint raised from this polygon, if any.",
+            "title": "Case Ref"
+          },
+          "case_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "That complaint's workflow status (icms_case.status).",
+            "title": "Case Status"
+          },
           "change_type": {
             "anyOf": [
               {
@@ -2038,6 +2785,18 @@
               }
             ],
             "title": "Reviewed By"
+          },
+          "reviewed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Reviewed By Name"
           },
           "status": {
             "anyOf": [
@@ -2172,6 +2931,18 @@
           "user_id": {
             "title": "User Id",
             "type": "string"
+          },
+          "user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "User Name"
           }
         },
         "required": [
@@ -2518,6 +3289,18 @@
             ],
             "title": "Device Timestamp"
           },
+          "distance_to_site_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Metres from the submitted fix to the case point; null without one.",
+            "title": "Distance To Site M"
+          },
           "doc_type_cd": {
             "anyOf": [
               {
@@ -2529,9 +3312,33 @@
             ],
             "title": "Doc Type Cd"
           },
+          "exif_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latitude read from EXIF GPS.",
+            "title": "Exif Lat"
+          },
+          "exif_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longitude read from EXIF GPS.",
+            "title": "Exif Lon"
+          },
           "geotag_flagged": {
             "default": false,
-            "description": "True when the capture carried no position, or one worse than the accuracy threshold. Computed at write time and stored nowhere: the threshold is server configuration a browser cannot read, so the flag has to come over the wire. The gallery shows it.",
+            "description": "True when the capture carried no position, one worse than the accuracy threshold, or (photos) EXIF GPS missing or farther than icms_exif_mismatch_m from the submitted fix. The EXIF part is stored at upload; the accuracy part is recomputed on read.",
             "title": "Geotag Flagged",
             "type": "boolean"
           },
@@ -2609,6 +3416,18 @@
             ],
             "title": "Sha256"
           },
+          "stamped_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The server-stamped JPEG (location bar added by the API), or null when none was made. The original at content_url is untouched.",
+            "title": "Stamped Url"
+          },
           "uploaded_at": {
             "title": "Uploaded At",
             "type": "string"
@@ -2616,6 +3435,18 @@
           "uploaded_by": {
             "title": "Uploaded By",
             "type": "string"
+          },
+          "uploaded_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Uploaded By Name"
           }
         },
         "required": [
@@ -2708,7 +3539,55 @@
                 "type": "null"
               }
             ],
+            "description": "An active `area_type` code value. Required at submit when encroachment_confirmed_cd is yes or partial.",
             "title": "Area Type Cd"
+          },
+          "construction_stage_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An active `construction_stage` code value. Optional.",
+            "title": "Construction Stage Cd"
+          },
+          "encroachment_confirmed_cd": {
+            "anyOf": [
+              {
+                "enum": [
+                  "yes",
+                  "partial",
+                  "no_false_positive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required at submit. no_false_positive forces recommendation_cd no_action_required and notice_required false.",
+            "title": "Encroachment Confirmed Cd"
+          },
+          "external_support_cd": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "police",
+                  "survey_dept",
+                  "legal"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Single select. Required at submit when encroachment_confirmed_cd is yes or partial; police makes officer_note required.",
+            "title": "External Support Cd"
           },
           "findings": {
             "description": "Replaces the round's findings outright. An empty list is a 422: a round with no finding is a round that was not carried out.",
@@ -2722,17 +3601,45 @@
             "title": "Findings",
             "type": "array"
           },
-          "measured_area_sqm": {
+          "floor_count": {
             "anyOf": [
               {
-                "maximum": 10000000.0,
+                "maximum": 200.0,
                 "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Count"
+          },
+          "length_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 10000.0,
                 "type": "number"
               },
               {
                 "type": "null"
               }
             ],
+            "description": "Metres; the field app converts feet. Optional. With width_m and no measured_area_sqm, the area is derived as length × width.",
+            "title": "Length M"
+          },
+          "measured_area_sqm": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 0.01,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Square metres; the client converts sq ft or gaj. Required at submit when encroachment_confirmed_cd is yes or partial.",
             "title": "Measured Area Sqm"
           },
           "notice_act_cd": {
@@ -2744,6 +3651,7 @@
                 "type": "null"
               }
             ],
+            "description": "An active `act` code value. Required at submit when notice_required; cleared when notice_required is false.",
             "title": "Notice Act Cd"
           },
           "notice_required": {
@@ -2755,6 +3663,7 @@
                 "type": "null"
               }
             ],
+            "description": "Required at submit once recommendation_cd is set; derived for no_action_required and the three notice recommendations.",
             "title": "Notice Required"
           },
           "occupant_name": {
@@ -2768,6 +3677,7 @@
                 "type": "null"
               }
             ],
+            "description": "The person found on site. Required at submit when occupant_phone is given.",
             "title": "Occupant Name"
           },
           "occupant_phone": {
@@ -2794,6 +3704,76 @@
             ],
             "title": "Officer Note"
           },
+          "owner_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who holds the property (legacy owner_name). Required at submit when owner_phone is given.",
+            "title": "Owner Name"
+          },
+          "owner_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Phone"
+          },
+          "police_station": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Police Station"
+          },
+          "property_type_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An active `property_type` code value.",
+            "title": "Property Type Cd"
+          },
+          "recommendation_cd": {
+            "anyOf": [
+              {
+                "enum": [
+                  "issue_notice",
+                  "file_legal_case",
+                  "demolition_order",
+                  "further_investigation",
+                  "no_action_required",
+                  "impose_fine"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required at submit. no_action_required only with no_false_positive. issue_notice, demolition_order and impose_fine set notice_required.",
+            "title": "Recommendation Cd"
+          },
           "sections": {
             "anyOf": [
               {
@@ -2807,8 +3787,22 @@
                 "type": "null"
               }
             ],
-            "description": "Replaces the cited sections when present; omit to leave them alone.",
+            "description": "Replaces the cited sections when present; omit to leave them alone. Each pair must be an active `section` code under its `act`. At submit a round with notice_required needs at least one under notice_act_cd.",
             "title": "Sections"
+          },
+          "width_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 10000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Metres. Optional.",
+            "title": "Width M"
           }
         },
         "required": [
@@ -2852,6 +3846,12 @@
       },
       "InspectionDetail": {
         "properties": {
+          "area_mismatch": {
+            "default": false,
+            "description": "True when measured_area_sqm and length × width are both held and differ by more than 10% of length × width. Accepted, not refused.",
+            "title": "Area Mismatch",
+            "type": "boolean"
+          },
           "area_type_cd": {
             "anyOf": [
               {
@@ -2861,6 +3861,7 @@
                 "type": "null"
               }
             ],
+            "description": "May be an inactive legacy `area_type` code.",
             "title": "Area Type Cd"
           },
           "available_actions": {
@@ -2898,6 +3899,34 @@
             "title": "Check Ins",
             "type": "array"
           },
+          "construction_stage_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Construction Stage Cd"
+          },
+          "encroachment_confirmed_cd": {
+            "anyOf": [
+              {
+                "enum": [
+                  "yes",
+                  "partial",
+                  "no_false_positive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null on rounds recorded before it existed.",
+            "title": "Encroachment Confirmed Cd"
+          },
           "evidence": {
             "items": {
               "$ref": "#/components/schemas/EvidenceOut"
@@ -2909,6 +3938,23 @@
             "default": 0,
             "title": "Evidence Count",
             "type": "integer"
+          },
+          "external_support_cd": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "police",
+                  "survey_dept",
+                  "legal"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Support Cd"
           },
           "finding_count": {
             "default": 0,
@@ -2922,6 +3968,33 @@
             "title": "Findings",
             "type": "array"
           },
+          "findings_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "field",
+                  "web"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which client last saved the findings, from the token's azp. A web round is not held to the notice act, sections or owner at submit.",
+            "title": "Findings Source"
+          },
+          "floor_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Count"
+          },
           "has_check_in": {
             "default": false,
             "title": "Has Check In",
@@ -2930,6 +4003,17 @@
           "inspection_ref": {
             "title": "Inspection Ref",
             "type": "string"
+          },
+          "length_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length M"
           },
           "location": {
             "anyOf": [
@@ -3018,6 +4102,39 @@
             ],
             "title": "Officer Note"
           },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
+          },
+          "owner_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Phone"
+          },
+          "police_station": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Police Station"
+          },
           "priority": {
             "anyOf": [
               {
@@ -3029,6 +4146,36 @@
             ],
             "description": "The CASE's priority, carried on the round so the register can show and filter it without a second call.",
             "title": "Priority"
+          },
+          "property_type_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Type Cd"
+          },
+          "recommendation_cd": {
+            "anyOf": [
+              {
+                "enum": [
+                  "issue_notice",
+                  "file_legal_case",
+                  "demolition_order",
+                  "further_investigation",
+                  "no_action_required",
+                  "impose_fine"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Cd"
           },
           "round_no": {
             "title": "Round No",
@@ -3087,12 +4234,23 @@
                 "type": "null"
               }
             ],
-            "description": "Null: Keycloak is the user store and there is no local users table to join. Resolve it from /api/icms/admin/users.",
+            "description": "From Keycloak at read time; null when it cannot say, and the screen shows the id.",
             "title": "Surveyor Name"
           },
           "surveyor_user_id": {
             "title": "Surveyor User Id",
             "type": "string"
+          },
+          "width_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width M"
           },
           "zone_cd": {
             "anyOf": [
@@ -3160,6 +4318,17 @@
       },
       "InspectionRoundOut": {
         "properties": {
+          "floor_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Count"
+          },
           "inspection_ref": {
             "title": "Inspection Ref",
             "type": "string"
@@ -3174,6 +4343,51 @@
               }
             ],
             "title": "Measured Area Sqm"
+          },
+          "occupant_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Owner or occupant, as the surveyor recorded on site.",
+            "title": "Occupant Name"
+          },
+          "occupant_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occupant Phone"
+          },
+          "police_station": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Police Station"
+          },
+          "property_type_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Type Cd"
           },
           "round_no": {
             "title": "Round No",
@@ -3193,6 +4407,18 @@
               }
             ],
             "title": "Submitted At"
+          },
+          "surveyor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Surveyor Name"
           },
           "surveyor_user_id": {
             "title": "Surveyor User Id",
@@ -3307,7 +4533,7 @@
                 "type": "null"
               }
             ],
-            "description": "Null: Keycloak is the user store and there is no local users table to join. Resolve it from /api/icms/admin/users.",
+            "description": "From Keycloak at read time; null when it cannot say, and the screen shows the id.",
             "title": "Surveyor Name"
           },
           "surveyor_user_id": {
@@ -3365,6 +4591,101 @@
           "lon"
         ],
         "title": "LatLon",
+        "type": "object"
+      },
+      "LayerCounts": {
+        "properties": {
+          "deactivated": {
+            "title": "Deactivated",
+            "type": "integer"
+          },
+          "inserted": {
+            "title": "Inserted",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inserted",
+          "updated",
+          "deactivated",
+          "rejected"
+        ],
+        "title": "LayerCounts",
+        "type": "object"
+      },
+      "LocateOut": {
+        "description": "Administrative fields suggested for a point. All null when nothing is known.",
+        "properties": {
+          "district": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "District, in LGD's spelling when it is in UP.",
+            "title": "District"
+          },
+          "district_lgd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "LGD district code; Uttar Pradesh only.",
+            "title": "District Lgd"
+          },
+          "pincode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Six-digit postal code, else null.",
+            "title": "Pincode"
+          },
+          "source": {
+            "description": "`nominatim`, `none` when no locator is configured, or `unavailable` when the lookup failed — show nothing then.",
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "State name as the geocoder spells it.",
+            "title": "State"
+          }
+        },
+        "required": [
+          "state",
+          "district",
+          "district_lgd",
+          "pincode",
+          "source"
+        ],
+        "title": "LocateOut",
         "type": "object"
       },
       "MapWindow": {
@@ -3730,6 +5051,18 @@
             ],
             "title": "Issued By"
           },
+          "issued_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Issued By Name"
+          },
           "issuing_authority": {
             "anyOf": [
               {
@@ -3840,6 +5173,18 @@
               }
             ],
             "title": "Issued By"
+          },
+          "issued_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Issued By Name"
           },
           "notice_ref": {
             "title": "Notice Ref",
@@ -4254,6 +5599,136 @@
         "title": "Page[ZoneOut]",
         "type": "object"
       },
+      "ParcelAtOut": {
+        "description": "What the loaded boundary layers say about a point. All null when nothing covers it.",
+        "properties": {
+          "khasra_no": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Khasra No"
+          },
+          "plot_no": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A scheme plot's number, e.g. `4/285` or `CP-1`.",
+            "title": "Plot No"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A scheme plot's sector as the land record writes it, e.g. `SECTOR 4`.",
+            "title": "Sector"
+          },
+          "source": {
+            "description": "`kml` when any boundary layer covers the point, else `none`.",
+            "enum": [
+              "kml",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "ulpin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ulpin"
+          },
+          "village_lgd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Village Lgd"
+          },
+          "village_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Village Name"
+          },
+          "ward": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always null: no ward layer is loaded yet.",
+            "title": "Ward"
+          },
+          "zone_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Cd"
+          },
+          "zone_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Name"
+          }
+        },
+        "required": [
+          "zone_cd",
+          "zone_name",
+          "village_lgd",
+          "village_name",
+          "khasra_no",
+          "ulpin",
+          "sector",
+          "plot_no",
+          "ward",
+          "source"
+        ],
+        "title": "ParcelAtOut",
+        "type": "object"
+      },
       "PasswordReset": {
         "additionalProperties": false,
         "properties": {
@@ -4336,6 +5811,17 @@
           "resource": {
             "title": "Resource",
             "type": "string"
+          },
+          "screen_cd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screen Cd"
           }
         },
         "required": [
@@ -4346,6 +5832,60 @@
           "is_system"
         ],
         "title": "PermissionOut",
+        "type": "object"
+      },
+      "PlacemarkIssue": {
+        "properties": {
+          "folder": {
+            "description": "The KML folder, or the unknown folder's own name.",
+            "title": "Folder",
+            "type": "string"
+          },
+          "index": {
+            "description": "1-based position of the placemark within that folder.",
+            "title": "Index",
+            "type": "integer"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "zone_cd, village_lgd, village_lgd/khasra_no, SECTOR#plot_no or feature_type:source_ref, when it could be read.",
+            "title": "Key"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The placemark's <name>, if it has one.",
+            "title": "Name"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "folder",
+          "index",
+          "name",
+          "key",
+          "reasons"
+        ],
+        "title": "PlacemarkIssue",
         "type": "object"
       },
       "PolygonReview": {
@@ -4520,6 +6060,17 @@
       },
       "RasterOut": {
         "properties": {
+          "archive_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Bytes"
+          },
           "bounds_4326": {
             "anyOf": [
               {
@@ -4546,6 +6097,29 @@
             ],
             "title": "Captured At"
           },
+          "chunk_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Count"
+          },
+          "cold_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cold At"
+          },
           "crs": {
             "anyOf": [
               {
@@ -4568,9 +6142,32 @@
             ],
             "title": "Error"
           },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fingerprint"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
           },
           "name": {
             "title": "Name",
@@ -4585,6 +6182,22 @@
             "title": "Project Id",
             "type": "integer"
           },
+          "received_count": {
+            "default": 0,
+            "title": "Received Count",
+            "type": "integer"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
           "resolution_m": {
             "anyOf": [
               {
@@ -4595,6 +6208,39 @@
               }
             ],
             "title": "Resolution M"
+          },
+          "restore_eta_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restore Eta Hours"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
           },
           "stage": {
             "anyOf": [
@@ -4608,8 +6254,31 @@
             "title": "Stage"
           },
           "status": {
+            "enum": [
+              "uploading",
+              "completing",
+              "rejected",
+              "processing",
+              "failed_retryable",
+              "failed",
+              "ready",
+              "cold",
+              "restoring",
+              "expired"
+            ],
             "title": "Status",
             "type": "string"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
           },
           "uploaded_at": {
             "format": "date-time",
@@ -4684,6 +6353,168 @@
           "created_at"
         ],
         "title": "RedZoneOut",
+        "type": "object"
+      },
+      "ReportingMember": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          },
+          "zones": {
+            "items": {
+              "$ref": "#/components/schemas/ReportingZone"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "enabled",
+          "zones"
+        ],
+        "title": "ReportingMember",
+        "type": "object"
+      },
+      "ReportingRole": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "label_hi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Hi"
+          },
+          "level": {
+            "description": "0 is the most senior rung of the ladder.",
+            "title": "Level",
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/ReportingMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "reports_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The role_cd one rung up, or null for the top and for a role created from Administration that has no place on the ladder yet.",
+            "title": "Reports To"
+          },
+          "role_cd": {
+            "title": "Role Cd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_cd",
+          "label",
+          "level",
+          "reports_to",
+          "members"
+        ],
+        "title": "ReportingRole",
+        "type": "object"
+      },
+      "ReportingZone": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_hi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Hi"
+          },
+          "zone_cd": {
+            "title": "Zone Cd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "zone_cd",
+          "name"
+        ],
+        "title": "ReportingZone",
+        "type": "object"
+      },
+      "RestoreOut": {
+        "properties": {
+          "eta_hours": {
+            "title": "Eta Hours",
+            "type": "number"
+          },
+          "status": {
+            "const": "restoring",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "eta_hours"
+        ],
+        "title": "RestoreOut",
         "type": "object"
       },
       "ResurveyCreate": {
@@ -4775,6 +6606,18 @@
             ],
             "title": "Decided By"
           },
+          "decided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Decided By Name"
+          },
           "decision": {
             "title": "Decision",
             "type": "string"
@@ -4810,6 +6653,18 @@
             "title": "Requested By",
             "type": "string"
           },
+          "requested_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From Keycloak at read time; null when it cannot say.",
+            "title": "Requested By Name"
+          },
           "resulting_round": {
             "anyOf": [
               {
@@ -4832,6 +6687,66 @@
           "decision"
         ],
         "title": "ResurveyRequestOut",
+        "type": "object"
+      },
+      "RoleCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "label": {
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Label",
+            "type": "string"
+          },
+          "label_hi": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Hi"
+          },
+          "permission_cds": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$",
+              "type": "string"
+            },
+            "title": "Permission Cds",
+            "type": "array"
+          },
+          "role_cd": {
+            "description": "The realm role name, e.g. zone-inspector.",
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "title": "Role Cd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_cd",
+          "label"
+        ],
+        "title": "RoleCreate",
         "type": "object"
       },
       "RoleGrantsOut": {
@@ -4900,6 +6815,99 @@
           "to_version"
         ],
         "title": "RollbackIn",
+        "type": "object"
+      },
+      "RuntimeSettingOut": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "is_default": {
+            "description": "True when no row is stored and the code default applies.",
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "boolean",
+              "number"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "type",
+          "description",
+          "is_default",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "RuntimeSettingOut",
+        "type": "object"
+      },
+      "RuntimeSettingPut": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "RuntimeSettingPut",
         "type": "object"
       },
       "ScreenDraftIn": {
@@ -5273,6 +7281,10 @@
             "title": "Opens Round",
             "type": "boolean"
           },
+          "permission_cd": {
+            "title": "Permission Cd",
+            "type": "string"
+          },
           "requires": {
             "items": {
               "type": "string"
@@ -5281,6 +7293,7 @@
             "type": "array"
           },
           "roles": {
+            "description": "Derived: the active roles granted permission_cd.",
             "items": {
               "type": "string"
             },
@@ -5320,6 +7333,7 @@
           "assignee_only",
           "opens_round",
           "requires",
+          "permission_cd",
           "roles",
           "active",
           "sort_order",
@@ -5365,6 +7379,20 @@
             ],
             "title": "Note"
           },
+          "permission_cd": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Cd"
+          },
           "requires": {
             "anyOf": [
               {
@@ -5381,23 +7409,6 @@
               }
             ],
             "title": "Requires"
-          },
-          "roles": {
-            "anyOf": [
-              {
-                "items": {
-                  "maxLength": 40,
-                  "minLength": 1,
-                  "pattern": "^[a-z][a-z0-9-]*$",
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Roles"
           }
         },
         "title": "TransitionUpdate",
@@ -5473,6 +7484,191 @@
           "resolved"
         ],
         "title": "TypeCount",
+        "type": "object"
+      },
+      "UploadComplete": {
+        "properties": {
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "title": "UploadComplete",
+        "type": "object"
+      },
+      "UploadCreate": {
+        "properties": {
+          "captured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "crs_epsg": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crs Epsg"
+          },
+          "fingerprint": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "has_prj": {
+            "default": false,
+            "title": "Has Prj",
+            "type": "boolean"
+          },
+          "has_tfw": {
+            "default": false,
+            "title": "Has Tfw",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size_bytes",
+          "fingerprint"
+        ],
+        "title": "UploadCreate",
+        "type": "object"
+      },
+      "UploadDuplicate": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "existing_raster_id": {
+            "title": "Existing Raster Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "detail",
+          "existing_raster_id"
+        ],
+        "title": "UploadDuplicate",
+        "type": "object"
+      },
+      "UploadRejected": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "raster_id": {
+            "title": "Raster Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "detail",
+          "raster_id"
+        ],
+        "title": "UploadRejected",
+        "type": "object"
+      },
+      "UploadSessionOut": {
+        "properties": {
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "chunk_size": {
+            "title": "Chunk Size",
+            "type": "integer"
+          },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fingerprint"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "received": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Received",
+            "type": "array"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "upload_id",
+          "name",
+          "fingerprint",
+          "size_bytes",
+          "chunk_size",
+          "chunk_count",
+          "received",
+          "status"
+        ],
+        "title": "UploadSessionOut",
         "type": "object"
       },
       "UserCreate": {
@@ -7169,6 +9365,97 @@
         "summary": "Ready"
       }
     },
+    "/api/icms/admin/geo/import": {
+      "post": {
+        "description": "docs/icms/kml-import-spec.md is the format. One transaction; rejected placemarks are\nlisted and skipped, and a file that is not KML 2.2 is refused whole with 422.",
+        "operationId": "import_boundaries_api_icms_admin_geo_import_post",
+        "parameters": [
+          {
+            "description": "Validate and count; write nothing.",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Validate and count; write nothing.",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_boundaries_api_icms_admin_geo_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoundaryImportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Load zones, villages, parcels and reserved areas from the authority's KML/KMZ",
+        "tags": [
+          "icms-geo"
+        ]
+      }
+    },
+    "/api/icms/admin/geo/imports": {
+      "get": {
+        "operationId": "list_imports_api_icms_admin_geo_imports_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BoundaryImportRow"
+                  },
+                  "title": "Response List Imports Api Icms Admin Geo Imports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "The last twenty boundary imports, newest first",
+        "tags": [
+          "icms-geo"
+        ]
+      }
+    },
     "/api/icms/admin/policy/permissions": {
       "get": {
         "operationId": "list_permissions_api_icms_admin_policy_permissions_get",
@@ -7267,6 +9554,50 @@
           }
         ],
         "summary": "The role grants — this table is the whole of RBAC",
+        "tags": [
+          "icms-policy"
+        ]
+      },
+      "post": {
+        "operationId": "create_role_api_icms_admin_policy_roles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGrantsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Create a role: a Keycloak realm role plus its grants",
         "tags": [
           "icms-policy"
         ]
@@ -7413,7 +9744,156 @@
             "ADA token": []
           }
         ],
-        "summary": "Edit a transition's roles, payload requirements or active flag",
+        "summary": "Edit a transition's permission, payload requirements or active flag",
+        "tags": [
+          "icms-policy"
+        ]
+      }
+    },
+    "/api/icms/admin/reporting": {
+      "get": {
+        "description": "One Keycloak call per role and one query for every holder's zones.",
+        "operationId": "reporting_structure_api_icms_admin_reporting_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportingRole"
+                  },
+                  "title": "Response Reporting Structure Api Icms Admin Reporting Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "The reporting structure: each ICMS role, its holders and their zones",
+        "tags": [
+          "icms-users"
+        ]
+      }
+    },
+    "/api/icms/admin/roles": {
+      "get": {
+        "operationId": "list_assignable_roles_api_icms_admin_roles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssignableRoleOut"
+                  },
+                  "title": "Response List Assignable Roles Api Icms Admin Roles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "The roles an officer can be given",
+        "tags": [
+          "icms-policy"
+        ]
+      }
+    },
+    "/api/icms/admin/runtime-settings": {
+      "get": {
+        "operationId": "list_runtime_settings_api_icms_admin_runtime_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RuntimeSettingOut"
+                  },
+                  "title": "Response List Runtime Settings Api Icms Admin Runtime Settings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Runtime switches held in icms_runtime_setting",
+        "tags": [
+          "icms-policy"
+        ]
+      }
+    },
+    "/api/icms/admin/runtime-settings/{key}": {
+      "put": {
+        "operationId": "put_runtime_setting_api_icms_admin_runtime_settings__key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettingPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Set one runtime switch; unknown keys and wrong types are refused",
         "tags": [
           "icms-policy"
         ]
@@ -7798,7 +10278,7 @@
     },
     "/api/icms/app-config": {
       "get": {
-        "description": "Readable by every ICMS role, with no extra permission and no database.\n\nThe field app had a copy of the accuracy rule in its own source, and the copy\nwent stale the moment one threshold became a gate and a flag. A client that\nreads this cannot drift; a client that hard-codes it will, and silently.\n\nFive fields since 2026-09-23, when the photograph counts joined the three\nthat were here: they are published because they are now enforced — `submit`\nrefuses a round below the minimum 422 `missing_payload` and `add_evidence`\nrefuses a photograph past the maximum 422 `too_many_photos`. Enforcement\nfirst, then publication; a count nobody is held to would make this endpoint\nthe very thing it replaces.",
+        "description": "Readable by every ICMS role, with no extra permission.\n\nThe geofence pair is read from `icms_runtime_setting`; the rest is settings.\n\nThe field app had a copy of the accuracy rule in its own source, and the copy\nwent stale the moment one threshold became a gate and a flag. A client that\nreads this cannot drift; a client that hard-codes it will, and silently.\n\nFive fields since 2026-09-23, when the photograph counts joined the three\nthat were here: they are published because they are now enforced — `submit`\nrefuses a round below the minimum 422 `missing_payload` and `add_evidence`\nrefuses a photograph past the maximum 422 `too_many_photos`. Enforcement\nfirst, then publication; a count nobody is held to would make this endpoint\nthe very thing it replaces.",
         "operationId": "get_app_config_api_icms_app_config_get",
         "responses": {
           "200": {
@@ -8477,6 +10957,116 @@
         ]
       }
     },
+    "/api/icms/cases/{case_ref}/assignees": {
+      "get": {
+        "description": "The roles whose grants admit the assignee's first step, and the enabled\nofficers holding one of them with an active assignment to the case's zone —\nthe same two checks `POST /assign` makes, so every name offered is accepted.",
+        "operationId": "list_case_assignees_api_icms_cases__case_ref__assignees_get",
+        "parameters": [
+          {
+            "description": "The case reference, e.g. `CMP-2026-0001`.",
+            "in": "path",
+            "name": "case_ref",
+            "required": true,
+            "schema": {
+              "description": "The case reference, e.g. `CMP-2026-0001`.",
+              "title": "Case Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssigneeOptions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Who this case may be assigned to — the roles, then the officers",
+        "tags": [
+          "icms-cases"
+        ]
+      }
+    },
+    "/api/icms/cases/{case_ref}/close": {
+      "post": {
+        "description": "Terminal. Legal from `notice_issued` only (409 otherwise).",
+        "operationId": "close_case_api_icms_cases__case_ref__close_post",
+        "parameters": [
+          {
+            "description": "The case reference, e.g. `CMP-2026-0001`.",
+            "in": "path",
+            "name": "case_ref",
+            "required": true,
+            "schema": {
+              "description": "The case reference, e.g. `CMP-2026-0001`.",
+              "title": "Case Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Close a case after its notice — ADA Project Lead",
+        "tags": [
+          "icms-cases"
+        ]
+      }
+    },
     "/api/icms/cases/{case_ref}/confirm": {
       "post": {
         "description": "Stage 7 — the move that unlocks the notice, and the last one before it.\n\nA confirmation before a handover is a 409 from the transition table rather\nthan a silent no-op: `confirm` is legal from `handed_over` and from nothing\nelse, so the two compose in one direction only.",
@@ -8539,6 +11129,190 @@
           }
         ],
         "summary": "Confirm a handed-over case — ADA Project Lead",
+        "tags": [
+          "icms-cases"
+        ]
+      }
+    },
+    "/api/icms/cases/{case_ref}/evidence": {
+      "get": {
+        "operationId": "list_case_evidence_api_icms_cases__case_ref__evidence_get",
+        "parameters": [
+          {
+            "description": "The case reference, e.g. `CMP-2026-0001`.",
+            "in": "path",
+            "name": "case_ref",
+            "required": true,
+            "schema": {
+              "description": "The case reference, e.g. `CMP-2026-0001`.",
+              "title": "Case Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseEvidenceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "The photographs attached to a complaint at filing time",
+        "tags": [
+          "icms-cases"
+        ]
+      },
+      "post": {
+        "description": "JPEG, PNG or WebP, judged by its bytes against the `complaint_photo` upload\npolicy. Admitted to the roles that may raise a case, while it is `raised`.\nA replayed `Idempotency-Key` returns the first row with 200.",
+        "operationId": "add_case_evidence_api_icms_cases__case_ref__evidence_post",
+        "parameters": [
+          {
+            "description": "The case reference, e.g. `CMP-2026-0001`.",
+            "in": "path",
+            "name": "case_ref",
+            "required": true,
+            "schema": {
+              "description": "The case reference, e.g. `CMP-2026-0001`.",
+              "title": "Case Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseEvidenceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseEvidenceWritten"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Attach a photograph to a complaint while it is raised — append-only",
+        "tags": [
+          "icms-cases"
+        ]
+      }
+    },
+    "/api/icms/cases/{case_ref}/evidence/{evidence_id}/content": {
+      "get": {
+        "description": "Inline because the upload policy admits sniffed raster images only.",
+        "operationId": "get_case_evidence_content_api_icms_cases__case_ref__evidence__evidence_id__content_get",
+        "parameters": [
+          {
+            "description": "The case reference, e.g. `CMP-2026-0001`.",
+            "in": "path",
+            "name": "case_ref",
+            "required": true,
+            "schema": {
+              "description": "The case reference, e.g. `CMP-2026-0001`.",
+              "title": "Case Ref",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The evidence row's id.",
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "description": "The evidence row's id.",
+              "minimum": 1,
+              "title": "Evidence Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {},
+              "image/png": {},
+              "image/webp": {}
+            },
+            "description": "The stored bytes."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "One complaint photograph, inline",
         "tags": [
           "icms-cases"
         ]
@@ -8728,6 +11502,66 @@
         "summary": "Issue the notice — allocates NTC-YYYY-NNNN and stores the document",
         "tags": [
           "icms-notices"
+        ]
+      }
+    },
+    "/api/icms/cases/{case_ref}/reject": {
+      "post": {
+        "description": "Terminal. Legal from `raised` and `assigned` only (409 otherwise); releases\nthe survey assignment, so the case leaves the surveyor's worklist.",
+        "operationId": "reject_case_api_icms_cases__case_ref__reject_post",
+        "parameters": [
+          {
+            "description": "The case reference, e.g. `CMP-2026-0001`.",
+            "in": "path",
+            "name": "case_ref",
+            "required": true,
+            "schema": {
+              "description": "The case reference, e.g. `CMP-2026-0001`.",
+              "title": "Case Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseReject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Reject a raised or assigned case — PCS Nodal Officer",
+        "tags": [
+          "icms-cases"
         ]
       }
     },
@@ -9225,6 +12059,183 @@
         "summary": "The evidence file itself, as an attachment",
         "tags": [
           "icms-inspections"
+        ]
+      }
+    },
+    "/api/icms/evidence/{evidence_id}/stamped": {
+      "get": {
+        "description": "Same scope as `/content`; 404 `evidence_not_stamped` when no copy was made.",
+        "operationId": "get_evidence_stamped_api_icms_evidence__evidence_id__stamped_get",
+        "parameters": [
+          {
+            "description": "The evidence row's id.",
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "description": "The evidence row's id.",
+              "minimum": 1,
+              "title": "Evidence Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {}
+            },
+            "description": "The original with the API's location bar added."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "The server-stamped copy of an evidence photograph, as an attachment",
+        "tags": [
+          "icms-inspections"
+        ]
+      }
+    },
+    "/api/icms/geo/locate": {
+      "get": {
+        "description": "Always 200: an upstream failure is all-null with `source: \"unavailable\"`.",
+        "operationId": "locate_api_icms_geo_locate_get",
+        "parameters": [
+          {
+            "description": "Latitude, WGS 84.",
+            "in": "query",
+            "name": "lat",
+            "required": true,
+            "schema": {
+              "description": "Latitude, WGS 84.",
+              "maximum": 90,
+              "minimum": -90,
+              "title": "Lat",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Longitude, WGS 84.",
+            "in": "query",
+            "name": "lon",
+            "required": true,
+            "schema": {
+              "description": "Longitude, WGS 84.",
+              "maximum": 180,
+              "minimum": -180,
+              "title": "Lon",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Suggest state, district, district LGD code and pin code for a point",
+        "tags": [
+          "icms-geo"
+        ]
+      }
+    },
+    "/api/icms/geo/parcel": {
+      "get": {
+        "description": "Always 200: nothing loaded, or nothing under the point, is all-null with `source: \"none\"`.",
+        "operationId": "parcel_api_icms_geo_parcel_get",
+        "parameters": [
+          {
+            "description": "Latitude, WGS 84.",
+            "in": "query",
+            "name": "lat",
+            "required": true,
+            "schema": {
+              "description": "Latitude, WGS 84.",
+              "maximum": 90,
+              "minimum": -90,
+              "title": "Lat",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Longitude, WGS 84.",
+            "in": "query",
+            "name": "lon",
+            "required": true,
+            "schema": {
+              "description": "Longitude, WGS 84.",
+              "maximum": 180,
+              "minimum": -180,
+              "title": "Lon",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParcelAtOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "The zone, village and parcel the loaded KML layers put a point in",
+        "tags": [
+          "icms-geo"
         ]
       }
     },
@@ -10929,6 +13940,34 @@
         ]
       }
     },
+    "/api/ml/runtime": {
+      "get": {
+        "operationId": "ml_runtime_api_ml_runtime_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ml Runtime Api Ml Runtime Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "model service unavailable"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Ml Runtime"
+      }
+    },
     "/api/projects": {
       "get": {
         "operationId": "list_projects_api_projects_get",
@@ -11296,6 +14335,8 @@
         ]
       },
       "post": {
+        "deprecated": true,
+        "description": "Deprecated: single-request upload, kept for one release. Use the chunked POST /projects/{project_id}/uploads flow instead.",
         "operationId": "upload_raster_api_projects__project_id__rasters_post",
         "parameters": [
           {
@@ -11333,11 +14374,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/UploadRejected"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "The file failed validation"
           }
         },
         "security": [
@@ -11457,16 +14498,16 @@
         ]
       }
     },
-    "/api/rasters/{raster_id}": {
-      "delete": {
-        "operationId": "delete_raster_api_rasters__raster_id__delete",
+    "/api/projects/{project_id}/uploads": {
+      "get": {
+        "operationId": "list_open_uploads_api_projects__project_id__uploads_get",
         "parameters": [
           {
             "in": "path",
-            "name": "raster_id",
+            "name": "project_id",
             "required": true,
             "schema": {
-              "title": "Raster Id",
+              "title": "Project Id",
               "type": "integer"
             }
           }
@@ -11475,7 +14516,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UploadSessionOut"
+                  },
+                  "title": "Response List Open Uploads Api Projects  Project Id  Uploads Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -11496,7 +14543,174 @@
             "ADA token": []
           }
         ],
+        "summary": "List Open Uploads",
+        "tags": [
+          "uploads"
+        ]
+      },
+      "post": {
+        "operationId": "open_upload_api_projects__project_id__uploads_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadDuplicate"
+                }
+              }
+            },
+            "description": "The same file is already in the project"
+          },
+          "413": {
+            "description": "Larger than UPLOAD_MAX_BYTES"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Too many open uploads for this user"
+          },
+          "507": {
+            "description": "Not enough free disk for the upload and its ingest"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Open Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/rasters/{raster_id}": {
+      "delete": {
+        "operationId": "delete_raster_api_rasters__raster_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "raster_id",
+            "required": true,
+            "schema": {
+              "title": "Raster Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
         "summary": "Delete Raster",
+        "tags": [
+          "rasters"
+        ]
+      }
+    },
+    "/api/rasters/{raster_id}/restore": {
+      "post": {
+        "operationId": "restore_raster_api_rasters__raster_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "raster_id",
+            "required": true,
+            "schema": {
+              "title": "Raster Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The raster is not in the cold tier"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "The cold store is not configured or unreachable"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Restore Raster",
         "tags": [
           "rasters"
         ]
@@ -11733,6 +14947,331 @@
         "summary": "Raster Tile",
         "tags": [
           "tiles"
+        ]
+      }
+    },
+    "/api/uploads/{upload_id}": {
+      "delete": {
+        "operationId": "abort_upload_api_uploads__upload_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Not an open or rejected upload"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Abort Upload",
+        "tags": [
+          "uploads"
+        ]
+      },
+      "get": {
+        "operationId": "get_upload_api_uploads__upload_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Get Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/uploads/{upload_id}/chunks/{n}": {
+      "put": {
+        "operationId": "put_chunk_api_uploads__upload_id__chunks__n__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "n",
+            "required": true,
+            "schema": {
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Content-Range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content-Range"
+            }
+          },
+          {
+            "description": "hex SHA-256 of the body",
+            "in": "header",
+            "name": "X-Chunk-SHA256",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad hash, header or chunk length"
+          },
+          "409": {
+            "description": "The upload is closed, or this chunk differs from the one already received"
+          },
+          "413": {
+            "description": "Body larger than one chunk"
+          },
+          "416": {
+            "description": "Chunk index or Content-Range out of range"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Put Chunk",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/uploads/{upload_id}/complete": {
+      "post": {
+        "operationId": "complete_upload_api_uploads__upload_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/UploadComplete"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RasterOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "description": "Another request is completing this upload; poll GET /uploads/{upload_id} until status leaves 'completing'"
+          },
+          "409": {
+            "description": "Chunks are missing or the upload is closed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadRejected"
+                }
+              }
+            },
+            "description": "The file failed validation"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Complete Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/api/uploads/{upload_id}/sidecars/{kind}": {
+      "put": {
+        "operationId": "put_sidecar_api_uploads__upload_id__sidecars__kind__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "tfw",
+                "prj"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The upload is no longer open"
+          },
+          "413": {
+            "description": "Larger than 64 KiB"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Put Sidecar",
+        "tags": [
+          "uploads"
         ]
       }
     }

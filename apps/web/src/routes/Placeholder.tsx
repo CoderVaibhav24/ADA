@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Icon, type IconKey } from "@/lib/icons";
 
 import { usePlaceholderLabels } from "@/i18n/labels";
-import { HOME_PATH } from "./paths";
+import { ROOT_PATH } from "./paths";
 
 export interface PlaceholderProps {
   title: string;
@@ -44,7 +44,7 @@ export default function Placeholder({
       </p>
 
       <Button asChild variant="outline" size="sm">
-        <Link to={HOME_PATH}>
+        <Link to={ROOT_PATH}>
           <Icon name="action.back" className="size-4" />
           {labels.back}
         </Link>

@@ -14,6 +14,9 @@ import {
   removeFinding,
   removeSection,
   setFindingText,
+  setNoticeAct,
+  setNoticeRequired,
+  sideArea,
   toFindingsBody,
   validateFindingsForm,
   type FindingsFormState,
@@ -179,20 +182,36 @@ test("the area is square metres or nothing — never NaN on the wire", () => {
   assert.equal(bad.area, "invalid");
 });
 
-test("a required notice must name the act it would be issued under", () => {
+test("owner, act, sections, stage and sides are never mandatory on the web", () => {
   const base = withFindings("Shed erected on the setback");
-  assert.equal(
-    validateFindingsForm({ ...base, noticeRequired: true, noticeActCd: "" }).noticeAct,
-    "required",
-  );
-  assert.deepEqual(
-    validateFindingsForm({
-      ...base,
-      noticeRequired: true,
-      noticeActCd: "up_urban_planning_act",
-    }),
-    {},
-  );
+  assert.deepEqual(validateFindingsForm({ ...base, noticeRequired: true, noticeActCd: "" }), {});
+});
+
+test("owner phone and the two sides are validated only when typed", () => {
+  const base = withFindings("Shed erected on the setback");
+  const bad = validateFindingsForm({ ...base, ownerPhone: "12345", lengthM: "0", widthM: "10001" });
+  assert.equal(bad.ownerPhone, "invalid");
+  assert.equal(bad.length, "invalid");
+  assert.equal(bad.width, "invalid");
+  assert.deepEqual(validateFindingsForm({ ...base, lengthM: "12.5", widthM: "4" }), {});
+  assert.equal(sideArea({ ...base, lengthM: "12.5", widthM: "4" }), 50);
+  assert.equal(sideArea({ ...base, lengthM: "12.5", widthM: "" }), null);
+});
+
+test("the body carries the new optional fields, blank as null", () => {
+  const body = toFindingsBody({
+    ...withFindings("Shed erected on the setback"),
+    ownerName: " Sita Devi ",
+    ownerPhone: "+91 98765 43210",
+    constructionStageCd: "finishing",
+    lengthM: "12.5",
+    widthM: "",
+  });
+  assert.equal(body.owner_name, "Sita Devi");
+  assert.equal(body.owner_phone, "9876543210");
+  assert.equal(body.construction_stage_cd, "finishing");
+  assert.equal(body.length_m, 12.5);
+  assert.equal(body.width_m, null);
 });
 
 test("the body sends an emptied field as null, so the column is cleared", () => {
@@ -210,25 +229,33 @@ test("the body sends an emptied field as null, so the column is cleared", () => 
   assert.equal(body.occupant_phone, "9876543210");
 });
 
-// `sections: null` means "leave them alone" server-side; this form owns the
-// list on screen, so clearing it must clear the record.
-test("the body always carries a sections array, empty included", () => {
+// `sections` omitted means "leave them alone" server-side.
+test("untouched sections are omitted; touched ones are sent, empty included", () => {
   let state = findingsFormFrom(RECORDED_ROUND);
-  assert.deepEqual(toFindingsBody(state).sections, [
-    { act_cd: "up_urban_planning_act", section_cd: "s_27" },
-    { act_cd: "up_urban_planning_act", section_cd: "s_28" },
-  ]);
+  assert.equal("sections" in toFindingsBody(state), false);
 
   state = removeSection(state, "up_urban_planning_act", "s_27");
+  assert.deepEqual(toFindingsBody(state).sections, [
+    { act_cd: "up_urban_planning_act", section_cd: "s_28" },
+  ]);
   state = removeSection(state, "up_urban_planning_act", "s_28");
   assert.deepEqual(toFindingsBody(state).sections, []);
 });
 
-test("an act is not cited when no notice is required", () => {
-  const state = findingsFormFrom(RECORDED_ROUND);
-  const body = toFindingsBody({ ...state, noticeRequired: false });
+test("only sections under the chosen act are sent", () => {
+  let state = findingsFormFrom(RECORDED_ROUND);
+  state = setNoticeAct(state, "other_act");
+  assert.deepEqual(state.sections, []);
+  state = addSection(state, "other_act", "s_1");
+  assert.deepEqual(toFindingsBody(state).sections, [{ act_cd: "other_act", section_cd: "s_1" }]);
+});
+
+test("no notice clears the act and the sections", () => {
+  const state = setNoticeRequired(findingsFormFrom(RECORDED_ROUND), false);
+  const body = toFindingsBody(state);
   assert.equal(body.notice_required, false);
   assert.equal(body.notice_act_cd, null);
+  assert.deepEqual(body.sections, []);
 });
 
 test("blank rows are dropped from the body but are not an edit", () => {

@@ -1,15 +1,11 @@
 /**
  * Assign / Reassign — the caller `POST /cases/{ref}/assign` has not had.
  *
- * ## The assignee is a user id, not a picker
+ * ## Role first, then officer
  *
- * The only officer directory the portal could read is
- * `GET /api/icms/admin/users`, and it is guarded by `user.read` — a permission
- * the nodal officers who use this screen do not hold. A `Select` with nothing
- * legal to populate it is a dead control, so the field is the id itself, which
- * is the same answer `AssignInspectionDialog` reached for `surveyor_user_id`.
- * The moment a directory endpoint exists that this role may call, this input
- * becomes a picker and nothing else changes.
+ * `GET /cases/{ref}/assignees` answers with the roles the workflow admits as
+ * assignee and the enabled officers holding one of them in this case's zone —
+ * the same checks `POST /assign` makes, so every name offered is accepted.
  *
  * ## What the form demands is the server's answer, not this file's
  *
@@ -25,7 +21,7 @@
  * does not read would advertise a guarantee that is not there.
  */
 
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { CaseAssign } from "@/api/icms/cases";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,13 +32,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Icon } from "@/lib/icons";
+import { ActorName } from "@/components/icms/ActorName";
+import { useLanguage } from "@/i18n";
+import { useCaseAssignees } from "./ComplaintDetailData";
 import type { ComplaintDetailLabels } from "./ComplaintDetailLabels";
 import type { BuiltAction } from "./ComplaintDetailModel";
-import { Mono, WriteOutcome } from "./ComplaintDetailParts";
+import { WriteOutcome } from "./ComplaintDetailParts";
 
 export function ComplaintDetailAssignDialog({
   open,
@@ -51,6 +56,7 @@ export function ComplaintDetailAssignDialog({
   action,
   needsReason,
   currentAssignee,
+  currentAssigneeName,
   labels,
   pending,
   error,
@@ -65,19 +71,36 @@ export function ComplaintDetailAssignDialog({
   /** From the server's `requires`, never from the action's name. */
   needsReason: boolean;
   currentAssignee: string | null;
+  currentAssigneeName: string | null;
   labels: ComplaintDetailLabels;
   pending: boolean;
   error: unknown;
   onSubmit: (body: CaseAssign) => void;
 }) {
+  const roleId = useId();
   const assigneeId = useId();
   const noteId = useId();
   const reasonId = useId();
 
+  const { language } = useLanguage();
+  const options = useCaseAssignees(caseRef, open);
+  const roles = options.data?.roles ?? [];
+
+  const [pickedRole, setPickedRole] = useState("");
   const [assignee, setAssignee] = useState("");
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
   const [touched, setTouched] = useState(false);
+
+  // One eligible role needs no choosing.
+  const role = pickedRole !== "" ? pickedRole : roles.length === 1 ? (roles[0]?.role_cd ?? "") : "";
+  const candidates = useMemo(
+    () =>
+      (options.data?.candidates ?? []).filter(
+        (c) => role !== "" && c.role_cds.includes(role) && c.user_id !== currentAssignee,
+      ),
+    [options.data, role, currentAssignee],
+  );
 
   const reassigning = action === "reassign";
   const assigneeMissing = assignee.trim() === "";
@@ -102,31 +125,87 @@ export function ComplaintDetailAssignDialog({
             <p className="flex flex-wrap items-center gap-1.5 text-2xs text-fg-muted">
               <Icon name="case.assigned" className="size-3.5 shrink-0" />
               <span>{labels.assignment.body}</span>
-              <Mono className="text-fg-strong">{currentAssignee}</Mono>
+              <ActorName
+                className="text-fg-strong"
+                name={currentAssigneeName}
+                id={currentAssignee}
+              />
+            </p>
+          )}
+
+          {options.isPending && (
+            <p className="flex items-center gap-1.5 text-2xs text-fg-muted">
+              <Icon name="feedback.loading" spin className="size-3.5" />
+              {labels.assign.assigneesLoading}
+            </p>
+          )}
+          {options.isError && (
+            <p className="text-2xs text-status-danger-fg text-pretty">
+              {labels.assign.assigneesError} {options.error.message}
             </p>
           )}
 
           <div className="flex flex-col gap-1.5">
+            <Label htmlFor={roleId}>{labels.assign.roleLabel}</Label>
+            <Select
+              value={role}
+              disabled={roles.length === 0}
+              onValueChange={(next) => {
+                setPickedRole(next);
+                setAssignee("");
+              }}
+            >
+              <SelectTrigger id={roleId} className="w-full" aria-describedby={`${roleId}-hint`}>
+                <SelectValue placeholder={labels.assign.rolePlaceholder} />
+              </SelectTrigger>
+              <SelectContent>
+                {roles.map((r) => (
+                  <SelectItem key={r.role_cd} value={r.role_cd}>
+                    {language === "hi-IN" && r.label_hi ? r.label_hi : r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p id={`${roleId}-hint`} className="text-2xs text-fg-faint text-pretty">
+              {labels.assign.roleHint}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={assigneeId}>{labels.assign.assigneeLabel}</Label>
-            <Input
-              id={assigneeId}
+            <Select
               value={assignee}
-              required
-              placeholder={labels.assign.assigneePlaceholder}
-              autoComplete="off"
-              aria-describedby={`${assigneeId}-hint`}
-              aria-invalid={touched && assigneeMissing}
-              onBlur={() => {
+              disabled={candidates.length === 0}
+              onValueChange={(next) => {
+                setAssignee(next);
                 setTouched(true);
               }}
-              onChange={(event) => {
-                setAssignee(event.target.value);
-              }}
-            />
+            >
+              <SelectTrigger
+                id={assigneeId}
+                className="w-full"
+                aria-describedby={`${assigneeId}-hint`}
+                aria-invalid={touched && assigneeMissing}
+              >
+                <SelectValue placeholder={labels.assign.assigneePlaceholder} />
+              </SelectTrigger>
+              <SelectContent>
+                {candidates.map((c) => (
+                  <SelectItem key={c.user_id} value={c.user_id}>
+                    {c.name ?? c.username ?? c.user_id}
+                    {c.name !== null && c.username !== null && (
+                      <span className="text-fg-faint"> · {c.username}</span>
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p id={`${assigneeId}-hint`} className="text-2xs text-fg-faint text-pretty">
-              {touched && assigneeMissing
-                ? labels.assign.assigneeRequired
-                : labels.assign.assigneeHint}
+              {role !== "" && options.isSuccess && candidates.length === 0
+                ? labels.assign.noCandidates
+                : touched && assigneeMissing
+                  ? labels.assign.assigneeRequired
+                  : labels.assign.assigneeHint}
             </p>
           </div>
 

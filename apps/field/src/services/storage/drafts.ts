@@ -58,11 +58,36 @@ export function saveDraftField(
   return next;
 }
 
+// Replaces several fields at once — an answer and the answers it decides — under one stamp.
+export function saveDraftFields(scope: DraftScope, values: DraftValues): Draft {
+  const existing = readDraft(scope);
+  const next: Draft = {
+    values: { ...(existing?.values ?? {}), ...values },
+    updatedAt: new Date().toISOString(),
+  };
+  writeJson(draftStore, draftKey(scope), next);
+  return next;
+}
+
 // Replaces every value in one step's draft.
 export function saveDraft(scope: DraftScope, values: DraftValues): Draft {
   const next: Draft = { values, updatedAt: new Date().toISOString() };
   writeJson(draftStore, draftKey(scope), next);
   return next;
+}
+
+// Moves a draft to another scope unchanged, stamp included. False when there was none to move.
+export function moveDraft(from: DraftScope, to: DraftScope): boolean {
+  const raw = draftStore.getString(draftKey(from));
+  if (raw === undefined) return false;
+  draftStore.set(draftKey(to), raw);
+  draftStore.remove(draftKey(from));
+  return true;
+}
+
+// The storage key prefix of every draft for one case, for listeners that follow a moving scope.
+export function draftKeyPrefix(caseRef: string): string {
+  return `draft:${caseRef}:`;
 }
 
 /*

@@ -163,6 +163,14 @@ class FakeKeycloak:
         self._record("realm_roles")
         return [dict(role) for role in self.roles]
 
+    def realm_role(self, name: str) -> dict | None:
+        self._record(f"realm_role {name}")
+        return next((dict(r) for r in self.roles if r["name"] == name), None)
+
+    def create_realm_role(self, name: str, description: str | None) -> None:
+        self._record(f"create_realm_role {name}")
+        self.roles.append({"id": f"role-{len(self.roles)}", "name": name})
+
     def user_realm_roles(self, user_id: str) -> list[dict]:
         self._record(f"user_realm_roles {user_id}")
         held = self.role_mappings.get(user_id, set())

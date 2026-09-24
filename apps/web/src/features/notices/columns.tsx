@@ -42,6 +42,8 @@ import type { DataTableColumnMeta, RowAction } from "@/components/data-table/typ
 import { StatusChip } from "@/components/icms/StatusChip";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/lib/icons";
+import { ActorName } from "@/components/icms/ActorName";
+import { actorLabel } from "@/lib/actor";
 import type { NoticesLabels } from "./noticeLabels";
 import { daysRemaining, isOverdue, orderedSections, printableOf } from "./noticeModel";
 import { NOTICE_STATUS_META } from "./noticeStatus";
@@ -351,17 +353,17 @@ export function buildNoticeColumns({
         // who signed a notice is recoverable without opening it.
         menuLabel: labels.columns.issuedBy,
         minWidth: "9rem",
-        exportValue: (row) => row.issued_by ?? "",
+        exportValue: (row) => actorLabel(row.issued_by_name, row.issued_by).text,
       }),
       cell: ({ row }) =>
         row.original.issued_by == null ? (
           <span className="text-fg-faint">{labels.notIssued}</span>
         ) : (
-          // The Keycloak subject is a UUID and there is no local users table to
-          // join a name from — the same position the inspection register is in.
-          <span className="font-mono text-2xs break-all text-fg-faint">
-            {row.original.issued_by}
-          </span>
+          <ActorName
+            className="text-fg-base"
+            name={row.original.issued_by_name}
+            id={row.original.issued_by}
+          />
         ),
     },
 

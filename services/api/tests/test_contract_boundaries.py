@@ -81,9 +81,9 @@ class TestPaging:
         first = client.get(f"{ICMS}/cases", params={"size": 1, "page": 1}).json()
         last = client.get(f"{ICMS}/cases", params={"size": 1, "page": first["pages"]}).json()
 
-        # Nine since 2026-09-23: `contract_world` seeds CMP-2026-0011 in
-        # `confirmed` for Batch 6's issue_notice, and the nodal officer holds TAJ.
-        assert (first["total"], first["pages"]) == (9, 9)
+        # Ten: `contract_world` adds CMP-2026-0011 (confirmed) and CMP-2026-0012
+        # (notice_issued) to TAJ, which the nodal officer holds.
+        assert (first["total"], first["pages"]) == (10, 10)
         assert first["next_cursor"] == "2"
         assert last["next_cursor"] is None
 

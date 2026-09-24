@@ -16,6 +16,9 @@
  *                 icon rail, the top bar, the account menu — is mounted, so a
  *                 route added here is navigable and chromed for free.
  *
+ *                 Each screen group sits behind <RequirePermission> on its
+ *                 `*.access` code, the same code its rail entry is gated on.
+ *
  *   catch-all     a real 404 screen. The previous tree silently redirected
  *                 every unknown path to "/", which made a broken link
  *                 indistinguishable from a working one.
@@ -52,9 +55,9 @@ import Login from "./routes/Login";
 import NotFound from "./routes/NotFound";
 import ProtectedLayout from "./routes/ProtectedLayout";
 import RequireAuth from "./routes/RequireAuth";
+import RequirePermission, { HomeRedirect } from "./routes/RequirePermission";
 import {
   CALLBACK_PATH,
-  HOME_PATH,
   LEGACY_SIGNED_OUT_PATH,
   LOGIN_PATH,
   ROUTES,
@@ -71,47 +74,46 @@ export default function App() {
       />
       <Route element={<RequireAuth />}>
         <Route element={<ProtectedLayout />}>
-          <Route path="/" element={<Navigate to={HOME_PATH} replace />} />
-          <Route path={ROUTES.changeDetection} element={<ChangeDetection />} />
-          {/* Not wrapped in a permission guard: the screen gates itself on
-              `dashboard.read` from /me/capabilities, which it has to fetch
-              anyway, and a guard route would need the same call. ada-api
-              refuses all five dashboard reads regardless. */}
-          <Route path={ROUTES.dashboard} element={<Dashboard />} />
-          <Route path={ROUTES.complaints} element={<ComplaintsRegister />} />
-          {/* Stage 1 of the case spine. Not wrapped in a permission guard: the
-              screen gates itself on the `raise` ACTION from /me/capabilities,
-              which it has to fetch anyway, and a guard route would need the
-              same call. ada-api enforces the transition regardless. */}
-          <Route path={ROUTES.complaintNew} element={<CreateComplaint />} />
-          <Route path={ROUTES.complaint()} element={<ComplaintDetail />} />
-          <Route path={ROUTES.inspections} element={<InspectionsRegister />} />
-          <Route path={ROUTES.inspection()} element={<InspectionDetail />} />
-          <Route
-            path={ROUTES.inspectionFindings()}
-            element={<InspectionFindings />}
-          />
-          <Route path={ROUTES.notices} element={<NoticesRegister />} />
-          {/* Stage 7, the last thing this portal does to a case. Not wrapped in
-              a permission guard: the screen gates itself on the `issue_notice`
-              ACTION in the CASE's `allowed_actions` — not on a permission code,
-              and never on a status string — which it has to fetch anyway, and a
-              guard route would need the same call. ada-api enforces the
-              transition regardless. */}
-          <Route path={ROUTES.noticeNew} element={<NoticeCreate />} />
-          <Route path={ROUTES.notice()} element={<NoticeDetail />} />
-          <Route path={ROUTES.reports} element={<Reports />} />
-          {/* Neither administration route is wrapped in a permission guard
-              here. Each screen gates itself on its own code from
-              /me/capabilities — `policy.read` and `user.read` — which it has to
-              fetch anyway, and a guard route would need the same call: two
-              places to answer one question. ada-api enforces both regardless.
-
-              Order does not matter to the router (these are exact paths, not
-              prefixes), but it matters to a reader: /administration/users is a
-              screen under Administration, not a third section beside it. */}
-          <Route path={ROUTES.administration} element={<PolicyAdmin />} />
-          <Route path={ROUTES.administrationUsers} element={<UserAdministration />} />
+          <Route path="/" element={<HomeRedirect />} />
+          <Route element={<RequirePermission code="change_detection.access" />}>
+            <Route path={ROUTES.changeDetection} element={<ChangeDetection />} />
+          </Route>
+          {/* The guard is the screen gate; Dashboard still gates its reads on dashboard.read. */}
+          <Route element={<RequirePermission code="dashboard.access" />}>
+            <Route path={ROUTES.dashboard} element={<Dashboard />} />
+          </Route>
+          <Route element={<RequirePermission code="complaints.access" />}>
+            <Route path={ROUTES.complaints} element={<ComplaintsRegister />} />
+            <Route path={ROUTES.complaint()} element={<ComplaintDetail />} />
+          </Route>
+          {/* Stage 1 of the case spine. The screen still gates the submit on the `raise` ACTION. */}
+          <Route element={<RequirePermission code="complaint_create.access" />}>
+            <Route path={ROUTES.complaintNew} element={<CreateComplaint />} />
+          </Route>
+          <Route element={<RequirePermission code="inspections.access" />}>
+            <Route path={ROUTES.inspections} element={<InspectionsRegister />} />
+            <Route path={ROUTES.inspection()} element={<InspectionDetail />} />
+            <Route
+              path={ROUTES.inspectionFindings()}
+              element={<InspectionFindings />}
+            />
+          </Route>
+          {/* NoticeCreate additionally needs notice.issue and the case's `issue_notice` action. */}
+          <Route element={<RequirePermission code="notices.access" />}>
+            <Route path={ROUTES.notices} element={<NoticesRegister />} />
+            <Route path={ROUTES.noticeNew} element={<NoticeCreate />} />
+            <Route path={ROUTES.notice()} element={<NoticeDetail />} />
+          </Route>
+          <Route element={<RequirePermission code="reports.access" />}>
+            <Route path={ROUTES.reports} element={<Reports />} />
+          </Route>
+          {/* Two guards, because Administration and Officers are gated on different codes. */}
+          <Route element={<RequirePermission code="administration.access" />}>
+            <Route path={ROUTES.administration} element={<PolicyAdmin />} />
+          </Route>
+          <Route element={<RequirePermission code="officers.access" />}>
+            <Route path={ROUTES.administrationUsers} element={<UserAdministration />} />
+          </Route>
         </Route>
       </Route>
       <Route path="*" element={<NotFound />} />
