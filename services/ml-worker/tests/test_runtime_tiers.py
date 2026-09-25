@@ -124,9 +124,11 @@ def test_estimate_seconds_is_monotonic():
 
 def test_health_ready_reports_the_runtime(engine, db, monkeypatch):
     from app import jobs
+    from app.api.v1 import health
     from app.main import app
 
     monkeypatch.setattr(jobs, "requeue_stale", lambda: None)
+    monkeypatch.setattr(health, "missing_ada_weights", lambda: [])
     with TestClient(app) as client:
         body = client.get("/health/ready").json()
     assert body["status"] == "ok"

@@ -31,7 +31,8 @@ def test_change_threshold_is_not_redeclared_here():
     "field,expected",
     [
         ("model_mode", "segdiff"),
-        ("building_backend", "changestar"),
+        ("building_backend", "ada"),
+        ("landcover_backend", "ada"),
         ("vegetation_mode", "learned"),
         ("sam_backend", "sam2"),
         ("instance_decider", "shadow"),

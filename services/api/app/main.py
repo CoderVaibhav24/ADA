@@ -221,7 +221,8 @@ async def ready(response: Response) -> dict:
 
 
 _RUNTIME_FIELDS = ("backend", "tier", "device_name", "fp16", "ort_provider", "gpu_budget_gb",
-                   "grid_cap_px", "eta_s_per_mpx", "eta_s_at_grid_cap", "queue_depth")
+                   "grid_cap_px", "eta_s_per_mpx", "eta_s_at_grid_cap", "queue_depth",
+                   "building_backend", "landcover_backend")
 
 
 # Proxies ada-ml's readiness, whitelisted, so the console can show the tier and a CPU-mode ETA.

@@ -112,7 +112,10 @@ class TestHealth:
     def test_liveness_needs_no_token(self, client):
         assert client.get("/health/live").status_code == 200
 
-    def test_readiness_reports_the_queue(self, client):
+    def test_readiness_reports_the_queue(self, client, monkeypatch):
+        from app.api.v1 import health
+
+        monkeypatch.setattr(health, "missing_ada_weights", lambda: [])
         body = client.get("/health/ready").json()
         assert body["status"] == "ok"
         assert "queue_depth" in body

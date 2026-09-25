@@ -62,8 +62,14 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("client_id", sa.String(length=255), nullable=False),
         sa.Column("enabled", sa.Boolean(), server_default="true", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.CheckConstraint("key ~ '^[a-z0-9][a-z0-9_-]*$'", name="ck_projects_key_slug"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("key"),
@@ -84,8 +90,14 @@ def upgrade() -> None:
         sa.Column("subject", sa.Text(), nullable=True),
         sa.Column("body", sa.Text(), nullable=False),
         sa.Column("active", sa.Boolean(), server_default="true", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.CheckConstraint(
             "channel <> 'email' OR subject IS NOT NULL", name="ck_templates_email_has_subject"
@@ -113,12 +125,20 @@ def upgrade() -> None:
         sa.Column("recipient_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("template_key", sa.String(length=128), nullable=False),
         sa.Column("locale", sa.String(length=16), server_default="en", nullable=False),
-        sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False),
+        sa.Column(
+            "payload", postgresql.JSONB(astext_type=sa.Text()), server_default="{}",
+            nullable=False,
+        ),
         sa.Column("channels", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("status", notification_status, server_default="accepted", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="RESTRICT"),
-        sa.CheckConstraint("jsonb_typeof(channels) = 'array'", name="ck_notifications_channels_array"),
+        sa.CheckConstraint(
+            "jsonb_typeof(channels) = 'array'", name="ck_notifications_channels_array",
+        ),
         sa.CheckConstraint(
             "jsonb_array_length(channels) > 0", name="ck_notifications_channels_nonempty"
         ),
@@ -127,7 +147,9 @@ def upgrade() -> None:
         sa.UniqueConstraint("project_id", "idempotency_key", name="uq_notifications_idempotency"),
     )
     op.create_index("ix_notifications_created_at", "notifications", ["created_at"])
-    op.create_index("ix_notifications_project_created", "notifications", ["project_id", "created_at"])
+    op.create_index(
+        "ix_notifications_project_created", "notifications", ["project_id", "created_at"],
+    )
     op.create_index("ix_notifications_recipient", "notifications", ["project_id", "recipient_id"])
 
     # -- deliveries ---------------------------------------------------------
@@ -145,8 +167,14 @@ def upgrade() -> None:
         sa.Column("provider_message_id", sa.String(length=255), nullable=True),
         sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["notification_id"], ["notifications.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["template_id"], ["templates.id"], ondelete="SET NULL"),
@@ -154,7 +182,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         # Makes a second fan-out for the same message a no-op rather than a
         # duplicate email. Fan-out is at-least-once, so this will be exercised.
-        sa.UniqueConstraint("notification_id", "channel", name="uq_deliveries_notification_channel"),
+        sa.UniqueConstraint(
+            "notification_id", "channel", name="uq_deliveries_notification_channel",
+        ),
     )
     op.create_index("ix_deliveries_created_at", "deliveries", ["created_at"])
     op.create_index("ix_deliveries_status_due", "deliveries", ["status", "next_attempt_at"])
@@ -170,7 +200,10 @@ def upgrade() -> None:
         sa.Column("partition_key", sa.String(length=255), nullable=False),
         sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["notification_id"], ["notifications.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("event_id"),

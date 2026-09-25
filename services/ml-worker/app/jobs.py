@@ -34,7 +34,7 @@ from ada_platform.logging import request_id_bound
 from ada_platform.requestid import new_request_id
 from sqlalchemy import or_, select
 
-from . import notifier, preprocess, vectorize
+from . import notifier, parcels, preprocess, vectorize
 from .config import settings
 from .ml import engine as ml_engine
 from .ml import gpu
@@ -446,7 +446,7 @@ class _Ladder:
 
     def __init__(self, tier: gpu.Tier):
         self.tier = tier
-        self.batch = tier.batch
+        self.batch = min(tier.batch, _ada_batch_ceiling(tier))
         self.grid_cap = tier.grid_cap_px
         self.grid_px: int | None = None
         self.steps: list[str] = []
@@ -459,6 +459,15 @@ class _Ladder:
         ceiling = min(self.grid_cap, self.grid_px or self.grid_cap)
         smaller = [g for g in gpu.GRID_STEPS if g < ceiling]
         return smaller[0] if smaller else None
+
+
+# The ADA backends clamp their batch below the tier's; start the ladder there, not above it.
+def _ada_batch_ceiling(tier: gpu.Tier) -> int:
+    if "ada" not in (settings.building_backend, settings.landcover_backend):
+        return tier.batch
+    from .ml.ada_backends import default_batch_size
+
+    return default_batch_size({"metal": "mps"}.get(tier.name, tier.name))
 
 
 # Drops every cached model and the allocator cache so the next attempt starts empty.
@@ -601,6 +610,21 @@ def _touch_rasters(ids: tuple[int, int], **fields) -> None:
         db.commit()
 
 
+def _parcel_geoms(pair, records: list | None = None) -> list | None:
+    """Cadastre under the scene for footprint regularisation; None when off, empty or unreadable."""
+    if not settings.regularize_footprints:
+        return None
+    try:
+        if records is not None:
+            geoms = parcels._to_crs([r.geometry for r in records], pair.crs)
+        else:
+            geoms = parcels.scene_parcels_in_crs(SessionLocal, pair)
+    except Exception as exc:
+        log.warning("parcels: cadastre unavailable for regularisation: %s", _short(exc))
+        return None
+    return geoms or None
+
+
 def _run_analysis(job_id: int) -> bool:
     """True when this run wrote the result; False when there was nothing to do."""
     with SessionLocal() as db:
@@ -643,7 +667,8 @@ def _run_analysis(job_id: int) -> bool:
         except _ShrinkGrid:
             _update(job_id, progress=0.02,
                     stage=f"Out of memory — retrying on a {ladder.grid_cap} px grid")
-    pair, prob, instances, instance_ids, instance_diag, backend_name, models_used = result
+    (pair, prob, instances, instance_ids, instance_diag, backend_name, models_used,
+     parcel_stats, parcel_records) = result
 
     _update(job_id, progress=0.72, stage="Writing change-mask COG")
     mask_path = settings.masks_dir / f"job_{job_id}_mask.tif"
@@ -659,6 +684,7 @@ def _run_analysis(job_id: int) -> bool:
     features = vectorize.extract_polygons(
         prob, pair.valid, pair.t1, pair.t2, pair.transform, pair.crs,
         pair.resolution_m, zones, instances, instance_ids,
+        parcels=_parcel_geoms(pair, parcel_records),
     )
 
     illegal = sum(1 for f in features if f["properties"]["status"] == "illegal")
@@ -675,7 +701,9 @@ def _run_analysis(job_id: int) -> bool:
         "instance_decider": instance_diag.get("decider"),
         "seg_trust_iou": (round(instance_diag["seg_trust"], 3)
                           if "seg_trust" in instance_diag else None),
-        "changed_area_m2": round(sum(f["properties"]["area_m2"] for f in features), 1),
+        "changed_area_m2": round(sum(f["properties"].get("raw_area_m2",
+                                                         f["properties"]["area_m2"])
+                                     for f in features), 1),
         "mode": mode,
         "model": backend_name,
         "models_used": [*runtime.pop("lines"), *models_used, *ladder.steps],
@@ -683,6 +711,7 @@ def _run_analysis(job_id: int) -> bool:
         "coregistration_shift_px": [round(v, 2) for v in pair.shift_px],
         "false_color_corrected": {"t1": pair.cir_corrected[0],
                                   "t2": pair.cir_corrected[1]},
+        "parcels": parcel_stats,
         **runtime,
     }
     written = _persist_result(job_id, features, {
@@ -737,6 +766,9 @@ def _analyse(job_id: int, mode: str, ladder: _Ladder, sources: tuple):
     # CD paths emit a bare probability raster and leave these None.
     instances = instance_ids = None
     instance_diag: dict = {}
+    parcel_stats: dict = {"skipped": "no per-epoch building maps in this mode"}
+    parcel_records = None
+    _clear_parcel_rows(job_id)
 
     if mode == "diff":
         # --- Diff Mode -------------------------------------------------------
@@ -745,6 +777,7 @@ def _analyse(job_id: int, mode: str, ladder: _Ladder, sources: tuple):
         # suppressed. Seconds instead of minutes — this is the officer's quick
         # triage pass, not the evidence-grade output.
         backend_name = "diff_mode (classical colour + structure difference)"
+        parcel_stats = {"skipped": "classical mode"}
         models_used = ["Co-registration: FFT phase correlation (classical)",
                        "Change signal: colour |ΔRGB| + colour-invariant edge diff",
                        "Vegetation suppression: NDVI / excess-green index"]
@@ -778,18 +811,26 @@ def _analyse(job_id: int, mode: str, ladder: _Ladder, sources: tuple):
         if settings.release_models_between_stages:
             ml_engine.release_seg_backend()
 
+        parcel_stats, parcel_records = _parcel_stage(job_id, ladder, pair, b1, b2)
+
         # Land cover gives vegetation without a colour rule, and supplies the
         # built/open context the instance classifier trains on.
         lc1 = lc2 = None
         veg1, veg2 = pair.veg1, pair.veg2
         if settings.vegetation_mode == "learned":
             try:
-                _update(job_id, progress=0.56, stage="Land cover — SegFormer/LoveDA")
+                lc_label = ("ADA land cover" if settings.landcover_backend == "ada"
+                            else "SegFormer/LoveDA")
+                _update(job_id, progress=0.56, stage=f"Land cover: {lc_label}")
+
+                lc_names: list[str] = []
 
                 def landcover(img, start):
                     def run(batch):
                         from .ml.landcover import get_backend as landcover_backend
-                        _cap_batch(landcover_backend(), batch)
+                        backend = _cap_batch(landcover_backend(), batch)
+                        lc_names.append(getattr(backend, "name",
+                                                settings.landcover_model_repo))
                         return ml_engine.landcover_probs(
                             img, pair.valid,
                             lambda f: _update(job_id, progress=start + 0.05 * f))
@@ -801,8 +842,8 @@ def _analyse(job_id: int, mode: str, ladder: _Ladder, sources: tuple):
                 thr = settings.vegetation_threshold
                 veg1 = (lc1[list(VEGETATION_CLASSES)].sum(0) >= thr) & pair.valid
                 veg2 = (lc2[list(VEGETATION_CLASSES)].sum(0) >= thr) & pair.valid
-                models_used.append(
-                    f"Land cover / vegetation: {settings.landcover_model_repo}")
+                lc_name = lc_names[-1] if lc_names else settings.landcover_model_repo
+                models_used.append(f"Land cover / vegetation: {lc_name}")
             except _LadderSignal:
                 raise
             except Exception:
@@ -861,7 +902,35 @@ def _analyse(job_id: int, mode: str, ladder: _Ladder, sources: tuple):
         prob = _stage(ladder, "change inference", change_map)
         prob = ml_engine.suppress_vegetation_changes(prob, pair.veg1, pair.veg2)
 
-    return pair, prob, instances, instance_ids, instance_diag, backend_name, models_used
+    return (pair, prob, instances, instance_ids, instance_diag, backend_name, models_used,
+            parcel_stats, parcel_records)
+
+
+# Every run starts with no parcel rows, so classical, disabled or failed runs leave none stale.
+def _clear_parcel_rows(job_id: int) -> None:
+    try:
+        parcels.clear_rows(SessionLocal, job_id)
+    except Exception:
+        log.warning("job %s: could not clear earlier parcel rows", job_id, exc_info=True)
+
+
+# Stats plus the parcel records; never fails the analysis, only a grid shrink restarts it.
+def _parcel_stage(job_id: int, ladder: _Ladder, pair, seg1, seg2) -> tuple[dict, list | None]:
+    if not settings.parcel_stage_enabled:
+        return {"skipped": "disabled (PARCEL_STAGE_ENABLED=false)"}, None
+    _update(job_id, progress=0.56, stage="Measuring built area per parcel")
+    try:
+        summary = _stage(ladder, "parcels",
+                         lambda _b: parcels.run_parcel_stage(SessionLocal, job_id, pair,
+                                                             seg1, seg2),
+                         batched=False)
+    except _ShrinkGrid:
+        raise
+    except Exception as exc:
+        log.warning("job %s: parcel stage failed; the analysis continues without it",
+                    job_id, exc_info=True)
+        return {"error": _short(exc)}, None
+    return summary.as_stats(), getattr(summary, "records", None)
 
 
 # A polygon an officer has adjudicated, or a case was raised from, outlives any re-run.

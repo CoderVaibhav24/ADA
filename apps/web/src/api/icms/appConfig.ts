@@ -45,7 +45,9 @@ export async function fetchAppConfig(signal: AbortSignal): Promise<AppConfig> {
     !isFiniteNumber(raw.gps_accuracy_flag_m) ||
     !isFiniteNumber(raw.device_timestamp_max_age_hours) ||
     !isCount(raw.minimum_photo_count) ||
-    !isCount(raw.maximum_photo_count)
+    !isCount(raw.maximum_photo_count) ||
+    typeof raw.geofence_enforced !== "boolean" ||
+    !isFiniteNumber(raw.geofence_radius_m)
   ) {
     throw new IcmsApiError(200, {
       code: "malformed_response",
@@ -59,5 +61,7 @@ export async function fetchAppConfig(signal: AbortSignal): Promise<AppConfig> {
     device_timestamp_max_age_hours: raw.device_timestamp_max_age_hours,
     minimum_photo_count: raw.minimum_photo_count,
     maximum_photo_count: raw.maximum_photo_count,
+    geofence_enforced: raw.geofence_enforced,
+    geofence_radius_m: raw.geofence_radius_m,
   };
 }

@@ -496,7 +496,7 @@ def building_change_prob(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
         # BEFORE segmentation is itself trustworthy (see above).
         if trust_before:
             new_frac = float((comp & ~b1_dil[sl]).sum()) / area_px
-            if new_frac < settings.new_instance_min_frac:
+            if new_frac < settings.effective_new_instance_min_frac():
                 rejected["existed"] += 1
                 continue
 
@@ -524,6 +524,14 @@ def building_change_prob(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
     return out.astype(np.float32)
 
 
+# Settings as the instance rules should see them: new_instance_min_frac for the active backend.
+def _instance_settings():
+    frac = settings.effective_new_instance_min_frac()
+    if frac == settings.new_instance_min_frac:
+        return settings
+    return settings.model_copy(update={"new_instance_min_frac": frac})
+
+
 def analyse_instances(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
                       t1: np.ndarray | None = None, t2: np.ndarray | None = None,
                       veg1: np.ndarray | None = None, veg2: np.ndarray | None = None,
@@ -541,9 +549,10 @@ def analyse_instances(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
     from . import classifier
     from . import instances as inst_mod
 
-    cands, seg_trust = inst_mod.extract(b1, b2, valid, settings, resolution_m,
+    cfg = _instance_settings()
+    cands, seg_trust = inst_mod.extract(b1, b2, valid, cfg, resolution_m,
                                         lc1, lc2, t1, t2, veg1, veg2)
-    learned, mode = classifier.score_instances(cands, settings)
+    learned, mode = classifier.score_instances(cands, cfg)
 
     out = np.zeros_like(b2, dtype=np.float32)
     # Which instance each pixel came from, so the vectorizer can carry a
@@ -552,7 +561,7 @@ def analyse_instances(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
     kept: list = []
     agree = disagree = 0
     for i, c in enumerate(cands):
-        rule = inst_mod.rule_score(c, settings)
+        rule = inst_mod.rule_score(c, cfg)
         if learned is not None:
             lscore = float(learned[i])
             if mode == "shadow":
@@ -573,7 +582,7 @@ def analyse_instances(b1: np.ndarray, b2: np.ndarray, valid: np.ndarray,
             id_map[c.sl][c.mask] = c.idx
 
     if settings.detect_demolition:
-        demolished = inst_mod.find_demolitions(b1, b2, valid, settings, resolution_m)
+        demolished = inst_mod.find_demolitions(b1, b2, valid, cfg, resolution_m)
         # Offset demolition ids so they cannot collide with T2 instance ids.
         base = max((c.idx for c in kept), default=0) + 1000
         for d in demolished:

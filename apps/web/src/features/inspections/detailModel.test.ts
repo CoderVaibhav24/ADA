@@ -46,6 +46,7 @@ function detail(over: Partial<InspectionDetail> = {}): InspectionDetail {
   return {
     ...row({ inspection_ref: "INS-2026-0089", round_no: 2 }),
     case_status: "under_inspection",
+    area_mismatch: false,
     occupant_name: null,
     occupant_phone: null,
     area_type_cd: null,

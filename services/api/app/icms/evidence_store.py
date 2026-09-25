@@ -71,7 +71,8 @@ def store(db: Session, case_ref: str, kind: str, upload: UploadFile) -> tuple:
     return result, f"{case_ref}/{stored.name}", created
 
 
-# Rewrites an iPhone HEIC in place as an upright JPEG with its EXIF (GPS) and colour profile kept; 415 if undecodable.
+# Rewrites an iPhone HEIC in place as an upright JPEG with its EXIF (GPS) and colour
+# profile kept; 415 if undecodable.
 def _heic_to_jpeg(part: Path, result, max_pixels: int | None):
     if not _HEIF_READY:
         raise ApiError(415, "unsupported_image_format",

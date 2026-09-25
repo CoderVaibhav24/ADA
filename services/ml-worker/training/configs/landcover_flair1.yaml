@@ -1,0 +1,94 @@
+# Land cover -- stage one, and the only blocking licence item.
+#
+# Replaces IgorNer/segformer-b5-loveda, which fails twice over: NVIDIA's
+# SegFormer licence restricts its encoder to research use and propagates that
+# to derivatives, and LoveDA itself is CC BY-NC-SA 4.0. Until this lands, ship
+# VEGETATION_MODE=index -- legal today, and measurably worse.
+#
+# Tuned for a Lenovo LOQ: RTX 4050 Laptop (6 GB VRAM), Ryzen 7, 24 GB RAM,
+# Windows, dataset and runs on an external SSD.
+#
+#   python -m ada_train doctor -c configs/landcover_flair1.yaml
+#   python -m ada_train fit    -c configs/landcover_flair1.yaml
+#
+# Smoke it first -- ten minutes, and it catches every path and shape problem:
+#   python -m ada_train fit -c configs/landcover_flair1.yaml \
+#       -o name=smoke data.fraction=0.01 train.epochs=2 train.warmup_steps=20
+
+name: landcover-flair1
+# Put runs on the SSD: checkpoints are ~100 MB each and there are two per run.
+out_dir: E:/ada/runs
+task: multiclass
+device: auto
+resume: true
+
+model:
+  arch: unet
+  # ResNet-34 is the encoder ceiling at 6 GB and 512 px. Swin-v2-B from
+  # SatlasPretrain and SegFormer-B5 are both better and neither fits in
+  # training. Revisit on a bigger box -- that is what more VRAM buys here.
+  encoder: resnet34
+  encoder_weights: imagenet
+  # RGB only, matching what the serving pipeline can actually supply. FLAIR-1
+  # also ships NIR and elevation and both would help, but ADA has neither at
+  # inference, and training on channels we cannot serve produces a model that
+  # validates well and degrades silently in production.
+  in_channels: 3
+  # Overwritten from the dataset module (FLAIR-1's 13 baseline classes).
+  classes: 13
+  grad_checkpoint: false
+
+data:
+  dataset: flair1
+  root: E:/ada/datasets/flair1
+  # Set this after running `ada_train pack` if the dataloader turns out to be
+  # IOPS-bound on the USB drive. Full FLAIR-1 packs to ~81 GB, a quarter to ~20.
+  packed: null
+  crop: 512
+  # A quarter of FLAIR-1 is ~19k patches: about six hours for 40 epochs
+  # instead of about two days, stratified so every department stays present.
+  # Raise to 1.0 for the run that actually ships.
+  fraction: 0.25
+  val_fraction: 0.1
+  workers: 6
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 2
+
+train:
+  epochs: 40
+  # 4 x 4 = effective batch 16, which fits 6 GB at 512 px in bf16.
+  batch_size: 4
+  grad_accum: 4
+  lr: 0.0003
+  encoder_lr_scale: 0.1
+  weight_decay: 0.01
+  warmup_steps: 500
+  precision: bf16
+  channels_last: true
+  clip_grad_norm: 1.0
+  # Every ~500 steps is a few minutes of work at risk. A Windows update reboot
+  # or a bumped USB cable mid-run is the expected failure, not a rare one.
+  save_every_steps: 500
+  val_every_epochs: 1
+  early_stop_patience: 8
+  seed: 1337
+  cudnn_benchmark: true
+
+loss:
+  ce_weight: 1.0
+  dice_weight: 1.0
+  # Inverse-frequency, sampled once and cached. Without it the fit collapses
+  # onto agricultural land, which is most of rural France.
+  class_weights: auto
+  label_smoothing: 0.0
+  ignore_index: 255
+
+licence:
+  allow_share_alike: false
+
+export:
+  # Land cover serves at 512 px tiles, as it does today.
+  tile_sizes: [512]
+  opset: 18
+  verify: true

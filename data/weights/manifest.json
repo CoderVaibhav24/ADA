@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-04T06:14:21.459589+00:00",
+  "generated_at": "2026-09-25T10:44:35.672100+05:30",
   "note": "Vendored model weights. The app loads these from disk; no network access is required at runtime.",
   "models": [
     {
@@ -41,6 +41,30 @@
       "bytes": 897932301,
       "license": "Apache-2.0",
       "role": "Full-structure refinement of confirmed detections (GPU). hiera-large, not -small: this decides the reported OUTLINE. For SAM 3 set SAM_BACKEND=sam3 \u2014 facebook/sam3 is GATED, so request access on the model page and log in first"
+    },
+    {
+      "key": "ada_footprint",
+      "source": "ADA training run footprint_v1",
+      "requested_revision": "footprint_v1",
+      "resolved_commit": "footprint_v1@epoch2",
+      "local_path": "data/weights/ada-footprint-v1/model.safetensors",
+      "local_only": true,
+      "bytes": 357750140,
+      "sha256": "1403c6f304c8517aa3051ad08ae20517d90e3b8e436ad71ab8bad66d75d5c4ae",
+      "license": "ADA-owned weights. Initialised from IGN FLAIR-HUB LC-A RGB swinbase-upernet (Licence Ouverte / Etalab 2.0). Labels: Google Open Buildings V3 (CC BY 4.0), Microsoft GlobalML Building Footprints (CDLA-Permissive-2.0), FLAIR pseudo-labels. Imagery: Lucknow 2020/2025 grids, provenance unconfirmed.",
+      "role": "Per-epoch building footprints (ADA UPerNet Swin-B, 384 px, GPU). Default; BUILDING_BACKEND=changestar reverts"
+    },
+    {
+      "key": "ada_landcover",
+      "source": "ADA training run landcover7_v3",
+      "requested_revision": "landcover7_v3",
+      "resolved_commit": "landcover7_v3@epoch14",
+      "local_path": "data/weights/ada-landcover7-v3/model.safetensors",
+      "local_only": true,
+      "bytes": 357751700,
+      "sha256": "d82a45e684aea7fa46e35d8d87061c5b49201d1c428e82d2795930ad57a05c11",
+      "license": "ADA-owned weights. Initialised from IGN FLAIR-HUB LC-A RGB swinbase-upernet (Licence Ouverte / Etalab 2.0). Labels: Google Open Buildings V3 (CC BY 4.0), Microsoft GlobalML Building Footprints (CDLA-Permissive-2.0), FLAIR pseudo-labels. Imagery: Lucknow 2020/2025 grids, provenance unconfirmed.",
+      "role": "Land cover, 7 classes in LoveDA order (ADA UPerNet Swin-B, 384 px, GPU). Default; LANDCOVER_BACKEND=loveda reverts"
     },
     {
       "key": "resnet18",

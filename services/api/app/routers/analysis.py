@@ -5,18 +5,30 @@ from datetime import UTC, datetime
 
 from ada_core.database import get_db
 from ada_core.datetimes import now_ist
-from ada_core.models import AnalysisJob, ChangePolygon, Raster
+from ada_core.models import AnalysisJob, AnalysisParcelResult, ChangePolygon, Raster
 from ada_core.models_icms import Case as IcmsCase
+from ada_core.models_icms import Parcel
 from ada_core.validation import BBox
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Query as OrmQuery
 from sqlalchemy.orm import Session
 
 from .. import bbox as bbox_rules
-from ..analysis_schemas import ChangeFeatureCollection
+from ..analysis_schemas import (
+    ChangeClass,
+    ChangeFeatureCollection,
+    ParcelFeatureCollection,
+    ParcelResultOut,
+    ParcelResultPage,
+    ParcelSummary,
+    ParcelVerdict,
+)
 from ..clients import ml as ml_client
 from ..clients.keycloak import KeycloakAdmin
 from ..deps import current_user_id, get_owned_project, require_imagery, require_imagery_run
 from ..icms.actors import actor_directory, resolve_actor_names
+from ..icms.geo import as_geojson_column, parse_geojson
 from ..schemas import AnalysisCreate, AnalysisOut, PolygonReview, PolygonReviewOut
 
 router = APIRouter(tags=["analysis"], dependencies=[Depends(require_imagery)])
@@ -25,6 +37,17 @@ router = APIRouter(tags=["analysis"], dependencies=[Depends(require_imagery)])
 # ceiling on one fetch, not on a run. A client wanting more sends an offset.
 DEFAULT_FEATURE_LIMIT = 1000
 MAX_FEATURE_LIMIT = 5000
+DEFAULT_PARCEL_LIMIT = 200
+MAX_PARCEL_LIMIT = 1000
+DEFAULT_PARCEL_MAP_LIMIT = 5000
+MAX_PARCEL_MAP_LIMIT = 20000
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+# Every column a parcel result answers with, in CSV order; owner_name is not among them.
+PARCEL_FIELDS = tuple(ParcelResultOut.model_fields)
+_PARCEL_CADASTRE = ("sector", "plot_no", "village_lgd", "khasra_no", "land_use", "plot_type")
+_CHANGE_CLASS_Q = Query(None, description="Only parcels in this change class.")
+_VERDICT_Q = Query(None, description="Only parcels with this verdict in T2 (the later epoch).")
 
 
 # A malformed or oversized extent is the caller's mistake, not a scan to attempt.
@@ -188,6 +211,135 @@ def get_analysis_features(
     }
 
 
+def _parcel_query(db: Session, job_id: int, change_class: str | None,
+                  verdict: str | None, *, geometry: bool = False) -> OrmQuery:
+    """Result rows joined to the cadastre columns they may show; never owner_name."""
+    columns = [AnalysisParcelResult, *(getattr(Parcel, c) for c in _PARCEL_CADASTRE)]
+    if geometry:
+        columns.append(as_geojson_column(db, Parcel.geom))
+    query = (db.query(*columns)
+             .join(Parcel, Parcel.id == AnalysisParcelResult.parcel_id)
+             .filter(AnalysisParcelResult.job_id == job_id))
+    if change_class is not None:
+        query = query.filter(AnalysisParcelResult.change_class == change_class)
+    if verdict is not None:
+        query = query.filter(AnalysisParcelResult.verdict_t2 == verdict)
+    return query.order_by(AnalysisParcelResult.id)
+
+
+def _num(value) -> float | None:
+    return None if value is None else float(value)
+
+
+def _parcel_row(row) -> dict:
+    result, cadastre = row[0], row[1:1 + len(_PARCEL_CADASTRE)]
+    out = {name: getattr(result, name, None) for name in PARCEL_FIELDS}
+    out.update(zip(_PARCEL_CADASTRE, cadastre, strict=True))
+    out["sanctioned_area_sqm"] = _num(result.sanctioned_area_sqm)
+    out["parcel_area_sqm"] = _num(result.parcel_area_sqm)
+    out["parcel_key"] = result.parcel_key or f"#{result.parcel_id}"
+    return out
+
+
+def _parcel_summary(job: AnalysisJob) -> dict | None:
+    summary = (job.stats or {}).get("parcels")
+    if not isinstance(summary, dict) or "parcels_total" not in summary:
+        return None
+    try:
+        return ParcelSummary.model_validate(summary).model_dump()
+    except ValueError:
+        return None
+
+
+@router.get("/analyses/{job_id}/parcels", response_model=ParcelResultPage)
+def get_analysis_parcels(
+    job_id: int,
+    change_class: ChangeClass | None = _CHANGE_CLASS_Q,
+    verdict: ParcelVerdict | None = _VERDICT_Q,
+    limit: int = Query(DEFAULT_PARCEL_LIMIT, ge=1, le=MAX_PARCEL_LIMIT),
+    offset: int = Query(0, ge=0, le=1_000_000),
+    user_id: str = Depends(current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Built area per cadastral parcel for one run, a page at a time."""
+    job = _get_owned_job(job_id, db, user_id)
+    query = _parcel_query(db, job_id, change_class, verdict)
+    total = query.order_by(None).count()
+    summary = _parcel_summary(job)
+    return {
+        "items": [_parcel_row(r) for r in query.offset(offset).limit(limit).all()],
+        "total": total,
+        "bias_offset_sqm": summary["bias_offset_sqm"] if summary else None,
+        "summary": summary,
+    }
+
+
+@router.get("/analyses/{job_id}/parcels.geojson", response_model=ParcelFeatureCollection)
+def get_analysis_parcels_geojson(
+    job_id: int,
+    change_class: ChangeClass | None = _CHANGE_CLASS_Q,
+    verdict: ParcelVerdict | None = _VERDICT_Q,
+    limit: int = Query(DEFAULT_PARCEL_MAP_LIMIT, ge=1, le=MAX_PARCEL_MAP_LIMIT),
+    offset: int = Query(0, ge=0, le=1_000_000),
+    user_id: str = Depends(current_user_id),
+    db: Session = Depends(get_db),
+):
+    """The same rows as a FeatureCollection of parcel outlines (EPSG:4326) for the map."""
+    _get_owned_job(job_id, db, user_id)
+    query = _parcel_query(db, job_id, change_class, verdict, geometry=True)
+    total = query.order_by(None).count()
+    rows = query.offset(offset).limit(limit).all()
+    features = [{"type": "Feature", "id": r[0].id, "geometry": parse_geojson(r[-1]),
+                 "properties": _parcel_row(r)} for r in rows]
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {"count": len(features), "total": total, "limit": limit,
+                     "offset": offset, "bbox": None},
+    }
+
+
+# Text starting with a formula trigger is quoted so a spreadsheet shows it, not runs it.
+def _csv_cell(value):
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.startswith(_FORMULA_TRIGGERS):
+        return "'" + value
+    return value
+
+
+@router.get("/analyses/{job_id}/parcels.csv", response_class=StreamingResponse,
+            responses={200: {"content": {"text/csv": {}}}})
+def download_analysis_parcels_csv(
+    job_id: int,
+    change_class: ChangeClass | None = _CHANGE_CLASS_Q,
+    verdict: ParcelVerdict | None = _VERDICT_Q,
+    user_id: str = Depends(current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Every parcel result of one run as CSV, same columns as the JSON, no owner names."""
+    _get_owned_job(job_id, db, user_id)
+    query = _parcel_query(db, job_id, change_class, verdict).yield_per(1000)
+
+    def lines():
+        chunk = io.StringIO()
+        writer = csv.writer(chunk, lineterminator="\n")
+        writer.writerow(PARCEL_FIELDS)
+        for result in query:
+            row = _parcel_row(result)
+            writer.writerow([_csv_cell(row[name]) for name in PARCEL_FIELDS])
+            if chunk.tell() > 64_000:
+                yield chunk.getvalue()
+                chunk = io.StringIO()
+                writer = csv.writer(chunk, lineterminator="\n")
+        yield chunk.getvalue()
+
+    return StreamingResponse(
+        lines(), media_type="text/csv",
+        headers={"Content-Disposition":
+                 f'attachment; filename="ada_parcels_{job_id}.csv"'})
+
+
 @router.get("/analyses/{job_id}/polygons/{polygon_id}/preview.png")
 def polygon_preview(
     job_id: int,
@@ -297,14 +449,13 @@ def download_report_csv(
         lon, lat = _centroid(p.geometry)
         props = p.properties or {}
         writer.writerow([
-            p.id, props.get("label", ""), props.get("status", ""),
-            props.get("area_m2", ""), props.get("confidence", ""),
-            props.get("red_zone_overlap_pct", ""),
+            p.id, *(_csv_cell(props.get(k, "")) for k in (
+                "label", "status", "area_m2", "confidence", "red_zone_overlap_pct")),
             f"{lon:.7f}" if lon is not None else "",
             f"{lat:.7f}" if lat is not None else "",
-            p.review_status or "pending", p.reviewed_by or "",
+            _csv_cell(p.review_status or "pending"), _csv_cell(p.reviewed_by or ""),
             p.reviewed_at.isoformat() if p.reviewed_at else "",
-            (p.review_note or "").replace("\n", " "),
+            _csv_cell((p.review_note or "").replace("\n", " ")),
         ])
     return Response(
         buf.getvalue(), media_type="text/csv",

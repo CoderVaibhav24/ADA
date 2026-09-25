@@ -10,6 +10,9 @@
  *
  * Reordering is not here, and there is no affordance suggesting it exists.
  *
+ * The per-parcel change row joins the detections group only on a run that
+ * measured parcels (see useLayerTree).
+ *
  * The drone imagery group follows the legacy console's layer rows
  * (components/LayerRow.tsx): one row per flight with a status chip, locate and
  * delete, and its own opacity slider once it is ready.
@@ -32,9 +35,14 @@ import {
 import { Icon } from "@/lib/icons";
 
 import type { ChangeDetectionLabels } from "./labels";
-import { restoreHours, type FlightChip, type LayerGroupId, type LayerId } from "./model";
+import { restoreHours, type FlightChip, type LayerGroupId } from "./model";
 import { PanelSection, Swatch } from "./parts";
-import { flightSwatch, type FlightState, type LayerState } from "./useLayerTree";
+import {
+  flightSwatch,
+  type FlightState,
+  type LayerState,
+  type TreeLayerId,
+} from "./useLayerTree";
 
 export function LayerControls({
   labels,
@@ -56,8 +64,8 @@ export function LayerControls({
   labels: ChangeDetectionLabels;
   layers: LayerState[];
   groups: LayerGroupId[];
-  onVisibleChange: (id: LayerId, visible: boolean) => void;
-  onOpacityChange: (id: LayerId, opacity: number) => void;
+  onVisibleChange: (id: TreeLayerId, visible: boolean) => void;
+  onOpacityChange: (id: TreeLayerId, opacity: number) => void;
   flights: FlightState[];
   onFlightVisibleChange: (id: string, visible: boolean) => void;
   onFlightOpacityChange: (id: string, opacity: number) => void;
@@ -214,8 +222,8 @@ function LayerRow({
 }: {
   labels: ChangeDetectionLabels;
   layer: LayerState;
-  onVisibleChange: (id: LayerId, visible: boolean) => void;
-  onOpacityChange: (id: LayerId, opacity: number) => void;
+  onVisibleChange: (id: TreeLayerId, visible: boolean) => void;
+  onOpacityChange: (id: TreeLayerId, opacity: number) => void;
 }) {
   const name = labels.layers.layer(layer.id);
   const switchId = `cd-layer-${layer.id}`;

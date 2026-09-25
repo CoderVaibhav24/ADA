@@ -9,6 +9,7 @@ each polygon:
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
@@ -23,6 +24,9 @@ from shapely.ops import unary_union
 
 from .config import settings
 from .ml import imageops as ml_imageops
+from .regularize import FootprintRegularizer, RegularizedFootprint, RegularizeParams
+
+log = logging.getLogger(__name__)
 
 _GEOD = pyproj.Geod(ellps="WGS84")
 
@@ -59,6 +63,8 @@ def extract_polygons(
     red_zone_geoms: list[dict],
     instances: list | None = None,
     id_map: np.ndarray | None = None,
+    *,
+    parcels=None,
 ) -> list[dict]:
     """Returns GeoJSON Features (EPSG:4326) with classification properties.
 
@@ -67,6 +73,9 @@ def extract_polygons(
     that structure's change type and feature vector. The features are what
     scripts/train_instance_classifier.py later learns from, so they have to
     survive onto the row an officer eventually reviews.
+
+    `parcels` (shapely geometries in `crs`) orient and snap the footprints when
+    settings.regularize_footprints is on.
     """
     by_id = {i.idx: i for i in (instances or [])}
     mask = ((prob >= settings.change_threshold) & valid).astype(np.uint8)
@@ -84,6 +93,13 @@ def extract_polygons(
     red_union = (
         unary_union([shape(g) for g in red_zone_geoms]) if red_zone_geoms else None
     )
+    regularizer = None
+    if settings.regularize_footprints:
+        ref = None
+        if pyproj.CRS.from_user_input(crs).is_geographic:
+            ref = transform * (prob.shape[1] / 2.0, prob.shape[0] / 2.0)
+        regularizer = FootprintRegularizer(crs, parcels, RegularizeParams.from_settings(),
+                                           ref_lonlat=ref)
     g1 = t1.mean(axis=2)
     g2 = t2.mean(axis=2)
 
@@ -150,14 +166,7 @@ def extract_polygons(
         area_m2 = abs(area_m2)
         if area_m2 < settings.min_change_area_m2:
             continue
-
-        # The structural change type (new build / extension / demolition) comes
-        # from T1<->T2 instance geometry and is far more actionable than the
-        # brightness-derived label, so it wins when it is available.
-        change_type = source.change_type if source else None
-        if change_type:
-            label = _TYPE_LABELS.get(change_type, label)
-
+        # Enforcement signals come from the traced outline, never the cosmetic reshape.
         status = "change"
         zone_overlap_pct = 0.0
         if red_union is not None and poly_4326.intersects(red_union):
@@ -165,6 +174,37 @@ def extract_polygons(
             inter = poly_4326.intersection(red_union)
             zone_area, _ = _GEOD.geometry_area_perimeter(inter)
             zone_overlap_pct = round(abs(zone_area) / max(area_m2, 1e-9) * 100, 1)
+
+        shape_props = None
+        fp = None
+        if regularizer is not None:
+            try:
+                fp = regularizer(poly)
+            except Exception:
+                log.debug("regularize: kept the raw outline", exc_info=True)
+                fp = RegularizedFootprint(poly, "raw", 0.0, area_m2, False)
+        if fp is not None:
+            raw_4326 = poly_4326
+            raw_area_m2 = area_m2
+            if fp.method != "raw":
+                poly_4326 = shp_transform(to_4326, fp.geometry)
+                area_m2 = abs(_GEOD.geometry_area_perimeter(poly_4326)[0])
+            shape_props = {
+                "raw_area_m2": round(raw_area_m2, 1),
+                "shape_method": fp.method,
+                "azimuth_deg": fp.azimuth_deg,
+                "snapped_to_parcel": fp.snapped_to_parcel,
+            }
+            if settings.regularize_keep_raw:
+                shape_props["raw_geometry"] = mapping(raw_4326)
+
+        # The structural change type (new build / extension / demolition) comes
+        # from T1<->T2 instance geometry and is far more actionable than the
+        # brightness-derived label, so it wins when it is available.
+        change_type = source.change_type if source else None
+        if change_type:
+            label = _TYPE_LABELS.get(change_type, label)
+        if status == "illegal":
             label = f"ILLEGAL encroachment — {label.lower()} in red zone"
 
         props = {
@@ -175,6 +215,8 @@ def extract_polygons(
             "brightness_delta": round(delta, 1),
             "red_zone_overlap_pct": zone_overlap_pct,
         }
+        if shape_props is not None:
+            props.update(shape_props)
         if source is not None:
             props["change_type"] = change_type
             # Training data for the instance classifier — this is the row an

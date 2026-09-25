@@ -803,8 +803,10 @@ def sideways_jpeg(fmt: str = "JPEG", lat: float = 27.005, lon: float = 78.005) -
     ImageDraw.Draw(image).rectangle((0, 0, 159, 239), fill=(220, 20, 20))
     exif = Image.Exif()
     exif[0x0112] = 6
-    exif[0x8825] = {1: "N", 2: (Fraction(int(lat)), Fraction(0), Fraction(round((lat % 1) * 3600, 4))),
-                    3: "E", 4: (Fraction(int(lon)), Fraction(0), Fraction(round((lon % 1) * 3600, 4)))}
+    exif[0x8825] = {
+        1: "N", 2: (Fraction(int(lat)), Fraction(0), Fraction(round((lat % 1) * 3600, 4))),
+        3: "E", 4: (Fraction(int(lon)), Fraction(0), Fraction(round((lon % 1) * 3600, 4))),
+    }
     buffer = io.BytesIO()
     image.save(buffer, format=fmt, exif=exif.tobytes())
     return buffer.getvalue()
@@ -817,7 +819,8 @@ class TestIphonePhotos:
         from app.config import settings
 
         body = upload(icms_client.sign_in(SURVEYOR), files=photo(sideways_jpeg())).json()
-        stamped = Image.open(settings.icms_evidence_dir / stored_row(db, body["id"]).stamped_storage_key)
+        stamped_key = stored_row(db, body["id"]).stamped_storage_key
+        stamped = Image.open(settings.icms_evidence_dir / stamped_key)
 
         width, height = stamped.size
         assert width == 240 and height > 320

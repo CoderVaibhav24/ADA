@@ -14,6 +14,15 @@ def oom():
     return RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
 
 
+@pytest.fixture(autouse=True)
+def full_tier_batch(monkeypatch):
+    """These tests walk the tier's own batch; the ADA ceiling has its own test."""
+    from app import jobs
+
+    monkeypatch.setattr(jobs.settings, "building_backend", "changestar")
+    monkeypatch.setattr(jobs.settings, "landcover_backend", "loveda")
+
+
 @pytest.fixture
 def released(monkeypatch):
     from app import jobs

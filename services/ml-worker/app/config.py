@@ -17,7 +17,12 @@ from typing import Literal
 
 from ada_core import ROOT_DIR, CoreSettings
 from ada_core.database import configure_engine
-from pydantic import field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
+
+_BACKENDS = {
+    "building_backend": ("changestar", "geobase", "ada"),
+    "landcover_backend": ("loveda", "ada"),
+}
 
 
 class Settings(CoreSettings):
@@ -55,6 +60,36 @@ class Settings(CoreSettings):
                 "(the same value ada-api has) or ADA_ENV=local for a dev stack."
             )
         return self
+
+    # Backend names are matched literally downstream, so a typo must fail at startup.
+    @field_validator("building_backend", "landcover_backend", mode="before")
+    @classmethod
+    def _known_backend(cls, value: object, info: ValidationInfo) -> object:
+        allowed = _BACKENDS[info.field_name]
+        name = str(value).strip().lower()
+        if name not in allowed:
+            raise ValueError(f"{info.field_name.upper()}={value!r} is not one of "
+                             f"{', '.join(allowed)}")
+        return name
+
+    # A blank ADA_BATCH_SIZE (as a copied .env.example has it) means the tier default.
+    @field_validator("ada_batch_size", mode="before")
+    @classmethod
+    def _blank_batch_is_default(cls, value: object) -> object:
+        return None if value is None or str(value).strip() == "" else value
+
+    @field_validator("ada_batch_size")
+    @classmethod
+    def _positive_batch(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("ADA_BATCH_SIZE must be >= 1 (or blank for the tier default)")
+        return value
+
+    # new_instance_min_frac for the active building backend; the ADA cut was set on its outputs.
+    def effective_new_instance_min_frac(self) -> float:
+        if self.building_backend == "ada":
+            return self.new_instance_min_frac_ada
+        return self.new_instance_min_frac
 
     # --- notifications -------------------------------------------------------
     #
@@ -157,9 +192,14 @@ class Settings(CoreSettings):
     min_change_area_m2: float = 4.0
 
     # Building segmentation + diff (segdiff mode)
-    # changestar -> ViT-B, 1024 px context, ~395 MB (default: far stronger on
-    # dense/low-contrast blocks). geobase -> the original 30 MB U-Net at 256 px.
-    building_backend: str = "changestar"   # changestar | geobase
+    # ada (default) -> ADA UPerNet/Swin-B footprint. changestar -> ViT-B, 1024 px
+    # context, ~395 MB. geobase -> the original 30 MB U-Net at 256 px.
+    building_backend: str = "ada"   # ada | changestar | geobase
+    # ADA's own UPerNet/Swin weights under data/weights/ (scripts/convert_ada_checkpoint.py).
+    ada_footprint_local: str = "ada-footprint-v1"
+    ada_landcover_local: str = "ada-landcover7-v3"
+    # Tiles per forward pass for the ADA backends; None -> cuda 4, metal 2, cpu 1.
+    ada_batch_size: int | None = None
     changestar_model_repo: str = "geobase/changestar-building-segmentation-vitb"
     changestar_model_file: str = "onnx/model.onnx"
     changestar_model_local: str = "changestar-building-segmentation-vitb/onnx/model.onnx"
@@ -182,6 +222,9 @@ class Settings(CoreSettings):
     # 8.5% of the Agra scene as spurious vegetation LOSS.
     landcover_model_repo: str = "IgorNer/segformer-b5-loveda"
     landcover_model_local: str = "segformer-b5-loveda"
+    landcover_backend: str = "ada"      # ada | loveda
+    # Cut on landcover.cleared_ground; quantile-matched to LoveDA barren at 0.5 (docs).
+    bare_ground_threshold: float = 0.752
     vegetation_threshold: float = 0.5
     # Fall back to the old NDVI / excess-green indices if the model is missing.
     vegetation_mode: str = "learned"     # learned | index
@@ -200,6 +243,8 @@ class Settings(CoreSettings):
     # repainted, differently lit, shot from another angle — scores near 0 and
     # is rejected, which is what stops colour change reading as development.
     new_instance_min_frac: float = 0.6
+    # The same cut when BUILDING_BACKEND=ada; read through effective_new_instance_min_frac().
+    new_instance_min_frac_ada: float = 0.513
     # Share of the instance that must carry positive change evidence
     # (colour change, when SEED_MODE=all).
     min_evidence_frac: float = 0.15
@@ -257,6 +302,26 @@ class Settings(CoreSettings):
     # footprint — a box prompt in dense housing can otherwise latch onto the
     # whole block instead of the one structure.
     sam_max_growth: float = 3.0
+
+    # --- per-parcel change (app/parcels.py) ---
+    parcel_stage_enabled: bool = True
+    parcel_tolerance_frac: float = 0.20      # built area may exceed sanctioned by this share
+    parcel_vacant_max_frac: float = 0.05     # built share below this reads as vacant
+    parcel_min_imagery_frac: float = 0.80    # imaged share below this gets no verdict
+    parcel_change_min_sqm: float = 10.0
+    parcel_change_min_frac: float = 0.10     # of the parcel area
+    parcel_block_px: int = 2048
+    # Below this many assessable parcels the median epoch bias is noise, so none is removed.
+    parcel_bias_min_parcels: int = 20
+
+    # --- footprint regularisation (app/regularize.py) ---
+    regularize_footprints: bool = True
+    regularize_simplify_m: float = Field(0.5, ge=0)
+    regularize_min_edge_m: float = Field(1.0, ge=0)
+    regularize_parcel_snap_m: float = Field(0.5, ge=0)  # overshoot below this is clipped
+    regularize_parcel_align_deg: float = Field(10.0, ge=0, le=45)  # parcel axis within this
+    regularize_min_iou: float = Field(0.75, ge=0, le=1)  # ortho shape vs traced outline
+    regularize_keep_raw: bool = False          # also write the traced outline as raw_geometry
 
 
 settings = Settings()  # type: ignore[call-arg]

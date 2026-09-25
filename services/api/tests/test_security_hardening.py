@@ -110,7 +110,8 @@ class TestImageryPermissions:
         assert response.json()["error"]["code"] == "role_not_permitted"
 
     def test_writers_can_create(self, icms_client):
-        response = icms_client.sign_in("pcs-nodal-officer").post("/api/projects", json={"name": "Agra"})
+        nodal = icms_client.sign_in("pcs-nodal-officer")
+        response = nodal.post("/api/projects", json={"name": "Agra"})
         assert response.status_code == 200
 
     @pytest.mark.parametrize("role", ["super-admin", "ada-project-lead", SURVEYOR])

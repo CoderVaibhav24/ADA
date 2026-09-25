@@ -405,7 +405,9 @@ class TestFindings:
 
         assert response.status_code == 422
 
-    def test_sections_are_stored_and_deduplicated(self, icms_client, inspection_ready, act_sections):
+    def test_sections_are_stored_and_deduplicated(
+        self, icms_client, inspection_ready, act_sections,
+    ):
         ref = open_round(icms_client)
 
         body = icms_client.sign_in(SURVEYOR).put(
@@ -436,7 +438,9 @@ class TestFindings:
         assert body["sections"] == [
             {"act_cd": "up_upda_1973", "section_cd": "sec_27"}]
 
-    def test_sending_an_empty_section_list_clears_them(self, icms_client, inspection_ready, act_sections):
+    def test_sending_an_empty_section_list_clears_them(
+        self, icms_client, inspection_ready, act_sections,
+    ):
         ref = open_round(icms_client)
         client = icms_client.sign_in(SURVEYOR)
         client.put(f"{INSPECTIONS}/{ref}/findings",

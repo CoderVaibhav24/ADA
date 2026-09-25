@@ -30,8 +30,14 @@ if not torch.cuda.is_available() or "CUDAExecutionProvider" not in ep:
 PY
 
 if [ "${AUTO_FETCH_WEIGHTS:-true}" = "true" ]; then
-    if python scripts/fetch_weights.py --check >/dev/null 2>&1; then
+    # Exit 3: only ADA's own weights are missing; a download cannot supply them.
+    check_rc=0
+    check_out=$(python scripts/fetch_weights.py --check 2>&1) || check_rc=$?
+    if [ "$check_rc" -eq 0 ]; then
         echo "[entrypoint] model weights already vendored in ${WEIGHTS_DIR}"
+    elif [ "$check_rc" -eq 3 ]; then
+        echo "[entrypoint] ERROR: ADA model weights missing; not downloading anything."
+        echo "$check_out" | sed 's/^/[entrypoint]   /'
     else
         echo "[entrypoint] fetching model weights (~1.5 GB, one time)..."
         if ! python scripts/fetch_weights.py; then

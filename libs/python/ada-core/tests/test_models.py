@@ -22,6 +22,7 @@ def test_every_expected_table_is_mapped():
         "red_zones",
         "analysis_jobs",
         "change_polygons",
+        "analysis_parcel_result",
     }
 
 

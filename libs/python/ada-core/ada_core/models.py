@@ -10,8 +10,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
+    UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -168,6 +171,8 @@ class AnalysisJob(Base):
     project: Mapped[Project] = relationship(back_populates="jobs")
     polygons: Mapped[list["ChangePolygon"]] = relationship(
         back_populates="job", cascade="all, delete-orphan")
+    parcel_results: Mapped[list["AnalysisParcelResult"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan")
 
 
 class ChangePolygon(Base):
@@ -189,3 +194,57 @@ class ChangePolygon(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     job: Mapped[AnalysisJob] = relationship(back_populates="polygons")
+
+
+# Tolerance verdict per epoch, and the change class per parcel (ml-worker parcels.py).
+PARCEL_VERDICTS = ("over_tolerance", "within_tolerance", "vacant", "insufficient_imagery",
+                   "not_assessable")
+PARCEL_CHANGE_CLASSES = ("new_build", "extension", "demolition", "unchanged", "unassessable")
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
+
+
+class AnalysisParcelResult(Base):
+    """Built area on one cadastral parcel in both epochs of one analysis run."""
+
+    __tablename__ = "analysis_parcel_result"
+    __table_args__ = (
+        UniqueConstraint("job_id", "parcel_id", name="uq_analysis_parcel_result_job_parcel"),
+        CheckConstraint(_in("verdict_t1", PARCEL_VERDICTS),
+                        name="analysis_parcel_result_verdict_t1_ck"),
+        CheckConstraint(_in("verdict_t2", PARCEL_VERDICTS),
+                        name="analysis_parcel_result_verdict_t2_ck"),
+        CheckConstraint(_in("change_class", PARCEL_CHANGE_CLASSES),
+                        name="analysis_parcel_result_change_class_ck"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_jobs.id", ondelete="CASCADE"), index=True)
+    parcel_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("icms_parcel.id", ondelete="CASCADE"), index=True)
+    parcel_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sanctioned_area_sqm: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    parcel_area_sqm: Mapped[float] = mapped_column(Numeric(14, 2))
+    tolerance_frac: Mapped[float] = mapped_column(Float)
+    imagery_frac_t1: Mapped[float] = mapped_column(Float)
+    imagery_frac_t2: Mapped[float] = mapped_column(Float)
+    built_frac_t1: Mapped[float] = mapped_column(Float)
+    built_frac_t2: Mapped[float] = mapped_column(Float)
+    built_sqm_t1: Mapped[float] = mapped_column(Float)
+    built_sqm_t2: Mapped[float] = mapped_column(Float)
+    delta_sqm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delta_sqm_corrected: Mapped[float | None] = mapped_column(Float, nullable=True)
+    verdict_t1: Mapped[str] = mapped_column(String(24))
+    verdict_t2: Mapped[str] = mapped_column(String(24))
+    change_class: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_ist, server_default=func.now())
+
+    job: Mapped[AnalysisJob] = relationship(back_populates="parcel_results")
+
+
+# The parcel FK needs icms_parcel in the same metadata wherever only this module is imported.
+from . import models_icms as _models_icms  # noqa: E402,F401

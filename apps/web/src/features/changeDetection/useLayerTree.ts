@@ -12,6 +12,9 @@
  *
  * The drone imagery group is not drawn from LAYER_TREE: it is one row per
  * uploaded flight, plus a row for an upload still in transit.
+ *
+ * Parcel change is one extra row in the detections group. It is off by default
+ * for every run and present only when the run measured at least one parcel.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -31,8 +34,13 @@ import {
   type LayerId,
 } from "./model";
 
+/** LAYER_TREE's layers plus the per-parcel change layer, which only some runs have. */
+export type TreeLayerId = LayerId | "parcels";
+
+export const PARCEL_LAYER_SWATCH = "#ef4444";
+
 export type LayerState = {
-  id: LayerId;
+  id: TreeLayerId;
   group: LayerGroupId;
   swatch: string | null;
   hasOpacity: boolean;
@@ -82,10 +90,13 @@ export type UploadInFlight = {
 export type LayerTree = {
   layers: LayerState[];
   groups: LayerGroupId[];
-  setVisible: (id: LayerId, visible: boolean) => void;
-  setOpacity: (id: LayerId, opacity: number) => void;
+  setVisible: (id: TreeLayerId, visible: boolean) => void;
+  setOpacity: (id: TreeLayerId, opacity: number) => void;
   basemapVisible: boolean;
   basemapOpacity: number;
+  /** The parcel layer is drawn: available on this run and switched on. */
+  parcelsVisible: boolean;
+  parcelsOpacity: number;
   flights: FlightState[];
   setFlightVisible: (id: string, visible: boolean) => void;
   setFlightOpacity: (id: string, opacity: number) => void;
@@ -154,6 +165,7 @@ export function useLayerTree(
   zoneCountLabel: (n: number) => string,
   zoneNoneLabel: string,
   upload: UploadInFlight | null = null,
+  parcels: { available: boolean; detail: string | null } = { available: false, detail: null },
 ): LayerTree {
   const rasterUI = useStore((s) => s.rasterUI);
   const maskUI = useStore((s) => s.maskUI);
@@ -165,6 +177,13 @@ export function useLayerTree(
 
   const [basemapVisible, setBasemapVisible] = useState(true);
   const [basemapOpacity, setBasemapOpacity] = useState(1);
+  // Keyed to the run: a new run starts with the parcel layer off, without an effect to reset it.
+  const [parcelUI, setParcelUI] = useState<{ runId: string | null; visible: boolean }>({
+    runId: null,
+    visible: false,
+  });
+  const [parcelsOpacity, setParcelsOpacity] = useState(1);
+  const parcelsOn = parcels.available && parcelUI.runId === runId && parcelUI.visible;
 
   const referenceId = pair?.reference?.id ?? null;
   const currentId = pair?.current?.id ?? null;
@@ -188,92 +207,113 @@ export function useLayerTree(
     return upload ? [...rows, uploadRow(upload)] : rows;
   }, [rasters, rasterOrder, rasterUI, referenceId, currentId, upload]);
 
-  const layers = useMemo<LayerState[]>(
-    () =>
-      LAYER_TREE.map((node) => {
-        const base = {
-          id: node.id,
-          group: node.group,
-          swatch: node.swatch,
-          hasOpacity: node.hasOpacity,
-          detail: null as string | null,
-        };
+  const layers = useMemo<LayerState[]>(() => {
+    const fixed = LAYER_TREE.map((node): LayerState => {
+      const base = {
+        id: node.id,
+        group: node.group,
+        swatch: node.swatch,
+        hasOpacity: node.hasOpacity,
+        detail: null as string | null,
+      };
 
-        switch (node.id) {
-          case "detections": {
-            const ui = runId ? polyUI[runId] : undefined;
-            return {
-              ...base,
-              available: Boolean(runId),
-              visible: ui?.visible ?? true,
-              opacity: ui?.opacity ?? 1,
-            };
-          }
-          case "heatMask": {
-            const ui = runId ? maskUI[runId] : undefined;
-            return {
-              ...base,
-              available: Boolean(runId),
-              visible: ui?.visible ?? true,
-              opacity: ui?.opacity ?? 0.75,
-            };
-          }
-          case "redZones":
-            return {
-              ...base,
-              available: redZones.length > 0,
-              visible: zonesOn,
-              opacity: 1,
-              detail:
-                redZones.length > 0 ? zoneCountLabel(redZones.length) : zoneNoneLabel,
-            };
-          case "currentCycle": {
-            const ui = currentId ? rasterUI[currentId] : undefined;
-            return {
-              ...base,
-              available: Boolean(currentId),
-              visible: ui?.visible ?? true,
-              opacity: ui?.opacity ?? 1,
-            };
-          }
-          case "referenceCycle": {
-            const ui = referenceId ? rasterUI[referenceId] : undefined;
-            return {
-              ...base,
-              available: Boolean(referenceId),
-              visible: ui?.visible ?? true,
-              opacity: ui?.opacity ?? 1,
-            };
-          }
-          case "baseMap":
-            return {
-              ...base,
-              available: true,
-              visible: basemapVisible,
-              opacity: basemapOpacity,
-            };
+      switch (node.id) {
+        case "detections": {
+          const ui = runId ? polyUI[runId] : undefined;
+          return {
+            ...base,
+            available: Boolean(runId),
+            visible: ui?.visible ?? true,
+            opacity: ui?.opacity ?? 1,
+          };
         }
-      }),
-    [
-      basemapOpacity,
-      basemapVisible,
-      currentId,
-      maskUI,
-      polyUI,
-      rasterUI,
-      redZones,
-      referenceId,
-      runId,
-      zoneCountLabel,
-      zoneNoneLabel,
-      zonesOn,
-    ],
-  );
+        case "heatMask": {
+          const ui = runId ? maskUI[runId] : undefined;
+          return {
+            ...base,
+            available: Boolean(runId),
+            visible: ui?.visible ?? true,
+            opacity: ui?.opacity ?? 0.75,
+          };
+        }
+        case "redZones":
+          return {
+            ...base,
+            available: redZones.length > 0,
+            visible: zonesOn,
+            opacity: 1,
+            detail:
+              redZones.length > 0 ? zoneCountLabel(redZones.length) : zoneNoneLabel,
+          };
+        case "currentCycle": {
+          const ui = currentId ? rasterUI[currentId] : undefined;
+          return {
+            ...base,
+            available: Boolean(currentId),
+            visible: ui?.visible ?? true,
+            opacity: ui?.opacity ?? 1,
+          };
+        }
+        case "referenceCycle": {
+          const ui = referenceId ? rasterUI[referenceId] : undefined;
+          return {
+            ...base,
+            available: Boolean(referenceId),
+            visible: ui?.visible ?? true,
+            opacity: ui?.opacity ?? 1,
+          };
+        }
+        case "baseMap":
+          return {
+            ...base,
+            available: true,
+            visible: basemapVisible,
+            opacity: basemapOpacity,
+          };
+      }
+    });
+    // Unlike the fixed rows, this one is absent rather than disabled on a run without parcels.
+    if (!parcels.available) return fixed;
+    const parcelRow: LayerState = {
+      id: "parcels",
+      group: "detections",
+      swatch: PARCEL_LAYER_SWATCH,
+      hasOpacity: true,
+      available: true,
+      visible: parcelsOn,
+      opacity: parcelsOpacity,
+      detail: parcels.detail,
+    };
+    const after = fixed.findIndex((layer) => layer.id === "heatMask");
+    return after < 0
+      ? [parcelRow, ...fixed]
+      : [...fixed.slice(0, after + 1), parcelRow, ...fixed.slice(after + 1)];
+  }, [
+    basemapOpacity,
+    basemapVisible,
+    currentId,
+    maskUI,
+    parcels.available,
+    parcels.detail,
+    parcelsOn,
+    parcelsOpacity,
+    polyUI,
+    rasterUI,
+    redZones,
+    referenceId,
+    runId,
+    zoneCountLabel,
+    zoneNoneLabel,
+    zonesOn,
+  ]);
 
   const setVisible = useCallback(
-    (id: LayerId, visible: boolean) => {
+    (id: TreeLayerId, visible: boolean) => {
       const store = useStore.getState();
       switch (id) {
+        case "parcels":
+          setParcelUI({ runId, visible });
+          return;
         case "detections":
           if (runId) store.patchPolyUI(runId, { visible });
           return;
@@ -297,8 +337,9 @@ export function useLayerTree(
   );
 
   const setOpacity = useCallback(
-    (id: LayerId, opacity: number) => {
+    (id: TreeLayerId, opacity: number) => {
       const store = useStore.getState();
+      if (id === "parcels") setParcelsOpacity(opacity);
       if (id === "detections" && runId) store.patchPolyUI(runId, { opacity });
       if (id === "heatMask" && runId) store.patchMaskUI(runId, { opacity });
       if (id === "baseMap") setBasemapOpacity(opacity);
@@ -331,6 +372,8 @@ export function useLayerTree(
     setOpacity,
     basemapVisible,
     basemapOpacity,
+    parcelsVisible: parcelsOn,
+    parcelsOpacity,
     flights,
     setFlightVisible,
     setFlightOpacity,

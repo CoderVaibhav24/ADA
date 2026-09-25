@@ -1136,7 +1136,8 @@ def _refuse_unknown_code(
         )
 
 
-# Each newly cited (act, section) must be an active section under an active act; the round's own pairs may stay.
+# Each newly cited (act, section) must be an active section under an active act; the
+# round's own pairs may stay.
 def _refuse_unknown_sections(
     db: Session, inspection_id: int, sections: list | None
 ) -> None:

@@ -59,20 +59,20 @@ def test_a_fresh_database_reaches_head(clean_database):
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         tables = [t for t in inspect(conn).get_table_names() if t.startswith("icms_")]
     # 17 domain tables from the baseline, 6 policy tables from 0003, the upload
-    # policy from 0004, three boundary tables from 0015. Both numbers move with
-    # the chain; test_icms_schema.py holds the same split against the models.
-    assert version == "0017"
-    assert len(tables) == 27
+    # policy from 0004, three boundary tables from 0015, and two added since.
+    # Both numbers move with the chain; test_icms_schema.py holds the split.
+    assert version == "0024_analysis_parcel_result"
+    assert len(tables) == 29
 
 
 def test_running_it_twice_changes_nothing(clean_database):
     run_migrations()
     with clean_database.connect() as conn:
         seed = conn.execute(text("SELECT count(*) FROM icms_code_value")).scalar()
-    # 17 from the baseline, 6 from 0006 and 19 from 0007, and not 84: the seed is
+    # 78 at head (baseline, 0006, 0007, 0011, 0022, 0023), and not 156: the seed is
     # inserted by the migrations, and a second upgrade must be a no-op rather
     # than a second insert.
-    assert seed == 42
+    assert seed == 78
 
 
 def test_the_schema_matches_the_models(clean_database):
@@ -123,10 +123,10 @@ def test_a_pre_alembic_database_is_adopted():
         triggers = conn.execute(text(
             "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_icms%'")).scalar()
         screens = conn.execute(text("SELECT screen_id FROM app_screen")).scalars().all()
-    assert version == "0017"
+    assert version == "0024_analysis_parcel_result"
     # Stamping alone would leave the triggers and the baseline's 17 rows at zero;
-    # the rest of the 42 and the Home screen come from upgrading past the stamp.
-    assert seed == 42
+    # the rest of the 78 and the Home screen come from upgrading past the stamp.
+    assert seed == 78
     assert triggers == 5
     assert screens == ["home_sdui"]
 
@@ -185,7 +185,7 @@ def test_a_pre_icms_database_is_adopted_without_touching_its_data():
         projects = conn.execute(text("SELECT count(*) FROM projects")).scalar()
         name = conn.execute(text("SELECT name FROM projects LIMIT 1")).scalar()
 
-    assert version == "0017"
+    assert version == "0024_analysis_parcel_result"
     assert len(icms) == 27
     assert seed == 42
     assert triggers == 5
@@ -228,7 +228,7 @@ def test_adoption_repairs_a_column_the_old_alter_left_nullable():
     assert default is None
     # Backfilled by status, not blindly to zero: this raster was already ready.
     assert progress == 1.0
-    assert version == "0017"
+    assert version == "0024_analysis_parcel_result"
 
 
 def test_a_half_built_icms_schema_is_refused():

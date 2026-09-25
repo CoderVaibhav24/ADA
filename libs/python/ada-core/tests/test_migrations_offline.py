@@ -284,3 +284,19 @@ def test_the_raster_lifecycle_columns_render():
     assert "CREATE INDEX ix_rasters_fingerprint ON rasters (fingerprint)" in lifecycle
     assert "SET last_used_at = uploaded_at" in lifecycle
     assert "UPDATE alembic_version SET version_num='0017'" in lifecycle
+
+
+def test_the_parcel_result_table_renders():
+    """0024: one row per (analysis, parcel), cascading from both sides."""
+    parcels = _render("0023_findings_stage:0024_analysis_parcel_result")
+    assert "CREATE TABLE analysis_parcel_result" in parcels
+    assert "FOREIGN KEY(job_id) REFERENCES analysis_jobs (id) ON DELETE CASCADE" in parcels
+    assert "FOREIGN KEY(parcel_id) REFERENCES icms_parcel (id) ON DELETE CASCADE" in parcels
+    assert "CONSTRAINT uq_analysis_parcel_result_job_parcel UNIQUE (job_id, parcel_id)" in parcels
+    assert "change_class IN ('new_build', 'extension', 'demolition'" in parcels
+    assert ("UPDATE alembic_version SET version_num='0024_analysis_parcel_result'"
+            in parcels)
+
+
+def test_the_chain_ends_at_the_parcel_result_head(chain):
+    assert "UPDATE alembic_version SET version_num='0024_analysis_parcel_result'" in chain

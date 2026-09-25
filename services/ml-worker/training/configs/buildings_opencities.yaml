@@ -1,0 +1,90 @@
+# Building footprints -- stage two, and the higher-stakes half.
+#
+# ONE trained artefact replaces BOTH current building segmenters:
+#   geobase/changestar-building-segmentation-vitb  (default, 1024 px, ViT-B)
+#   geobase/building-footprint-segmentation        (light/CPU path, 256 px U-Net)
+# Neither declares a licence upstream, and ChangeStar's training set is xBD
+# (CC BY-NC-SA 4.0), so both fail on data terms even if a licence appeared.
+# A U-Net with a convolutional encoder is fully convolutional, so the same
+# weights export at 1024 and at 256 -- see export.tile_sizes below.
+#
+# THE NUMBER THIS WORK IS HELD TO: BEFORE/AFTER footprint agreement of
+# IoU 0.554 on the Agra pair, which is what the current ChangeStar checkpoint
+# achieves and what makes the BEFORE epoch usable at all. Validation IoU on
+# Open Cities is a proxy; the Agra figure is the acceptance test and it lives
+# in the evaluation harness, not in this training loop. Do not accept a
+# replacement below 0.554.
+#
+# Budget several runs, not one. The inventory document's 4-6 weeks is
+# experimentation time, and on this box each full run is 3-6 days.
+
+name: buildings-opencities
+out_dir: E:/ada/runs
+task: binary
+device: auto
+resume: true
+
+model:
+  arch: unet
+  encoder: resnet34
+  encoder_weights: imagenet
+  in_channels: 3
+  # Ignored for binary: the head emits a single logit, matching the contract
+  # both current backends expose -- (N, H, W, 3) uint8 in, (N, H, W) float32
+  # building probability out.
+  classes: 1
+  grad_checkpoint: false
+
+data:
+  dataset: opencities
+  root: E:/ada/datasets/opencities
+  packed: null
+  # Train at 512 and export at 1024/256. Training at 1024 would quadruple the
+  # activation memory for a receptive field a convolutional encoder does not
+  # need -- the 1024 px context argument applies to the ViT being replaced,
+  # whose positional embeddings are fixed, not to a U-Net.
+  crop: 512
+  fraction: 1.0
+  val_fraction: 0.15
+  workers: 6
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 2
+
+train:
+  epochs: 60
+  batch_size: 4
+  grad_accum: 4
+  lr: 0.0003
+  encoder_lr_scale: 0.1
+  weight_decay: 0.01
+  warmup_steps: 500
+  precision: bf16
+  channels_last: true
+  clip_grad_norm: 1.0
+  save_every_steps: 500
+  val_every_epochs: 1
+  early_stop_patience: 10
+  seed: 1337
+  cudnn_benchmark: true
+
+loss:
+  ce_weight: 1.0
+  # Dice matters more here than for land cover: buildings are roughly one pixel
+  # in ten, and BCE alone converges to predicting background everywhere.
+  dice_weight: 1.0
+  class_weights: none
+  ignore_index: 255
+
+licence:
+  # SpaceNet is CC BY-SA 4.0. Adding it needs a recorded decision on
+  # redistributing derived weights first -- section 6.1 of the inventory
+  # suggests it may be cleaner to leave it out than to argue about it.
+  allow_share_alike: false
+
+export:
+  # 1024 for the ChangeStar slot, 256 for the CPU/Apple path. One set of
+  # weights, two files, two vendor dependencies removed.
+  tile_sizes: [1024, 256]
+  opset: 18
+  verify: true

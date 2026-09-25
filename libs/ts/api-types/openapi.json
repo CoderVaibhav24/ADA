@@ -5729,6 +5729,410 @@
         "title": "ParcelAtOut",
         "type": "object"
       },
+      "ParcelFeature": {
+        "properties": {
+          "geometry": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "icms_parcel.geom, EPSG:4326.",
+            "title": "Geometry"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/ParcelResultOut"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "geometry",
+          "properties"
+        ],
+        "title": "ParcelFeature",
+        "type": "object"
+      },
+      "ParcelFeatureCollection": {
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/ParcelFeature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/FeatureWindow"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "features",
+          "metadata"
+        ],
+        "title": "ParcelFeatureCollection",
+        "type": "object"
+      },
+      "ParcelHistogram": {
+        "properties": {
+          "bin_edges": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Bin Edges",
+            "type": "array"
+          },
+          "counts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bin_edges",
+          "counts"
+        ],
+        "title": "ParcelHistogram",
+        "type": "object"
+      },
+      "ParcelResultOut": {
+        "description": "One parcel's built area in both epochs; the cadastre fields never include the owner.",
+        "properties": {
+          "built_frac_t1": {
+            "title": "Built Frac T1",
+            "type": "number"
+          },
+          "built_frac_t2": {
+            "title": "Built Frac T2",
+            "type": "number"
+          },
+          "built_sqm_t1": {
+            "title": "Built Sqm T1",
+            "type": "number"
+          },
+          "built_sqm_t2": {
+            "title": "Built Sqm T2",
+            "type": "number"
+          },
+          "change_class": {
+            "enum": [
+              "new_build",
+              "extension",
+              "demolition",
+              "unchanged",
+              "unassessable"
+            ],
+            "title": "Change Class",
+            "type": "string"
+          },
+          "delta_sqm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "built_sqm_t2 - built_sqm_t1; null unless both epochs have enough imagery.",
+            "title": "Delta Sqm"
+          },
+          "delta_sqm_corrected": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "delta_sqm less the run's median epoch bias.",
+            "title": "Delta Sqm Corrected"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "imagery_frac_t1": {
+            "title": "Imagery Frac T1",
+            "type": "number"
+          },
+          "imagery_frac_t2": {
+            "title": "Imagery Frac T2",
+            "type": "number"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "khasra_no": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Khasra No"
+          },
+          "land_use": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Land Use"
+          },
+          "parcel_area_sqm": {
+            "title": "Parcel Area Sqm",
+            "type": "number"
+          },
+          "parcel_id": {
+            "title": "Parcel Id",
+            "type": "integer"
+          },
+          "parcel_key": {
+            "description": "`SECTOR#plot` or `lgd/khasra`; `#<parcel_id>` if the parcel has neither.",
+            "title": "Parcel Key",
+            "type": "string"
+          },
+          "plot_no": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plot No"
+          },
+          "plot_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plot Type"
+          },
+          "sanctioned_area_sqm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sanctioned Area Sqm"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "tolerance_frac": {
+            "title": "Tolerance Frac",
+            "type": "number"
+          },
+          "verdict_t1": {
+            "enum": [
+              "over_tolerance",
+              "within_tolerance",
+              "vacant",
+              "insufficient_imagery",
+              "not_assessable"
+            ],
+            "title": "Verdict T1",
+            "type": "string"
+          },
+          "verdict_t2": {
+            "enum": [
+              "over_tolerance",
+              "within_tolerance",
+              "vacant",
+              "insufficient_imagery",
+              "not_assessable"
+            ],
+            "title": "Verdict T2",
+            "type": "string"
+          },
+          "village_lgd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Village Lgd"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "parcel_id",
+          "parcel_key",
+          "sector",
+          "plot_no",
+          "village_lgd",
+          "khasra_no",
+          "land_use",
+          "plot_type",
+          "sanctioned_area_sqm",
+          "parcel_area_sqm",
+          "tolerance_frac",
+          "imagery_frac_t1",
+          "imagery_frac_t2",
+          "built_frac_t1",
+          "built_frac_t2",
+          "built_sqm_t1",
+          "built_sqm_t2",
+          "verdict_t1",
+          "verdict_t2",
+          "change_class"
+        ],
+        "title": "ParcelResultOut",
+        "type": "object"
+      },
+      "ParcelResultPage": {
+        "properties": {
+          "bias_offset_sqm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bias Offset Sqm"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ParcelResultOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParcelSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the run skipped or failed the parcel stage."
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "bias_offset_sqm"
+        ],
+        "title": "ParcelResultPage",
+        "type": "object"
+      },
+      "ParcelSummary": {
+        "additionalProperties": true,
+        "description": "`AnalysisJob.stats[\"parcels\"]` for a run whose parcel stage measured something.",
+        "properties": {
+          "assessable": {
+            "title": "Assessable",
+            "type": "integer"
+          },
+          "bias_offset_sqm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bias Offset Sqm"
+          },
+          "counts_by_class": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts By Class",
+            "type": "object"
+          },
+          "counts_by_verdict_t1": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts By Verdict T1",
+            "type": "object"
+          },
+          "counts_by_verdict_t2": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts By Verdict T2",
+            "type": "object"
+          },
+          "histogram": {
+            "$ref": "#/components/schemas/ParcelHistogram"
+          },
+          "parcels_total": {
+            "title": "Parcels Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "parcels_total",
+          "assessable",
+          "histogram",
+          "counts_by_class",
+          "counts_by_verdict_t1",
+          "counts_by_verdict_t2"
+        ],
+        "title": "ParcelSummary",
+        "type": "object"
+      },
       "PasswordReset": {
         "additionalProperties": false,
         "properties": {
@@ -8684,6 +9088,344 @@
           }
         ],
         "summary": "Get Analysis Features",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/analyses/{job_id}/parcels": {
+      "get": {
+        "description": "Built area per cadastral parcel for one run, a page at a time.",
+        "operationId": "get_analysis_parcels_api_analyses__job_id__parcels_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only parcels in this change class.",
+            "in": "query",
+            "name": "change_class",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new_build",
+                    "extension",
+                    "demolition",
+                    "unchanged",
+                    "unassessable"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only parcels in this change class.",
+              "title": "Change Class"
+            }
+          },
+          {
+            "description": "Only parcels with this verdict in T2 (the later epoch).",
+            "in": "query",
+            "name": "verdict",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "over_tolerance",
+                    "within_tolerance",
+                    "vacant",
+                    "insufficient_imagery",
+                    "not_assessable"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only parcels with this verdict in T2 (the later epoch).",
+              "title": "Verdict"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParcelResultPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Get Analysis Parcels",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/analyses/{job_id}/parcels.csv": {
+      "get": {
+        "description": "Every parcel result of one run as CSV, same columns as the JSON, no owner names.",
+        "operationId": "download_analysis_parcels_csv_api_analyses__job_id__parcels_csv_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only parcels in this change class.",
+            "in": "query",
+            "name": "change_class",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new_build",
+                    "extension",
+                    "demolition",
+                    "unchanged",
+                    "unassessable"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only parcels in this change class.",
+              "title": "Change Class"
+            }
+          },
+          {
+            "description": "Only parcels with this verdict in T2 (the later epoch).",
+            "in": "query",
+            "name": "verdict",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "over_tolerance",
+                    "within_tolerance",
+                    "vacant",
+                    "insufficient_imagery",
+                    "not_assessable"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only parcels with this verdict in T2 (the later epoch).",
+              "title": "Verdict"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Download Analysis Parcels Csv",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/analyses/{job_id}/parcels.geojson": {
+      "get": {
+        "description": "The same rows as a FeatureCollection of parcel outlines (EPSG:4326) for the map.",
+        "operationId": "get_analysis_parcels_geojson_api_analyses__job_id__parcels_geojson_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only parcels in this change class.",
+            "in": "query",
+            "name": "change_class",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new_build",
+                    "extension",
+                    "demolition",
+                    "unchanged",
+                    "unassessable"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only parcels in this change class.",
+              "title": "Change Class"
+            }
+          },
+          {
+            "description": "Only parcels with this verdict in T2 (the later epoch).",
+            "in": "query",
+            "name": "verdict",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "over_tolerance",
+                    "within_tolerance",
+                    "vacant",
+                    "insufficient_imagery",
+                    "not_assessable"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only parcels with this verdict in T2 (the later epoch).",
+              "title": "Verdict"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 5000,
+              "maximum": 20000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParcelFeatureCollection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "ADA token": []
+          }
+        ],
+        "summary": "Get Analysis Parcels Geojson",
         "tags": [
           "analysis"
         ]

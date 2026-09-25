@@ -103,7 +103,9 @@ class RoleCreate(BaseModel):
     label_hi: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
     ] | None = None
-    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None = None
+    description: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None
+    ) = None
     permission_cds: list[Code] = Field(default_factory=list)
 
 

@@ -70,6 +70,8 @@ import { DetectionList } from "./DetectionList";
 import { useChangeDetectionLabels } from "./labels";
 import { LayerControls } from "./LayerControls";
 import { MapLegend } from "./MapLegend";
+import { ParcelHoverCard, ParcelPanel } from "./ParcelPanel";
+import type { ParcelRow } from "./parcelModel";
 import {
   confidencePercent,
   // cycleOpacities,
@@ -92,6 +94,7 @@ import {
   type LoadFailure,
 } from "./useChangeDetection";
 import { useLayerTree, type UploadInFlight } from "./useLayerTree";
+import { useParcels } from "./useParcels";
 
 /** The CPU tier's grid cap when the runtime does not report its own. */
 const CPU_GRID_PX = 3072;
@@ -178,12 +181,23 @@ export default function ChangeDetection() {
     [labels, num],
   );
 
+  const parcels = useParcels(cd.runId, cd.pair?.analysis ?? null);
+  const parcelTotal = parcels.summary?.parcels_total ?? null;
+  const parcelLayer = useMemo(
+    () => ({
+      available: parcelTotal !== null,
+      detail: parcelTotal !== null ? labels.layers.parcelCount(num(parcelTotal)) : null,
+    }),
+    [parcelTotal, labels, num],
+  );
+
   const layerTree = useLayerTree(
     cd.pair,
     cd.runId,
     zoneCountLabel,
     labels.layers.zoneNone,
     upload,
+    parcelLayer,
   );
 
   /* ------------------------------------------------- before and after flights
@@ -320,6 +334,47 @@ export default function ChangeDetection() {
       if (row.bounds) mapRef.current?.fitBounds(row.bounds, detectionFit(mapRef.current));
     },
     [select],
+  );
+
+  /* ------------------------------------------------------------- parcels
+     The picked parcel is keyed to the run, so a new run starts with none. */
+  const [parcelPick, setParcelPick] = useState<{ runId: string | null; key: string | null }>({
+    runId: null,
+    key: null,
+  });
+  const selectedParcelKey = parcelPick.runId === runId ? parcelPick.key : null;
+  const findParcel = parcels.findRow;
+  const selectedParcelId = selectedParcelKey ? (findParcel(selectedParcelKey)?.id ?? null) : null;
+  const setLayerVisible = layerTree.setVisible;
+
+  const openParcel = useCallback(
+    (row: ParcelRow) => {
+      setParcelPick({ runId, key: row.key });
+      setLayerVisible("parcels", true);
+      if (row.bounds) mapRef.current?.fitBounds(row.bounds, detectionFit(mapRef.current));
+    },
+    [runId, setLayerVisible],
+  );
+
+  const parcelOverlay = useMemo(
+    () =>
+      parcels.features
+        ? {
+            data: parcels.features,
+            visible: layerTree.parcelsVisible,
+            opacity: layerTree.parcelsOpacity,
+            selectedId: selectedParcelId,
+          }
+        : null,
+    [parcels.features, layerTree.parcelsVisible, layerTree.parcelsOpacity, selectedParcelId],
+  );
+
+  const renderParcelHover = useCallback(
+    (id: string) => {
+      const row = findParcel(id);
+      return row ? <ParcelHoverCard labels={labels} row={row} formatNumber={num} /> : null;
+    },
+    [findParcel, labels, num],
   );
 
   // Double-click on a map detection: confirm, then hand it to Create Complaint.
@@ -608,6 +663,8 @@ export default function ChangeDetection() {
                   selection={mapSelection}
                   onFeatureDoubleClick={promptComplaint}
                   hoverHint={labels.detail.hoverHint}
+                  parcels={parcelOverlay}
+                  renderParcelHover={renderParcelHover}
                   onSelect={(selection) =>
                     select(
                       selection
@@ -786,6 +843,17 @@ export default function ChangeDetection() {
                   onSelect={openDetection}
                   formatNumber={num}
                 />
+                {runId && parcels.summary && (
+                  <ParcelPanel
+                    labels={labels}
+                    runId={runId}
+                    parcels={parcels}
+                    summary={parcels.summary}
+                    selectedKey={selectedParcelKey}
+                    onSelect={openParcel}
+                    formatNumber={num}
+                  />
+                )}
                 <MapLegend labels={labels} />
                 <DetectionDetails
                   labels={labels}

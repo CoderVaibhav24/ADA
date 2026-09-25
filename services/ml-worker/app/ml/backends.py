@@ -371,6 +371,9 @@ class ChangeStarSegBackend:
 def load_seg_backend(repo: str, file: str):
     from ..config import settings
 
+    if settings.building_backend == "ada":
+        from .ada_backends import AdaFootprintBackend
+        return AdaFootprintBackend(settings.weights_dir / settings.ada_footprint_local)
     if settings.building_backend == "changestar":
         return ChangeStarSegBackend(settings.changestar_model_repo,
                                     settings.changestar_model_file)

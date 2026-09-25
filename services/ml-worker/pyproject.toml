@@ -36,6 +36,8 @@ dependencies = [
   "onnx>=1.16",
   # SegFormer land cover, Sam2Model and Sam3Model (SAM_BACKEND=sam3).
   "transformers>=5.0",
+  # ADA's own checkpoints are stored as safetensors (scripts/convert_ada_checkpoint.py).
+  "safetensors>=0.8.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +49,9 @@ dependencies = [
 gpu = [
   "torch>=2.6",
   "torchvision>=0.21",
+  # UPerNet + Swin for the ADA backends; both require torch, so they live with it.
+  "segmentation-models-pytorch==0.4.0",
+  "timm==1.0.30",
   "onnxruntime-gpu==1.22.0 ; sys_platform == 'linux'",
 ]
 # CPU torch on Linux. On macOS: the PyPI torch wheel, which carries the MPS
@@ -55,6 +60,8 @@ gpu = [
 cpu = [
   "torch>=2.6",
   "torchvision>=0.21",
+  "segmentation-models-pytorch==0.4.0",
+  "timm==1.0.30",
   "onnxruntime>=1.20",
 ]
 

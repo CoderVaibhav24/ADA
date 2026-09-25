@@ -44,6 +44,7 @@ LABELS = {0: "background", 1: "building", 2: "road", 3: "water",
           4: "barren", 5: "forest", 6: "agriculture"}
 VEGETATION_CLASSES = (5, 6)      # forest + agriculture
 BUILDING_CLASS = 1
+BARREN_CLASS = 4                 # bare earth: cleared plots, spoil, exposed slab
 # Surfaces that are already developed or undevelopable. Everything else is
 # OPEN LAND — see open_land() for why that, not vegetation, is the signal the
 # encroachment logic actually wants.
@@ -70,10 +71,33 @@ def open_land(probs: np.ndarray) -> np.ndarray:
     return 1.0 - probs[list(BUILT_CLASSES)].sum(axis=0)
 
 
+def barren(probs: np.ndarray) -> np.ndarray:
+    """(C, H, W) -> (H, W) probability of bare earth."""
+    return probs[BARREN_CLASS]
+
+
+def cleared_ground(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    """(C, H, W) T1 + (C, H, W) T2 -> (H, W) probability of disturbed bare ground.
+
+    max(barren(T2), vegetated in T1 * neither built nor vegetated in T2). The
+    bi-temporal term covers models whose barren class rarely fires; compare it
+    against settings.bare_ground_threshold, not 0.5.
+    """
+    was_vegetated = p1[list(VEGETATION_CLASSES)].sum(0)
+    now_exposed = 1.0 - (p2[list(BUILT_CLASSES)].sum(0)
+                         + p2[list(VEGETATION_CLASSES)].sum(0))
+    now_exposed = np.clip(now_exposed, 0.0, 1.0)
+    return np.maximum(barren(p2), was_vegetated * now_exposed)
+
+
 def get_backend():
     global _backend
     if _backend is None:
-        _backend = LandCoverBackend(settings.landcover_model_repo)
+        if settings.landcover_backend == "ada":
+            from .ada_backends import AdaLandCoverBackend
+            _backend = AdaLandCoverBackend(settings.weights_dir / settings.ada_landcover_local)
+        else:
+            _backend = LandCoverBackend(settings.landcover_model_repo)
     return _backend
 
 

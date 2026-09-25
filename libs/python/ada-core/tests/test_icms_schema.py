@@ -76,6 +76,9 @@ RUNTIME_SETTING_MIGRATION = (
 REMINDER_MIGRATION = (
     ALEMBIC_DIR / "versions" / "0021_reminder_settings.py"
 ).read_text(encoding="utf-8")
+PARCEL_RESULT_MIGRATION = (
+    ALEMBIC_DIR / "versions" / "0024_analysis_parcel_result.py"
+).read_text(encoding="utf-8")
 
 
 def _scripts() -> ScriptDirectory:
@@ -253,7 +256,8 @@ def test_the_migrations_create_every_mapped_table():
     created = set(re.findall(
         r"op\.create_table\(\s*[\"\'](\w+)[\"\']",
         BASELINE + POLICY_MIGRATION + UPLOAD_MIGRATION + SCREEN_MIGRATION
-        + BOUNDARY_MIGRATION + RUNTIME_SETTING_MIGRATION + REMINDER_MIGRATION))
+        + BOUNDARY_MIGRATION + RUNTIME_SETTING_MIGRATION + REMINDER_MIGRATION
+            + PARCEL_RESULT_MIGRATION))
     assert created == set(Base.metadata.tables)
 
 

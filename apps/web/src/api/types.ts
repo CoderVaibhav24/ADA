@@ -1,4 +1,5 @@
-import type { FeatureCollection, Polygon } from "geojson";
+import type { FeatureCollection, MultiPolygon, Polygon } from "geojson";
+import type { components } from "@ada/api-types/ada-api";
 
 import type { RasterLifecycleFields, RasterLifecycleStatus } from "../upload/types.ts";
 
@@ -61,6 +62,8 @@ export interface AnalysisStats {
   working_resolution_m: number;
   /** [dy, dx] in working-grid pixels; [0, 0] = geo-referencing trusted. */
   coregistration_shift_px: [number, number];
+  /** The per-parcel change stage's summary, or why it did not run. */
+  parcels?: ParcelStageStats;
 }
 
 export interface Analysis {
@@ -102,3 +105,35 @@ export type ChangeFeatureCollection = FeatureCollection<
   Polygon,
   ChangeFeatureProps
 >;
+
+/* ---- per-parcel change (GET /api/analyses/{id}/parcels*), generated from ada-api ---- */
+
+type Schemas = components["schemas"];
+
+/** One parcel's measured change in one analysis. Never carries owner_name. */
+export type ParcelResult = Schemas["ParcelResultOut"];
+export type ParcelVerdict = ParcelResult["verdict_t1"];
+export type ParcelChangeClass = ParcelResult["change_class"];
+export type ParcelHistogram = Schemas["ParcelHistogram"];
+export type ParcelSummary = Schemas["ParcelSummary"];
+export type ParcelResultPage = Schemas["ParcelResultPage"];
+/** count, total, limit, offset and bbox of one parcels.geojson page. */
+export type ParcelFeatureWindow = Schemas["FeatureWindow"];
+/** One parcels.geojson page as sent; a feature's geometry may be null. */
+export type ParcelFeatureCollectionOut = Schemas["ParcelFeatureCollection"];
+export type ParcelFeatureOut = Schemas["ParcelFeature"];
+
+/** What `stats.parcels` holds: a summary, or why the stage did not produce one. */
+export type ParcelStageStats = ParcelSummary | { skipped: string } | { error: string };
+
+export interface ParcelFilters {
+  change_class?: ParcelChangeClass | null;
+  verdict?: ParcelVerdict | null;
+  limit?: number;
+  offset?: number;
+}
+
+/** The map-ready collection: features without a polygon dropped, the last page's window kept. */
+export type ParcelFeatureCollection = FeatureCollection<Polygon | MultiPolygon, ParcelResult> & {
+  metadata: ParcelFeatureWindow;
+};

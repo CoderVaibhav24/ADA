@@ -183,7 +183,8 @@ MAX_AREA_SQM = 10_000_000
 MAX_SIDE_M = 10_000
 
 OBSERVED_COLUMNS = (
-    "occupant_name", "occupant_phone", "owner_name", "owner_phone", "property_type_cd", "floor_count",
+    "occupant_name", "occupant_phone", "owner_name", "owner_phone", "property_type_cd",
+    "floor_count",
     "police_station", "encroachment_confirmed_cd", "area_type_cd",
     "measured_area_sqm", "external_support_cd", "recommendation_cd",
     "notice_required", "notice_act_cd", "officer_note",

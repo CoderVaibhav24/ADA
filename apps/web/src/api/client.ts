@@ -3,6 +3,9 @@ import type {
   AnalysisMode,
   ChangeFeatureCollection,
   Id,
+  ParcelFeatureCollectionOut,
+  ParcelFilters,
+  ParcelResultPage,
   Project,
   Raster,
   RedZone,
@@ -97,6 +100,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+// The parcel endpoints' shared filters as a query string; empty values are left out.
+function parcelQuery(filters: ParcelFilters = {}): string {
+  const params = new URLSearchParams();
+  if (filters.change_class) params.set("change_class", filters.change_class);
+  if (filters.verdict) params.set("verdict", filters.verdict);
+  if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+  if (filters.offset !== undefined) params.set("offset", String(filters.offset));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 function json(body: unknown): RequestInit {
   return {
     method: "POST",
@@ -145,6 +159,13 @@ export const api = {
   getAnalysis: (id: Id) => request<Analysis>(`/api/analyses/${id}`),
   getAnalysisFeatures: (id: Id) =>
     request<ChangeFeatureCollection>(`/api/analyses/${id}/features`),
+  listAnalysisParcels: (id: Id, filters?: ParcelFilters, signal?: AbortSignal) =>
+    request<ParcelResultPage>(`/api/analyses/${id}/parcels${parcelQuery(filters)}`, { signal }),
+  getAnalysisParcelsGeojson: (id: Id, filters?: ParcelFilters, signal?: AbortSignal) =>
+    request<ParcelFeatureCollectionOut>(
+      `/api/analyses/${id}/parcels.geojson${parcelQuery(filters)}`,
+      { signal },
+    ),
   deleteAnalysis: (id: Id) =>
     request<void>(`/api/analyses/${id}`, { method: "DELETE" }),
 
@@ -177,6 +198,8 @@ export const api = {
 export const downloadUrl = {
   reportGeojson: (jobId: Id) => `/api/analyses/${jobId}/report.geojson`,
   reportCsv: (jobId: Id) => `/api/analyses/${jobId}/report.csv`,
+  parcelsCsv: (jobId: Id, filters?: ParcelFilters) =>
+    `/api/analyses/${jobId}/parcels.csv${parcelQuery(filters)}`,
   feedbackDataset: (pid: Id) => `/api/projects/${pid}/feedback-dataset`,
 };
 

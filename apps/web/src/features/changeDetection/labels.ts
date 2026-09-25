@@ -19,15 +19,16 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AnalysisMode } from "@/api/types";
+import type { AnalysisMode, ParcelChangeClass, ParcelVerdict } from "@/api/types";
 
 import type {
   ChangeType,
   CompareMode,
   ConfidenceBand,
   LayerGroupId,
-  LayerId,
 } from "./model";
+import type { ParcelSortKey } from "./parcelModel";
+import type { TreeLayerId } from "./useLayerTree";
 
 export type ChangeDetectionLabels = {
   title: string;
@@ -225,7 +226,7 @@ export type ChangeDetectionLabels = {
   layers: {
     title: string;
     group: (group: LayerGroupId) => string;
-    layer: (layer: LayerId) => string;
+    layer: (layer: TreeLayerId) => string;
     toggle: (layer: string) => string;
     on: string;
     off: string;
@@ -234,6 +235,45 @@ export type ChangeDetectionLabels = {
     unavailable: string;
     zoneCount: (n: string) => string;
     zoneNone: string;
+    parcelCount: (n: string) => string;
+  };
+
+  parcels: {
+    title: string;
+    titleWithCount: (n: string) => string;
+    loading: string;
+    errorTitle: string;
+    errorBody: string;
+    retry: string;
+    total: string;
+    assessable: string;
+    bias: string;
+    biasHint: string;
+    area: (value: string) => string;
+    notRecorded: string;
+    histogramTitle: string;
+    histogramLabel: (n: string) => string;
+    histogramBin: (from: string, to: string, count: string) => string;
+    histogramUncorrected: string;
+    histogramPivot: string;
+    partial: (loaded: string, total: string) => string;
+    filterLabel: string;
+    all: string;
+    filterCount: (label: string, n: string) => string;
+    showing: (shown: string, total: string) => string;
+    noResultsTitle: string;
+    noResultsBody: string;
+    showAll: string;
+    csv: string;
+    csvRunning: string;
+    csvFailed: string;
+    tableLabel: string;
+    sortBy: (column: string) => string;
+    locate: (parcel: string) => string;
+    noGeometry: string;
+    column: (key: ParcelSortKey) => string;
+    changeClass: (cls: ParcelChangeClass) => string;
+    verdict: (verdict: ParcelVerdict) => string;
   };
 
   detections: {
@@ -560,6 +600,46 @@ export function useChangeDetectionLabels(): ChangeDetectionLabels {
         unavailable: t("changeDetection.layers.unavailable"),
         zoneCount: (n) => t("changeDetection.layers.zoneCount", { n }),
         zoneNone: t("changeDetection.layers.zoneNone"),
+        parcelCount: (n) => t("changeDetection.layers.parcelCount", { n }),
+      },
+
+      parcels: {
+        title: t("changeDetection.parcels.title"),
+        titleWithCount: (n) => t("changeDetection.parcels.titleWithCount", { n }),
+        loading: t("changeDetection.parcels.loading"),
+        errorTitle: t("changeDetection.parcels.errorTitle"),
+        errorBody: t("changeDetection.parcels.errorBody"),
+        retry: t("changeDetection.parcels.retry"),
+        total: t("changeDetection.parcels.total"),
+        assessable: t("changeDetection.parcels.assessable"),
+        bias: t("changeDetection.parcels.bias"),
+        biasHint: t("changeDetection.parcels.biasHint"),
+        area: (value) => t("changeDetection.parcels.area", { value }),
+        notRecorded: t("changeDetection.parcels.notRecorded"),
+        histogramTitle: t("changeDetection.parcels.histogramTitle"),
+        histogramLabel: (n) => t("changeDetection.parcels.histogramLabel", { n }),
+        histogramBin: (from, to, count) =>
+          t("changeDetection.parcels.histogramBin", { from, to, count }),
+        histogramUncorrected: t("changeDetection.parcels.histogramUncorrected"),
+        histogramPivot: t("changeDetection.parcels.histogramPivot"),
+        partial: (loaded, total) => t("changeDetection.parcels.partial", { loaded, total }),
+        filterLabel: t("changeDetection.parcels.filterLabel"),
+        all: t("changeDetection.parcels.all"),
+        filterCount: (label, n) => t("changeDetection.parcels.filterCount", { label, n }),
+        showing: (shown, total) => t("changeDetection.parcels.showing", { shown, total }),
+        noResultsTitle: t("changeDetection.parcels.noResultsTitle"),
+        noResultsBody: t("changeDetection.parcels.noResultsBody"),
+        showAll: t("changeDetection.parcels.showAll"),
+        csv: t("changeDetection.parcels.csv"),
+        csvRunning: t("changeDetection.parcels.csvRunning"),
+        csvFailed: t("changeDetection.parcels.csvFailed"),
+        tableLabel: t("changeDetection.parcels.tableLabel"),
+        sortBy: (column) => t("changeDetection.parcels.sortBy", { column }),
+        locate: (parcel) => t("changeDetection.parcels.locate", { parcel }),
+        noGeometry: t("changeDetection.parcels.noGeometry"),
+        column: (key) => t(`changeDetection.parcels.column.${key}`),
+        changeClass: (cls) => t(`changeDetection.parcels.changeClass.${cls}`),
+        verdict: (verdict) => t(`changeDetection.parcels.verdict.${verdict}`),
       },
 
       detections: {

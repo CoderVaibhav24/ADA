@@ -1,4 +1,11 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import maplibregl from "maplibre-gl";
 import type {
   ExpressionSpecification,
@@ -13,7 +20,16 @@ import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import type { FeatureCollection, Polygon } from "geojson";
 import { api } from "../api/client";
 import { accessToken } from "../auth/oidc";
-import type { ChangeFeatureProps, Id, TileInfo } from "../api/types";
+import type {
+  ChangeFeatureProps,
+  Id,
+  ParcelFeatureCollection,
+  TileInfo,
+} from "../api/types";
+import {
+  parcelFillColorExpr,
+  parcelFillOpacityExpr,
+} from "../features/changeDetection/parcelModel";
 import { sid, useStore } from "../state/store";
 import { createRedZone } from "../state/actions";
 import HoverPopup from "./HoverPopup";
@@ -23,8 +39,20 @@ import { AGRA_CENTER, osmBasemapStyle } from "./map/basemap";
 import { authorizeTileRequest } from "./map/tileAuth";
 
 // Invisible anchor layers keep the stacking order deterministic:
-// basemap < rasters < heat masks < red zones < change polygons < terra-draw.
-const SLOTS = ["slot-rasters", "slot-masks", "slot-zones", "slot-polys"] as const;
+// basemap < rasters < heat masks < red zones < parcels < change polygons < terra-draw.
+const SLOTS = [
+  "slot-rasters",
+  "slot-masks",
+  "slot-zones",
+  "slot-parcels",
+  "slot-polys",
+] as const;
+
+const PARCEL_SRC = "parcels-src";
+const PARCEL_FILL = "parcels-fill";
+const PARCEL_LINE = "parcels-line";
+const PARCEL_DASH = "parcels-line-dash";
+const PARCEL_LAYERS = [PARCEL_FILL, PARCEL_LINE, PARCEL_DASH] as const;
 
 const COLOR_ILLEGAL = "#ff4438";
 const COLOR_ILLEGAL_LINE = "#ff5c52";
@@ -140,6 +168,44 @@ const LINE_WIDTH_EXPR = [
   ["match", ["get", "status"], "illegal", 2.4, 1.4],
 ] as unknown as ExpressionSpecification;
 
+const PARCEL_SELECTED = ["boolean", ["feature-state", "selected"], false];
+
+const PARCEL_LINE_COLOR_EXPR = [
+  "case",
+  PARCEL_SELECTED,
+  COLOR_SELECTED,
+  parcelFillColorExpr(),
+] as unknown as ExpressionSpecification;
+
+const PARCEL_LINE_WIDTH_EXPR = [
+  "case",
+  PARCEL_SELECTED,
+  3.5,
+  1.2,
+] as unknown as ExpressionSpecification;
+
+const UNASSESSABLE_FILTER = [
+  "==",
+  ["get", "change_class"],
+  "unassessable",
+] as unknown as FilterSpecification;
+
+const ASSESSED_FILTER = [
+  "!=",
+  ["get", "change_class"],
+  "unassessable",
+] as unknown as FilterSpecification;
+
+/** The per-parcel change layer; features are promoted to their result `id`. */
+export type ParcelOverlay = {
+  data: ParcelFeatureCollection;
+  visible: boolean;
+  /** 0..1, multiplied into each class's own fill alpha. */
+  opacity: number;
+  /** The result id to ring, e.g. the table row the officer picked. */
+  selectedId: number | null;
+};
+
 /** The few map commands a toolbar outside this component needs to issue. */
 export type MapViewHandle = {
   /** The live map, for a second view that follows its camera. Null before mount. */
@@ -182,6 +248,10 @@ export type MapViewProps = {
   onFeatureDoubleClick?: (target: { jobId: string; featureId: Id }) => void;
   /** A muted line on the hover card, e.g. what a double-click does. */
   hoverHint?: string;
+  /** The per-parcel change layer; null or absent draws none. */
+  parcels?: ParcelOverlay | null;
+  /** The hover card body for a parcel result id; null shows no card. */
+  renderParcelHover?: (id: string) => ReactNode;
 };
 
 export default function MapView({
@@ -195,6 +265,8 @@ export default function MapView({
   basemapOpacity = 1,
   onFeatureDoubleClick,
   hoverHint,
+  parcels = null,
+  renderParcelHover,
 }: MapViewProps = {}) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -206,6 +278,14 @@ export default function MapView({
   const [mapReady, setMapReady] = useState(false);
   const [rasterInfo, setRasterInfo] = useState<Record<string, TileInfo | null>>({});
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [parcelHover, setParcelHover] = useState<{
+    x: number;
+    y: number;
+    id: string;
+    /** Near the right edge the card opens leftwards, as HoverPopup does. */
+    flip: boolean;
+  } | null>(null);
+  const selectedParcelRef = useRef<number | null>(null);
 
   const rasters = useStore((s) => s.rasters);
   const analyses = useStore((s) => s.analyses);
@@ -436,18 +516,15 @@ export default function MapView({
       lastTap = { key, at: now };
     });
 
-    // Hover: track change polygons under the cursor.
+    // Hover: change polygons under the cursor first, then the parcel beneath them.
     map.on("mousemove", (e) => {
       if (drawActiveRef.current) return;
       const layerIds = map
         .getStyle()
         .layers.map((l) => l.id)
         .filter((lid) => lid.startsWith("poly-fill-"));
-      if (layerIds.length === 0) {
-        setHover(null);
-        return;
-      }
-      const feats = map.queryRenderedFeatures(e.point, { layers: layerIds });
+      const feats =
+        layerIds.length === 0 ? [] : map.queryRenderedFeatures(e.point, { layers: layerIds });
       if (feats.length > 0) {
         setHover({
           x: e.point.x,
@@ -456,13 +533,31 @@ export default function MapView({
           jobId: feats[0].layer.id.replace("poly-fill-", ""),
           featureId: feats[0].id,
         });
+        setParcelHover(null);
         map.getCanvas().style.cursor = "pointer";
-      } else {
-        setHover(null);
-        map.getCanvas().style.cursor = "";
+        return;
       }
+      setHover(null);
+      map.getCanvas().style.cursor = "";
+      const parcel = map.getLayer(PARCEL_FILL)
+        ? map.queryRenderedFeatures(e.point, { layers: [PARCEL_FILL] })[0]
+        : undefined;
+      const parcelId = parcel?.properties?.id as unknown;
+      setParcelHover(
+        parcelId === undefined || parcelId === null
+          ? null
+          : {
+              x: e.point.x,
+              y: e.point.y,
+              id: String(parcelId),
+              flip: map.getContainer().clientWidth - e.point.x < 300,
+            },
+      );
     });
-    map.on("mouseout", () => setHover(null));
+    map.on("mouseout", () => {
+      setHover(null);
+      setParcelHover(null);
+    });
 
     return () => {
       drawRef.current?.stop();
@@ -742,6 +837,92 @@ export default function MapView({
     }
   }, [mapReady, redZones, zoneVisible]);
 
+  // ------------------------------------------------------- parcel layer
+  const parcelData = parcels?.data ?? null;
+  const parcelsVisible = parcels?.visible ?? false;
+  const parcelsOpacity = parcels?.opacity ?? 1;
+  const selectedParcel = parcels?.selectedId ?? null;
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const src = map.getSource(PARCEL_SRC) as GeoJSONSource | undefined;
+    if (!parcelData) {
+      for (const id of PARCEL_LAYERS) if (map.getLayer(id)) map.removeLayer(id);
+      if (src) map.removeSource(PARCEL_SRC);
+      selectedParcelRef.current = null;
+      return;
+    }
+    if (src) {
+      src.setData(parcelData);
+      return;
+    }
+    map.addSource(PARCEL_SRC, { type: "geojson", data: parcelData, promoteId: "id" });
+    map.addLayer(
+      {
+        id: PARCEL_FILL,
+        type: "fill",
+        source: PARCEL_SRC,
+        paint: {
+          "fill-color": parcelFillColorExpr() as unknown as ExpressionSpecification,
+        },
+      },
+      "slot-parcels",
+    );
+    map.addLayer(
+      {
+        id: PARCEL_LINE,
+        type: "line",
+        source: PARCEL_SRC,
+        filter: ASSESSED_FILTER,
+        paint: { "line-color": PARCEL_LINE_COLOR_EXPR, "line-width": PARCEL_LINE_WIDTH_EXPR },
+      },
+      "slot-parcels",
+    );
+    map.addLayer(
+      {
+        id: PARCEL_DASH,
+        type: "line",
+        source: PARCEL_SRC,
+        filter: UNASSESSABLE_FILTER,
+        paint: {
+          "line-color": PARCEL_LINE_COLOR_EXPR,
+          "line-width": PARCEL_LINE_WIDTH_EXPR,
+          "line-dasharray": [2, 2],
+        },
+      },
+      "slot-parcels",
+    );
+  }, [mapReady, parcelData]);
+
+  // Visibility and opacity; `parcelData` re-runs it once the layers exist.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !map.getLayer(PARCEL_FILL)) return;
+    const vis = parcelsVisible ? "visible" : "none";
+    for (const id of PARCEL_LAYERS) map.setLayoutProperty(id, "visibility", vis);
+    map.setPaintProperty(
+      PARCEL_FILL,
+      "fill-opacity",
+      parcelFillOpacityExpr(parcelsOpacity) as unknown as ExpressionSpecification,
+    );
+    const line = Math.max(0, Math.min(1, parcelsOpacity));
+    map.setPaintProperty(PARCEL_LINE, "line-opacity", line);
+    map.setPaintProperty(PARCEL_DASH, "line-opacity", line);
+  }, [mapReady, parcelData, parcelsVisible, parcelsOpacity]);
+
+  // The ring on the parcel picked from the table; setData keeps feature-state, a new source does not.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !map.getSource(PARCEL_SRC)) return;
+    const previous = selectedParcelRef.current;
+    if (previous !== null) map.removeFeatureState({ source: PARCEL_SRC, id: previous });
+    selectedParcelRef.current = null;
+    if (selectedParcel === null) return;
+    map.setFeatureState({ source: PARCEL_SRC, id: selectedParcel }, { selected: true });
+    selectedParcelRef.current = selectedParcel;
+  }, [mapReady, parcelData, selectedParcel]);
+
   // ---------------------------------------------------------- base map
   // The OpenStreetMap layer is a LAYER, not scenery: the OneMap UP model puts
   // it at the foot of the tree with its own toggle. Dashboard never passes the
@@ -798,6 +979,8 @@ export default function MapView({
   }, [mapReady, fitRequest]);
 
   const noRasters = rasters.length === 0;
+  const parcelCard =
+    parcelHover && parcelsVisible && renderParcelHover ? renderParcelHover(parcelHover.id) : null;
 
 
   return (
@@ -820,6 +1003,18 @@ export default function MapView({
           containerWidth={wrapRef.current?.clientWidth ?? 0}
           hint={hoverHint}
         />
+      )}
+      {!hover && parcelHover && parcelCard && (
+        <div
+          className="hover-popup"
+          style={{
+            left: parcelHover.x,
+            top: parcelHover.y,
+            transform: `translate(${parcelHover.flip ? "calc(-100% - 14px)" : "14px"}, 14px)`,
+          }}
+        >
+          {parcelCard}
+        </div>
       )}
     </div>
   );

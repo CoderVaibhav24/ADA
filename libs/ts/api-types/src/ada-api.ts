@@ -52,6 +52,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analyses/{job_id}/parcels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Analysis Parcels
+         * @description Built area per cadastral parcel for one run, a page at a time.
+         */
+        get: operations["get_analysis_parcels_api_analyses__job_id__parcels_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analyses/{job_id}/parcels.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Analysis Parcels Csv
+         * @description Every parcel result of one run as CSV, same columns as the JSON, no owner names.
+         */
+        get: operations["download_analysis_parcels_csv_api_analyses__job_id__parcels_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analyses/{job_id}/parcels.geojson": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Analysis Parcels Geojson
+         * @description The same rows as a FeatureCollection of parcel outlines (EPSG:4326) for the map.
+         */
+        get: operations["get_analysis_parcels_geojson_api_analyses__job_id__parcels_geojson_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analyses/{job_id}/polygons/{polygon_id}/preview.png": {
         parameters: {
             query?: never;
@@ -3718,6 +3778,154 @@ export interface components {
             /** Zone Name */
             zone_name: string | null;
         };
+        /** ParcelFeature */
+        ParcelFeature: {
+            /**
+             * Geometry
+             * @description icms_parcel.geom, EPSG:4326.
+             */
+            geometry: {
+                [key: string]: unknown;
+            } | null;
+            /** Id */
+            id: number;
+            properties: components["schemas"]["ParcelResultOut"];
+            /**
+             * Type
+             * @default Feature
+             * @constant
+             */
+            type: "Feature";
+        };
+        /** ParcelFeatureCollection */
+        ParcelFeatureCollection: {
+            /** Features */
+            features: components["schemas"]["ParcelFeature"][];
+            metadata: components["schemas"]["FeatureWindow"];
+            /**
+             * Type
+             * @default FeatureCollection
+             * @constant
+             */
+            type: "FeatureCollection";
+        };
+        /** ParcelHistogram */
+        ParcelHistogram: {
+            /** Bin Edges */
+            bin_edges: number[];
+            /** Counts */
+            counts: number[];
+        };
+        /**
+         * ParcelResultOut
+         * @description One parcel's built area in both epochs; the cadastre fields never include the owner.
+         */
+        ParcelResultOut: {
+            /** Built Frac T1 */
+            built_frac_t1: number;
+            /** Built Frac T2 */
+            built_frac_t2: number;
+            /** Built Sqm T1 */
+            built_sqm_t1: number;
+            /** Built Sqm T2 */
+            built_sqm_t2: number;
+            /**
+             * Change Class
+             * @enum {string}
+             */
+            change_class: "new_build" | "extension" | "demolition" | "unchanged" | "unassessable";
+            /**
+             * Delta Sqm
+             * @description built_sqm_t2 - built_sqm_t1; null unless both epochs have enough imagery.
+             */
+            delta_sqm?: number | null;
+            /**
+             * Delta Sqm Corrected
+             * @description delta_sqm less the run's median epoch bias.
+             */
+            delta_sqm_corrected?: number | null;
+            /** Id */
+            id: number;
+            /** Imagery Frac T1 */
+            imagery_frac_t1: number;
+            /** Imagery Frac T2 */
+            imagery_frac_t2: number;
+            /** Job Id */
+            job_id: number;
+            /** Khasra No */
+            khasra_no: string | null;
+            /** Land Use */
+            land_use: string | null;
+            /** Parcel Area Sqm */
+            parcel_area_sqm: number;
+            /** Parcel Id */
+            parcel_id: number;
+            /**
+             * Parcel Key
+             * @description `SECTOR#plot` or `lgd/khasra`; `#<parcel_id>` if the parcel has neither.
+             */
+            parcel_key: string;
+            /** Plot No */
+            plot_no: string | null;
+            /** Plot Type */
+            plot_type: string | null;
+            /** Sanctioned Area Sqm */
+            sanctioned_area_sqm: number | null;
+            /** Sector */
+            sector: string | null;
+            /** Tolerance Frac */
+            tolerance_frac: number;
+            /**
+             * Verdict T1
+             * @enum {string}
+             */
+            verdict_t1: "over_tolerance" | "within_tolerance" | "vacant" | "insufficient_imagery" | "not_assessable";
+            /**
+             * Verdict T2
+             * @enum {string}
+             */
+            verdict_t2: "over_tolerance" | "within_tolerance" | "vacant" | "insufficient_imagery" | "not_assessable";
+            /** Village Lgd */
+            village_lgd: string | null;
+        };
+        /** ParcelResultPage */
+        ParcelResultPage: {
+            /** Bias Offset Sqm */
+            bias_offset_sqm: number | null;
+            /** Items */
+            items: components["schemas"]["ParcelResultOut"][];
+            /** @description Null when the run skipped or failed the parcel stage. */
+            summary?: components["schemas"]["ParcelSummary"] | null;
+            /** Total */
+            total: number;
+        };
+        /**
+         * ParcelSummary
+         * @description `AnalysisJob.stats["parcels"]` for a run whose parcel stage measured something.
+         */
+        ParcelSummary: {
+            /** Assessable */
+            assessable: number;
+            /** Bias Offset Sqm */
+            bias_offset_sqm?: number | null;
+            /** Counts By Class */
+            counts_by_class: {
+                [key: string]: number;
+            };
+            /** Counts By Verdict T1 */
+            counts_by_verdict_t1: {
+                [key: string]: number;
+            };
+            /** Counts By Verdict T2 */
+            counts_by_verdict_t2: {
+                [key: string]: number;
+            };
+            histogram: components["schemas"]["ParcelHistogram"];
+            /** Parcels Total */
+            parcels_total: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** PasswordReset */
         PasswordReset: {
             /**
@@ -4738,6 +4946,118 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChangeFeatureCollection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_analysis_parcels_api_analyses__job_id__parcels_get: {
+        parameters: {
+            query?: {
+                /** @description Only parcels in this change class. */
+                change_class?: ("new_build" | "extension" | "demolition" | "unchanged" | "unassessable") | null;
+                limit?: number;
+                offset?: number;
+                /** @description Only parcels with this verdict in T2 (the later epoch). */
+                verdict?: ("over_tolerance" | "within_tolerance" | "vacant" | "insufficient_imagery" | "not_assessable") | null;
+            };
+            header?: never;
+            path: {
+                job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParcelResultPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_analysis_parcels_csv_api_analyses__job_id__parcels_csv_get: {
+        parameters: {
+            query?: {
+                /** @description Only parcels in this change class. */
+                change_class?: ("new_build" | "extension" | "demolition" | "unchanged" | "unassessable") | null;
+                /** @description Only parcels with this verdict in T2 (the later epoch). */
+                verdict?: ("over_tolerance" | "within_tolerance" | "vacant" | "insufficient_imagery" | "not_assessable") | null;
+            };
+            header?: never;
+            path: {
+                job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_analysis_parcels_geojson_api_analyses__job_id__parcels_geojson_get: {
+        parameters: {
+            query?: {
+                /** @description Only parcels in this change class. */
+                change_class?: ("new_build" | "extension" | "demolition" | "unchanged" | "unassessable") | null;
+                limit?: number;
+                offset?: number;
+                /** @description Only parcels with this verdict in T2 (the later epoch). */
+                verdict?: ("over_tolerance" | "within_tolerance" | "vacant" | "insufficient_imagery" | "not_assessable") | null;
+            };
+            header?: never;
+            path: {
+                job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParcelFeatureCollection"];
                 };
             };
             /** @description Validation Error */

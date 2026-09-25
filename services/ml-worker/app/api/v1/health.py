@@ -36,16 +36,36 @@ async def ready(response: Response) -> dict:
         response.status_code = 503
         return {"status": "unavailable", "detail": str(exc)}
     tier = gpu.select_tier()
-    return {
-        "status": "ok",
+    missing = missing_ada_weights()
+    body = {
+        "status": "degraded" if missing else "ok",
         "queue_depth": jobs.queue_depth(),
         "in_flight": jobs.in_flight(),
         **gpu.runtime_info(),
+        "building_backend": settings.building_backend,
+        "landcover_backend": settings.landcover_backend,
         "disk_free_gb": _disk_free_gb(),
         "grid_cap_px": tier.grid_cap_px,
         "eta_s_per_mpx": jobs.eta_s_per_mpx(tier),
         "eta_s_at_grid_cap": jobs.estimate_seconds(tier, tier.grid_cap_px),
     }
+    if missing:
+        body["weights_missing"] = missing
+        body["detail"] = (f"ADA weights missing in {settings.weights_dir}: "
+                          f"{', '.join(missing)}. Run services/ml-worker/scripts/"
+                          f"convert_ada_checkpoint.py, or set BUILDING_BACKEND=changestar / "
+                          f"LANDCOVER_BACKEND=loveda.")
+    return body
+
+
+# Selected ADA backends whose converted weights are not on disk, by directory name.
+def missing_ada_weights() -> list[str]:
+    from ...ml.ada_backends import CONFIG_FILE, MODEL_FILE
+
+    selected = [(settings.building_backend, settings.ada_footprint_local),
+                (settings.landcover_backend, settings.ada_landcover_local)]
+    return [local for backend, local in selected if backend == "ada" and not all(
+        (settings.weights_dir / local / name).is_file() for name in (MODEL_FILE, CONFIG_FILE))]
 
 
 # None rather than a 503: a missing data dir is the sweeper's alarm, not readiness.

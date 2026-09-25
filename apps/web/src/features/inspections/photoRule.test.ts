@@ -41,6 +41,8 @@ function config(over: Partial<AppConfig> = {}): AppConfig {
     device_timestamp_max_age_hours: 12,
     minimum_photo_count: 3,
     maximum_photo_count: 5,
+    geofence_enforced: false,
+    geofence_radius_m: 100,
     ...over,
   };
 }
