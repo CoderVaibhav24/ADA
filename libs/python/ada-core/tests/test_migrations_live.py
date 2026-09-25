@@ -24,20 +24,27 @@ import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, make_url, text
 
 from ada_core import models, models_app, models_icms  # noqa: F401  - registers the tables
 from ada_core.database import Base, configure_engine, get_engine
 from ada_core.migrate import (
     MigrationRefused,
     _alembic_config,
+    _baseline_shape,
     _baseline_tables,
+    _refuse_on_drift,
     create_tables,
     ensure_postgis,
     run_migrations,
 )
 
 URL = os.environ.get("ADA_TEST_DATABASE_URL")
+
+PLATFORM_TABLES = ("projects", "rasters", "red_zones", "analysis_jobs", "change_polygons")
+
+# The baseline's five, measured at head; moves only if a revision adds or drops one.
+TRIGGERS_AT_HEAD = 5
 
 pytestmark = pytest.mark.skipif(
     not URL, reason="set ADA_TEST_DATABASE_URL to a throwaway PostGIS database")
@@ -80,40 +87,66 @@ def test_the_schema_matches_the_models(clean_database):
     was written for it — the schema in the test suite and the schema in
     production would then disagree, and only production would notice."""
     with clean_database.connect() as conn:
-        context = MigrationContext.configure(
-            conn,
-            opts={
-                "compare_type": True,
-                "compare_server_default": True,
-                "include_object": lambda obj, name, type_, reflected, compare_to: not (
-                    type_ == "table" and reflected and name not in Base.metadata.tables
-                ),
-            },
-        )
-        differences = compare_metadata(context, Base.metadata)
+        differences = _drift_from_models(conn)
     assert differences == [], differences
+
+
+def _drift_from_models(conn) -> list:
+    context = MigrationContext.configure(
+        conn,
+        opts={
+            "compare_type": True,
+            "compare_server_default": True,
+            "include_object": lambda obj, name, type_, reflected, compare_to: not (
+                type_ == "table" and reflected and name not in Base.metadata.tables
+            ),
+        },
+    )
+    return compare_metadata(context, Base.metadata)
+
+
+def _empty_database():
+    configure_engine(URL)
+    with get_engine().begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+    ensure_postgis()
+
+
+# Revision 0001 built for real with no alembic_version: the shape adoption expects.
+def _baseline_database(*, with_objects: bool = True):
+    _empty_database()
+    with get_engine().begin() as conn:
+        command.upgrade(_alembic_config(conn), "0001")
+        conn.execute(text("DROP TABLE alembic_version"))
+        if not with_objects:
+            # What create_all left behind: tables, and none of the triggers or seed.
+            conn.execute(text("DROP FUNCTION icms_touch_updated_at() CASCADE"))
+            conn.execute(text("DROP FUNCTION icms_refuse_delete() CASCADE"))
+            conn.execute(text("DELETE FROM icms_code_value"))
+
+
+def _leftovers(conn) -> tuple[bool, list[str]]:
+    version = inspect(conn).has_table("alembic_version")
+    scratch = conn.execute(text(
+        "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'ada_adopt_ref_%'")).scalars().all()
+    return version, scratch
 
 
 def test_a_pre_alembic_database_is_adopted():
     """The case that actually happened, on a real database.
 
     A schema built by `create_all` before the migration chain existed has every
-    table and no `alembic_version`. `alembic upgrade head` fails on it —
-    `DuplicateTable: relation "projects" already exists` — because the CLI only
-    knows how to apply revisions. `run_migrations()` recognises the state,
-    applies what stamping would otherwise skip, and stamps.
+    baseline table, no triggers, no seed and no `alembic_version`. `alembic
+    upgrade head` fails on it (`DuplicateTable: relation "projects" already
+    exists`) because the CLI only knows how to apply revisions.
+    `run_migrations()` recognises the state, applies what stamping would
+    otherwise skip, stamps 0001 and upgrades through every later revision.
     """
-    configure_engine(URL)
-    with get_engine().begin() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-
-    ensure_postgis()
-    with get_engine().connect() as conn:
-        baseline = _baseline_tables(conn)
-    create_tables(tables=baseline)
+    _baseline_database(with_objects=False)
     with get_engine().connect() as conn:
         assert not inspect(conn).has_table("alembic_version")
+        assert conn.execute(text("SELECT count(*) FROM icms_code_value")).scalar() == 0
 
     run_migrations()
 
@@ -123,54 +156,120 @@ def test_a_pre_alembic_database_is_adopted():
         triggers = conn.execute(text(
             "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_icms%'")).scalar()
         screens = conn.execute(text("SELECT screen_id FROM app_screen")).scalars().all()
+        icms = [t for t in inspect(conn).get_table_names() if t.startswith("icms_")]
+        _, scratch = _leftovers(conn)
+        drift = _drift_from_models(conn)
     assert version == "0024_analysis_parcel_result"
+    assert drift == [], drift
     # Stamping alone would leave the triggers and the baseline's 17 rows at zero;
     # the rest of the 78 and the Home screen come from upgrading past the stamp.
     assert seed == 78
-    assert triggers == 5
+    assert triggers == TRIGGERS_AT_HEAD
     assert screens == ["home_sdui"]
+    assert len(icms) == 29
+    assert scratch == []
+
+
+def test_a_baseline_shaped_database_shows_no_drift_against_revision_0001():
+    """The comparison is against 0001 as reflected, so reflection noise (default
+    text, serial sequences, geometry) must cancel out to exactly nothing."""
+    _baseline_database()
+
+    with get_engine().begin() as conn:
+        shape = _baseline_shape(conn)
+        _refuse_on_drift(conn, shape)
+        assert set(shape.tables) == _baseline_tables(conn)
+        _, scratch = _leftovers(conn)
+    assert scratch == []
+
+
+def test_a_baseline_table_that_differs_from_revision_0001_is_refused():
+    """And the comparison is not vacuous: a column 0001 never had is caught, and
+    the refusal leaves the database exactly as it was, scratch schema included."""
+    _baseline_database()
+    with get_engine().begin() as conn:
+        conn.execute(text("ALTER TABLE icms_zone ADD COLUMN stray TEXT"))
+        conn.execute(text("ALTER TABLE icms_zone ALTER COLUMN name TYPE TEXT"))
+
+    with pytest.raises(MigrationRefused, match="revision 0001"):
+        run_migrations()
+
+    with get_engine().connect() as conn:
+        version, scratch = _leftovers(conn)
+        columns = {c["name"] for c in inspect(conn).get_columns("icms_zone")}
+    assert (version, scratch) == (False, [])
+    assert "stray" in columns
 
 
 def test_a_database_holding_a_later_revisions_table_is_refused():
-    """Every mapped table with no alembic_version matches no revision: 0003
-    would otherwise fail on `relation "icms_role" already exists`."""
-    configure_engine(URL)
-    with get_engine().begin() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-
-    ensure_postgis()
-    create_tables()
+    """The baseline plus one table a later revision creates matches no revision:
+    0003 would otherwise fail on `relation "icms_role" already exists`."""
+    _baseline_database()
+    create_tables(tables={"icms_role"})
 
     with pytest.raises(MigrationRefused, match="matches no revision"):
         run_migrations()
 
 
+def test_a_head_shaped_database_without_alembic_version_is_refused_with_stamp_advice():
+    """`create_all` from today's models builds head, not 0001. Adopting it through
+    0001 would replay every later revision onto tables that already have their
+    changes, so it is refused, and the message names the deliberate remedy."""
+    _empty_database()
+    create_tables()
+
+    with pytest.raises(MigrationRefused, match="alembic -c alembic.ini stamp head"):
+        run_migrations()
+
+    with get_engine().connect() as conn:
+        assert _leftovers(conn) == (False, [])
+
+
+def test_adoption_is_refused_when_the_user_cannot_create_a_schema():
+    """The 0001 shape is learned in a scratch schema; without CREATE on the
+    database that is impossible, and the refusal says so rather than failing
+    somewhere inside Alembic."""
+    _baseline_database()
+    role = "ada_adopt_no_create"
+    with get_engine().begin() as conn:
+        conn.execute(text(f"DROP ROLE IF EXISTS {role}"))
+        conn.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD 'x'"))
+        conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+        conn.execute(text(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {role}"))
+    try:
+        configure_engine(make_url(URL).set(username=role, password="x")
+                         .render_as_string(hide_password=False))
+        with pytest.raises(MigrationRefused, match="may not create schemas"):
+            run_migrations()
+    finally:
+        configure_engine(URL)
+        with get_engine().begin() as conn:
+            conn.execute(text(f"DROP OWNED BY {role}"))
+            conn.execute(text(f"DROP ROLE {role}"))
+
+
 def _platform_only_database():
     """The real ADA deployment before ICMS existed: five tables, with data."""
-    configure_engine(URL)
+    _baseline_database()
     with get_engine().begin() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-
-    ensure_postgis()
-    platform = [
-        Base.metadata.tables[name] for name in
-        ("projects", "rasters", "red_zones", "analysis_jobs", "change_polygons")
-    ]
-    Base.metadata.create_all(bind=get_engine(), tables=platform)
-    with get_engine().begin() as conn:
+        icms = [t for t in inspect(conn).get_table_names() if t.startswith("icms_")]
+        conn.execute(text(f"DROP TABLE {', '.join(icms)} CASCADE"))
+        conn.execute(text("DROP FUNCTION icms_touch_updated_at()"))
+        conn.execute(text("DROP FUNCTION icms_refuse_delete()"))
+        remaining = sorted(set(inspect(conn).get_table_names()) - {"spatial_ref_sys"})
         conn.execute(text(
             "INSERT INTO projects (user_id, name, created_at) "
             "VALUES ('kc-subject-0001', 'Agra', now())"))
+    assert remaining == sorted(PLATFORM_TABLES)
 
 
 def test_a_pre_icms_database_is_adopted_without_touching_its_data():
     """The state a running ADA deployment is actually in.
 
     Five platform tables with rows in them, and ICMS has never existed. Wholly
-    absent is not ambiguous: `create_all` adds the seventeen missing tables and
-    alters none of the five, so there is nothing to guess about.
+    absent is not ambiguous: the seventeen missing tables are created at the
+    0001 shape, none of the five is altered, and the later revisions take it to
+    head.
     """
     _platform_only_database()
 
@@ -184,11 +283,18 @@ def test_a_pre_icms_database_is_adopted_without_touching_its_data():
             "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_icms%'")).scalar()
         projects = conn.execute(text("SELECT count(*) FROM projects")).scalar()
         name = conn.execute(text("SELECT name FROM projects LIMIT 1")).scalar()
+        drift = _drift_from_models(conn)
+        # Reflection cannot see geometry types, so the drift check cannot either.
+        geometry = conn.execute(text(
+            "SELECT type, srid FROM geometry_columns WHERE f_table_name LIKE 'icms_%'")).all()
 
     assert version == "0024_analysis_parcel_result"
-    assert len(icms) == 27
-    assert seed == 42
-    assert triggers == 5
+    assert geometry and all(kind != "GEOMETRY" and srid == 4326 for kind, srid in geometry)
+    # Tables created at 0001 and carried up the chain end exactly where the models are.
+    assert drift == [], drift
+    assert len(icms) == 29
+    assert seed == 78
+    assert triggers == TRIGGERS_AT_HEAD
     # The row that was there before is still there, unchanged.
     assert (projects, name) == (1, "Agra")
 
@@ -240,11 +346,9 @@ def test_a_half_built_icms_schema_is_refused():
     """
     _platform_only_database()
 
-    some_icms = [Base.metadata.tables[name] for name in
-                 ("icms_zone", "icms_code_value", "icms_campus_boundary")]
-    Base.metadata.create_all(bind=get_engine(), tables=some_icms)
+    create_tables(tables={"icms_zone", "icms_code_value"})
 
-    with pytest.raises(MigrationRefused, match="matches no revision"):
+    with pytest.raises(MigrationRefused, match="ICMS tables and is missing 15"):
         run_migrations()
 
 
